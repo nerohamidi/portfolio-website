@@ -27,8 +27,6 @@ github_username: nerohamidi
 
 # Build settings
 theme: minima
-minima:
-  skin: dark
 plugins:
   - jekyll-feed
 

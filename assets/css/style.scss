@@ -1,0 +1,67 @@
+---
+---
+
+@import "minima";
+
+// Dark mode overrides
+body {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
+a {
+  color: #6cb6ff;
+  &:visited { color: #b392f0; }
+  &:hover { color: #ffffff; }
+}
+
+.site-header {
+  background-color: #1e1e1e;
+  border-top: 4px solid #444;
+  border-bottom: 1px solid #333;
+}
+
+.site-nav {
+  background-color: #1e1e1e;
+  .page-link { color: #d4d4d4; }
+  @media screen and (max-width: 600px) {
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+  }
+}
+
+.site-title {
+  color: #e0e0e0;
+  &:visited { color: #e0e0e0; }
+  &:hover { color: #ffffff; text-decoration: none; }
+}
+
+.site-footer {
+  background-color: #1e1e1e;
+  border-top: 1px solid #333;
+  color: #888;
+  a { color: #6cb6ff; }
+}
+
+.post-meta { color: #888; }
+
+h1, h2, h3, h4, h5, h6 {
+  color: #e0e0e0;
+}
+
+hr {
+  border-color: #333;
+}
+
+pre, code {
+  background-color: #2a2a2a;
+  border-color: #444;
+  color: #d4d4d4;
+}
+
+blockquote {
+  color: #aaa;
+  border-left-color: #444;
+}
+
+.post-link { color: #6cb6ff; }
