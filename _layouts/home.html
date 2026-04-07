@@ -7,18 +7,18 @@ layout: default
 <div class="wave-controls">
   <div class="wave-slider">
     <label for="freq1">Wave 1 freq</label>
-    <input type="range" id="freq1" min="1" max="30" value="8" step="0.5">
-    <span class="freq-value" id="freq1-val">0.008</span>
+    <input type="range" id="freq1" min="0.1" max="1.0" value="0.3" step="0.01">
+    <span class="freq-value" id="freq1-val">0.30 Hz</span>
   </div>
   <div class="wave-slider">
     <label for="freq2">Wave 2 freq</label>
-    <input type="range" id="freq2" min="1" max="30" value="12" step="0.5">
-    <span class="freq-value" id="freq2-val">0.012</span>
+    <input type="range" id="freq2" min="0.1" max="1.0" value="0.5" step="0.01">
+    <span class="freq-value" id="freq2-val">0.50 Hz</span>
   </div>
   <div class="wave-slider">
     <label for="freq3">Wave 3 freq</label>
-    <input type="range" id="freq3" min="1" max="30" value="6" step="0.5">
-    <span class="freq-value" id="freq3-val">0.006</span>
+    <input type="range" id="freq3" min="0.1" max="1.0" value="0.2" step="0.01">
+    <span class="freq-value" id="freq3-val">0.20 Hz</span>
   </div>
 </div>
 
@@ -76,7 +76,7 @@ layout: default
   var val3 = document.getElementById('freq3-val');
 
   function updateLabel(slider, label) {
-    label.textContent = (slider.value / 1000).toFixed(3) + ' Hz';
+    label.textContent = parseFloat(slider.value).toFixed(2) + ' Hz';
   }
 
   slider1.addEventListener('input', function() { updateLabel(slider1, val1); });
@@ -118,9 +118,9 @@ layout: default
     ctx.fillRect(0, 0, w_css, h_css);
 
     var waves = [
-      { amplitude: 50, frequency: slider1.value / 1000, speed: 0.005, yOffset: 0.3, opacity: 0.3 },
-      { amplitude: 35, frequency: slider2.value / 1000, speed: 0.004, yOffset: 0.5, opacity: 0.2 },
-      { amplitude: 60, frequency: slider3.value / 1000, speed: 0.006, yOffset: 0.7, opacity: 0.15 }
+      { amplitude: 50, frequency: slider1.value * 0.01, speed: 0.005, yOffset: 0.3, opacity: 0.25 },
+      { amplitude: 50, frequency: slider2.value * 0.01, speed: 0.005, yOffset: 0.5, opacity: 0.25 },
+      { amplitude: 50, frequency: slider3.value * 0.01, speed: 0.005, yOffset: 0.7, opacity: 0.25 }
     ];
 
     for (var w = 0; w < waves.length; w++) {
