@@ -71,6 +71,35 @@
   }
 }
 
+// FFT toggle button
+.fft-toggle {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #aaa;
+  font-size: 11px;
+  font-family: monospace;
+  padding: 1px 6px;
+  margin-left: 4px;
+  &:hover { border-color: #999; color: #ddd; }
+  &.active {
+    background: rgba(255, 100, 100, 0.2);
+    border-color: #ff6464;
+    color: #ff6464;
+  }
+}
+
+// FFT canvas
+#fft-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
 body.light-mode .wave-controls {
   background: rgba(255, 255, 255, 0.85);
   border-color: #ccc;
@@ -78,40 +107,19 @@ body.light-mode .wave-controls {
   .wave-slider label { color: #555; }
   .wave-slider .freq-value { color: #2a7ae2; }
   .wave-slider input[type="range"] { accent-color: #2a7ae2; }
-}
 
-// --- e^(jw) cursor (toggled on via JS) ---
-body.ejw-cursor {
-  &, & *, & *::before, & *::after {
-    cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 4 4, auto !important;
+  .fft-toggle {
+    border-color: #ccc;
+    color: #666;
+    &:hover { border-color: #999; color: #333; }
+    &.active {
+      background: rgba(200, 50, 50, 0.15);
+      border-color: #c83232;
+      color: #c83232;
+    }
   }
-
-  & a, & button, & label, & input[type="checkbox"], & .theme-toggle {
-    cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 4 4, pointer !important;
-  }
 }
 
-// --- Cursor toggle button ---
-.cursor-toggle {
-  background: none;
-  border: 1px solid #555;
-  border-radius: 4px;
-  font-size: 13px;
-  padding: 2px 8px;
-  margin-left: 8px;
-  vertical-align: middle;
-  color: #d4d4d4;
-  line-height: 1;
-  font-style: italic;
-  font-family: Georgia, serif;
-  &:hover { border-color: #999; }
-}
-
-body.light-mode .cursor-toggle {
-  color: #333;
-  border-color: #ccc;
-  &:hover { border-color: #666; }
-}
 
 // --- Version label in footer ---
 .site-version {

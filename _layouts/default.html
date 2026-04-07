@@ -9,9 +9,6 @@
       if (localStorage.getItem('theme') === 'light') {
         document.body.classList.add('light-mode');
       }
-      if (localStorage.getItem('cursor') === 'ejw') {
-        document.body.classList.add('ejw-cursor');
-      }
     </script>
 
     {%- include header.html -%}
@@ -46,14 +43,6 @@
         updateIcon();
       });
 
-      // Cursor toggle
-      var cursorToggle = document.getElementById('cursor-toggle');
-      cursorToggle.addEventListener('click', function() {
-        document.body.classList.toggle('ejw-cursor');
-        localStorage.setItem('cursor',
-          document.body.classList.contains('ejw-cursor') ? 'ejw' : 'default'
-        );
-      });
     </script>
 
   </body>
