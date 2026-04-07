@@ -76,16 +76,27 @@ layout: default
   var val3 = document.getElementById('freq3-val');
 
   function updateLabel(slider, label) {
-    label.textContent = (slider.value / 1000).toFixed(3);
+    label.textContent = (slider.value / 1000).toFixed(3) + ' Hz';
   }
 
   slider1.addEventListener('input', function() { updateLabel(slider1, val1); });
   slider2.addEventListener('input', function() { updateLabel(slider2, val2); });
   slider3.addEventListener('input', function() { updateLabel(slider3, val3); });
 
+  // Update initial labels
+  updateLabel(slider1, val1);
+  updateLabel(slider2, val2);
+  updateLabel(slider3, val3);
+
+  var dpr = window.devicePixelRatio || 1;
+
   function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   window.addEventListener('resize', resize);
@@ -102,22 +113,24 @@ layout: default
     } else {
       ctx.fillStyle = '#1e1e1e';
     }
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    var w_css = window.innerWidth;
+    var h_css = window.innerHeight;
+    ctx.fillRect(0, 0, w_css, h_css);
 
     var waves = [
-      { amplitude: 50, frequency: slider1.value / 1000, speed: 0.02, yOffset: 0.3, opacity: 0.3 },
-      { amplitude: 35, frequency: slider2.value / 1000, speed: 0.015, yOffset: 0.5, opacity: 0.2 },
-      { amplitude: 60, frequency: slider3.value / 1000, speed: 0.025, yOffset: 0.7, opacity: 0.15 }
+      { amplitude: 50, frequency: slider1.value / 1000, speed: 0.005, yOffset: 0.3, opacity: 0.3 },
+      { amplitude: 35, frequency: slider2.value / 1000, speed: 0.004, yOffset: 0.5, opacity: 0.2 },
+      { amplitude: 60, frequency: slider3.value / 1000, speed: 0.006, yOffset: 0.7, opacity: 0.15 }
     ];
 
     for (var w = 0; w < waves.length; w++) {
       var wave = waves[w];
-      var baseY = canvas.height * wave.yOffset;
+      var baseY = h_css * wave.yOffset;
 
       ctx.beginPath();
       ctx.moveTo(0, baseY);
 
-      for (var x = 0; x <= canvas.width; x++) {
+      for (var x = 0; x <= w_css; x++) {
         var y = baseY + Math.sin(x * wave.frequency + time * wave.speed * 60) * wave.amplitude;
         ctx.lineTo(x, y);
       }
