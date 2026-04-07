@@ -4,11 +4,11 @@ layout: default
 
 <canvas id="sine-wave-bg"></canvas>
 
-<button class="wave-controls-open hidden" id="open-controls">Controls</button>
+<button class="wave-controls-open hidden" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
 <div class="wave-controls" id="wave-controls">
   <div class="wave-controls-header">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
-    <button class="close-controls" id="close-controls">&times;</button>
+    <button class="close-controls" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">&times;</button>
   </div>
   <div class="wave-slider">
     <label for="freq1">Wave 1 freq</label>

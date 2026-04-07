@@ -133,13 +133,17 @@
 
 .close-controls {
   background: none;
-  border: none;
+  border: 1px solid #555;
+  border-radius: 4px;
   color: #888;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 2px 8px;
   cursor: pointer;
-  &:hover { color: #fff; }
+  pointer-events: auto;
+  position: relative;
+  z-index: 100;
+  &:hover { color: #fff; border-color: #999; }
 }
 
 .hide-waves-toggle {
@@ -189,7 +193,8 @@ body.light-mode .wave-controls {
 
   .close-controls {
     color: #999;
-    &:hover { color: #333; }
+    border-color: #ccc;
+    &:hover { color: #333; border-color: #999; }
   }
 
   .wave-slider label { color: #555; }
