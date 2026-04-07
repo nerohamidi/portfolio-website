@@ -3,6 +3,15 @@
 
 @import "minima";
 
+// --- Star cursor ---
+*, *::before, *::after {
+  cursor: url('{{ site.baseurl }}/assets/images/star-cursor.svg') 12 12, auto;
+}
+
+a, button, label, input[type="checkbox"], .theme-toggle {
+  cursor: url('{{ site.baseurl }}/assets/images/star-cursor.svg') 12 12, pointer;
+}
+
 // --- Theme toggle button ---
 .theme-toggle {
   background: none;
