@@ -3,7 +3,6 @@ layout: default
 ---
 
 <canvas id="sine-wave-bg"></canvas>
-<canvas id="fft-bg" style="display:none;"></canvas>
 
 <div class="wave-controls">
   <div class="wave-slider">
@@ -60,21 +59,16 @@ layout: default
 <script>
 (function() {
   var canvas = document.getElementById('sine-wave-bg');
-  var fftCanvas = document.getElementById('fft-bg');
   var controls = document.querySelector('.wave-controls');
 
-  // Move canvases and controls out of .page-content
   document.body.insertBefore(canvas, document.body.firstChild);
-  document.body.insertBefore(fftCanvas, canvas.nextSibling);
   document.body.appendChild(controls);
   document.body.style.backgroundColor = 'transparent';
 
   var ctx = canvas.getContext('2d');
-  var fctx = fftCanvas.getContext('2d');
   var startTime = performance.now();
   var isLight = document.body.classList.contains('light-mode');
 
-  // FFT state per wave: false = time domain, true = frequency domain
   var fftState = [false, false, false];
 
   var slider1 = document.getElementById('freq1');
@@ -103,9 +97,6 @@ layout: default
     fftBtn1.classList.toggle('active', fftState[0]);
     fftBtn2.classList.toggle('active', fftState[1]);
     fftBtn3.classList.toggle('active', fftState[2]);
-    // Show FFT canvas if any wave is in freq domain
-    var anyFft = fftState[0] || fftState[1] || fftState[2];
-    fftCanvas.style.display = anyFft ? 'block' : 'none';
   }
 
   updateLabel(slider1, val1);
@@ -121,12 +112,6 @@ layout: default
     canvas.style.width = window.innerWidth + 'px';
     canvas.style.height = window.innerHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    fftCanvas.width = window.innerWidth * dpr;
-    fftCanvas.height = window.innerHeight * dpr;
-    fftCanvas.style.width = window.innerWidth + 'px';
-    fftCanvas.style.height = window.innerHeight + 'px';
-    fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   window.addEventListener('resize', resize);
@@ -139,117 +124,116 @@ layout: default
 
   var spatialFreq = 0.01;
 
-  // Draw a frequency domain impulse for a pure sine wave at the given frequency
-  function drawFreqDomain(freq, baseY, opacity, w_css) {
-    var freqColor = isLight ? 'rgba(200, 50, 50, ' : 'rgba(255, 100, 100, ';
+  function drawFreqDomain(freq, baseY, w_css) {
+    var spikeColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
+    var axisColor = isLight ? 'rgba(100, 100, 100, 0.4)' : 'rgba(150, 150, 150, 0.4)';
+    var textColor = isLight ? 'rgba(100, 100, 100, 0.7)' : 'rgba(180, 180, 180, 0.7)';
 
     // Draw frequency axis
-    var axisColor = isLight ? 'rgba(100, 100, 100, 0.3)' : 'rgba(150, 150, 150, 0.3)';
-    fctx.strokeStyle = axisColor;
-    fctx.lineWidth = 1;
-    fctx.beginPath();
-    fctx.moveTo(0, baseY);
-    fctx.lineTo(w_css, baseY);
-    fctx.stroke();
+    ctx.strokeStyle = axisColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(40, baseY);
+    ctx.lineTo(w_css - 40, baseY);
+    ctx.stroke();
 
-    // Label the axis
-    fctx.fillStyle = isLight ? 'rgba(100,100,100,0.5)' : 'rgba(180,180,180,0.5)';
-    fctx.font = '11px monospace';
-    fctx.fillText('f (Hz)', w_css - 45, baseY - 5);
-    fctx.fillText('0', w_css / 2 - 3, baseY + 14);
+    // Axis labels
+    ctx.fillStyle = textColor;
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('0', w_css / 2, baseY + 14);
+    ctx.fillText('f (Hz)', w_css - 60, baseY - 8);
 
-    // Frequency axis: center = 0 Hz, scale = pixels per Hz
-    var pxPerHz = (w_css * 0.35);
+    // Tick marks at 0.25 intervals
+    var pxPerHz = (w_css * 0.3);
     var center = w_css / 2;
+    for (var tick = -1.0; tick <= 1.0; tick += 0.25) {
+      if (Math.abs(tick) < 0.01) continue;
+      var tx = center + tick * pxPerHz;
+      ctx.strokeStyle = axisColor;
+      ctx.beginPath();
+      ctx.moveTo(tx, baseY - 3);
+      ctx.lineTo(tx, baseY + 3);
+      ctx.stroke();
+    }
 
-    // Positive frequency spike at +freq
-    var spikeX = center + freq * pxPerHz;
+    // Positive frequency delta spike
     var spikeHeight = 40;
-    fctx.strokeStyle = freqColor + opacity + ')';
-    fctx.lineWidth = 3;
-    fctx.beginPath();
-    fctx.moveTo(spikeX, baseY);
-    fctx.lineTo(spikeX, baseY - spikeHeight);
-    fctx.stroke();
+    var posX = center + freq * pxPerHz;
+    ctx.strokeStyle = spikeColor + ' 0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(posX, baseY);
+    ctx.lineTo(posX, baseY - spikeHeight);
+    ctx.stroke();
 
-    // Small circle at top
-    fctx.beginPath();
-    fctx.arc(spikeX, baseY - spikeHeight, 3, 0, 2 * Math.PI);
-    fctx.fillStyle = freqColor + opacity + ')';
-    fctx.fill();
+    // Arrowhead
+    ctx.beginPath();
+    ctx.moveTo(posX, baseY - spikeHeight);
+    ctx.lineTo(posX - 4, baseY - spikeHeight + 8);
+    ctx.lineTo(posX + 4, baseY - spikeHeight + 8);
+    ctx.closePath();
+    ctx.fillStyle = spikeColor + ' 0.9)';
+    ctx.fill();
 
     // Label
-    fctx.fillStyle = freqColor + '0.8)';
-    fctx.font = '11px monospace';
-    fctx.fillText(freq.toFixed(2), spikeX - 12, baseY - spikeHeight - 8);
+    ctx.fillStyle = spikeColor + ' 1)';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(freq.toFixed(2) + ' Hz', posX, baseY - spikeHeight - 8);
 
-    // Negative frequency spike at -freq
+    // Negative frequency delta spike
     var negX = center - freq * pxPerHz;
-    fctx.strokeStyle = freqColor + opacity + ')';
-    fctx.lineWidth = 3;
-    fctx.beginPath();
-    fctx.moveTo(negX, baseY);
-    fctx.lineTo(negX, baseY - spikeHeight);
-    fctx.stroke();
+    ctx.strokeStyle = spikeColor + ' 0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(negX, baseY);
+    ctx.lineTo(negX, baseY - spikeHeight);
+    ctx.stroke();
 
-    fctx.beginPath();
-    fctx.arc(negX, baseY - spikeHeight, 3, 0, 2 * Math.PI);
-    fctx.fillStyle = freqColor + opacity + ')';
-    fctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(negX, baseY - spikeHeight);
+    ctx.lineTo(negX - 4, baseY - spikeHeight + 8);
+    ctx.lineTo(negX + 4, baseY - spikeHeight + 8);
+    ctx.closePath();
+    ctx.fillStyle = spikeColor + ' 0.9)';
+    ctx.fill();
 
-    fctx.fillStyle = freqColor + '0.8)';
-    fctx.fillText('-' + freq.toFixed(2), negX - 16, baseY - spikeHeight - 8);
+    ctx.fillStyle = spikeColor + ' 1)';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('-' + freq.toFixed(2) + ' Hz', negX, baseY - spikeHeight - 8);
+
+    ctx.textAlign = 'start';
   }
 
   function draw() {
     var w_css = window.innerWidth;
     var h_css = window.innerHeight;
 
-    // Clear time-domain canvas
-    if (isLight) {
-      ctx.fillStyle = '#ffffff';
-    } else {
-      ctx.fillStyle = '#1e1e1e';
-    }
+    ctx.fillStyle = isLight ? '#ffffff' : '#1e1e1e';
     ctx.fillRect(0, 0, w_css, h_css);
-
-    // Clear FFT canvas
-    if (fftState[0] || fftState[1] || fftState[2]) {
-      fctx.clearRect(0, 0, w_css, h_css);
-    }
 
     var t = (performance.now() - startTime) / 1000;
 
-    var waves = [
-      { amplitude: 50, freq: parseFloat(slider1.value), yOffset: 0.3, opacity: 0.25 },
-      { amplitude: 50, freq: parseFloat(slider2.value), yOffset: 0.5, opacity: 0.25 },
-      { amplitude: 50, freq: parseFloat(slider3.value), yOffset: 0.7, opacity: 0.25 }
-    ];
+    var sliders = [slider1, slider2, slider3];
+    var yOffsets = [0.3, 0.5, 0.7];
 
-    for (var i = 0; i < waves.length; i++) {
-      var wave = waves[i];
-      var baseY = h_css * wave.yOffset;
+    for (var i = 0; i < 3; i++) {
+      var freq = parseFloat(sliders[i].value);
+      var baseY = h_css * yOffsets[i];
 
       if (fftState[i]) {
-        // Draw frequency domain representation
-        drawFreqDomain(wave.freq, baseY, wave.opacity * 4, w_css);
+        drawFreqDomain(freq, baseY, w_css);
       } else {
-        // Draw time domain sine wave
-        var phase = 2 * Math.PI * wave.freq * t;
-
+        var phase = 2 * Math.PI * freq * t;
         ctx.beginPath();
         ctx.moveTo(0, baseY);
-
         for (var x = 0; x <= w_css; x++) {
-          var y = baseY + Math.sin(x * spatialFreq - phase) * wave.amplitude;
+          var y = baseY + Math.sin(x * spatialFreq - phase) * 50;
           ctx.lineTo(x, y);
         }
-
-        if (isLight) {
-          ctx.strokeStyle = 'rgba(42, 122, 226, ' + wave.opacity + ')';
-        } else {
-          ctx.strokeStyle = 'rgba(108, 182, 255, ' + wave.opacity + ')';
-        }
+        ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, 0.25)' : 'rgba(108, 182, 255, 0.25)';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
