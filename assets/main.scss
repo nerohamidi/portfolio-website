@@ -80,13 +80,37 @@ body.light-mode .wave-controls {
   .wave-slider input[type="range"] { accent-color: #2a7ae2; }
 }
 
-// --- e^(jw) cursor ---
-*, *::before, *::after {
-  cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 6 16, auto;
+// --- e^(jw) cursor (toggled on via JS) ---
+body.ejw-cursor {
+  &, & *, & *::before, & *::after {
+    cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 4 4, auto !important;
+  }
+
+  & a, & button, & label, & input[type="checkbox"], & .theme-toggle {
+    cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 4 4, pointer !important;
+  }
 }
 
-a, button, label, input[type="checkbox"], .theme-toggle {
-  cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 6 16, pointer;
+// --- Cursor toggle button ---
+.cursor-toggle {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-size: 13px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  vertical-align: middle;
+  color: #d4d4d4;
+  line-height: 1;
+  font-style: italic;
+  font-family: Georgia, serif;
+  &:hover { border-color: #999; }
+}
+
+body.light-mode .cursor-toggle {
+  color: #333;
+  border-color: #ccc;
+  &:hover { border-color: #666; }
 }
 
 // --- Version label in footer ---
