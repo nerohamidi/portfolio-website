@@ -56,6 +56,14 @@ layout: default
 <script>
 (function() {
   var canvas = document.getElementById('sine-wave-bg');
+  var controls = document.querySelector('.wave-controls');
+
+  // Move canvas and controls out of .page-content to be direct children of body
+  // so z-index stacking works correctly
+  document.body.insertBefore(canvas, document.body.firstChild);
+  document.body.appendChild(controls);
+  document.body.style.backgroundColor = 'transparent';
+
   var ctx = canvas.getContext('2d');
   var time = 0;
   var isLight = document.body.classList.contains('light-mode');
