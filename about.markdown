@@ -31,6 +31,8 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
 **Signal Processing & ML:** MATLAB, Simulink, DSP, Digital Image Processing, PyTorch, scikit-learn
 
+**IC Design:** Verilog, LTspice, Cadence, VLSI design, analog & digital circuit design, circuit simulation, schematic design
+
 ---
 
 ## Currently Taking
