@@ -3,7 +3,22 @@
 
 @import "minima";
 
-// Dark mode overrides
+// --- Theme toggle button ---
+.theme-toggle {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 8px;
+  margin-left: 12px;
+  vertical-align: middle;
+  color: #d4d4d4;
+  line-height: 1;
+  &:hover { border-color: #999; }
+}
+
+// --- Dark mode (default) ---
 body {
   background-color: #1e1e1e;
   color: #d4d4d4;
@@ -45,13 +60,9 @@ a {
 
 .post-meta { color: #888; }
 
-h1, h2, h3, h4, h5, h6 {
-  color: #e0e0e0;
-}
+h1, h2, h3, h4, h5, h6 { color: #e0e0e0; }
 
-hr {
-  border-color: #333;
-}
+hr { border-color: #333; }
 
 pre, code {
   background-color: #2a2a2a;
@@ -72,4 +83,77 @@ table {
   th, td { border-color: #444; }
   th { background-color: #2a2a2a; }
   tr:nth-child(even) { background-color: #252525; }
+}
+
+// --- Light mode ---
+body.light-mode {
+  background-color: #ffffff;
+  color: #111;
+
+  .theme-toggle {
+    color: #333;
+    border-color: #ccc;
+    &:hover { border-color: #666; }
+  }
+
+  a {
+    color: #2a7ae2;
+    &:visited { color: #1756a9; }
+    &:hover { color: #111; }
+  }
+
+  .site-header {
+    background-color: #fdfdfd;
+    border-top-color: #424242;
+    border-bottom-color: #e8e8e8;
+  }
+
+  .site-nav {
+    background-color: #fdfdfd;
+    .page-link { color: #111; }
+    @media screen and (max-width: 600px) {
+      background-color: #fdfdfd;
+      border-color: #e8e8e8;
+    }
+  }
+
+  .site-title {
+    color: #424242;
+    &:visited { color: #424242; }
+    &:hover { color: #111; }
+  }
+
+  .site-footer {
+    background-color: #fdfdfd;
+    border-top-color: #e8e8e8;
+    color: #828282;
+    a { color: #2a7ae2; }
+  }
+
+  .post-meta { color: #828282; }
+
+  h1, h2, h3, h4, h5, h6 { color: #111; }
+
+  hr { border-color: #e8e8e8; }
+
+  pre, code {
+    background-color: #eef;
+    border-color: #e8e8e8;
+    color: #111;
+  }
+
+  blockquote {
+    color: #828282;
+    border-left-color: #e8e8e8;
+  }
+
+  .post-link { color: #2a7ae2; }
+
+  table {
+    color: #111;
+    border-color: #e8e8e8;
+    th, td { border-color: #e8e8e8; }
+    th { background-color: #f6f6f6; }
+    tr:nth-child(even) { background-color: #f7f7f7; }
+  }
 }
