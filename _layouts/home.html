@@ -1,0 +1,95 @@
+---
+layout: default
+---
+
+<canvas id="sine-wave-bg"></canvas>
+
+<div class="home">
+  {%- if page.title -%}
+    <h1 class="page-heading">{{ page.title }}</h1>
+  {%- endif -%}
+
+  {{ content }}
+
+  {%- if site.posts.size > 0 -%}
+    <h2 class="post-list-heading">{{ page.list_title | default: "Posts" }}</h2>
+    <ul class="post-list">
+      {%- for post in site.posts -%}
+      <li>
+        {%- assign date_format = site.minima.date_format | default: "%b %-d, %Y" -%}
+        <span class="post-meta">{{ post.date | date: date_format }}</span>
+        <h3>
+          <a class="post-link" href="{{ post.url | relative_url }}">
+            {{ post.title | escape }}
+          </a>
+        </h3>
+        {%- if site.show_excerpts -%}
+          {{ post.excerpt }}
+        {%- endif -%}
+      </li>
+      {%- endfor -%}
+    </ul>
+
+    <p class="rss-subscribe">subscribe <a href="{{ "/feed.xml" | relative_url }}">via RSS</a></p>
+  {%- endif -%}
+
+</div>
+
+<script>
+(function() {
+  var canvas = document.getElementById('sine-wave-bg');
+  var ctx = canvas.getContext('2d');
+  var time = 0;
+  var isLight = document.body.classList.contains('light-mode');
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Watch for theme changes
+  var observer = new MutationObserver(function() {
+    isLight = document.body.classList.contains('light-mode');
+  });
+  observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    var waves = [
+      { amplitude: 50, frequency: 0.008, speed: 0.02, yOffset: 0.3, opacity: 0.3 },
+      { amplitude: 35, frequency: 0.012, speed: 0.015, yOffset: 0.5, opacity: 0.2 },
+      { amplitude: 60, frequency: 0.006, speed: 0.025, yOffset: 0.7, opacity: 0.15 }
+    ];
+
+    for (var w = 0; w < waves.length; w++) {
+      var wave = waves[w];
+      var baseY = canvas.height * wave.yOffset;
+
+      ctx.beginPath();
+      ctx.moveTo(0, baseY);
+
+      for (var x = 0; x <= canvas.width; x++) {
+        var y = baseY + Math.sin(x * wave.frequency + time * wave.speed * 60) * wave.amplitude;
+        ctx.lineTo(x, y);
+      }
+
+      if (isLight) {
+        ctx.strokeStyle = 'rgba(42, 122, 226, ' + wave.opacity + ')';
+      } else {
+        ctx.strokeStyle = 'rgba(108, 182, 255, ' + wave.opacity + ')';
+      }
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    time++;
+    requestAnimationFrame(draw);
+  }
+
+  draw();
+})();
+</script>
