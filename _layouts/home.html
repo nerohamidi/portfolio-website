@@ -65,7 +65,7 @@ layout: default
   document.body.style.backgroundColor = 'transparent';
 
   var ctx = canvas.getContext('2d');
-  var time = 0;
+  var startTime = performance.now();
   var isLight = document.body.classList.contains('light-mode');
 
   var slider1 = document.getElementById('freq1');
@@ -107,6 +107,9 @@ layout: default
   });
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
+  // Spatial frequency: how many cycles fit across the screen
+  var spatialFreq = 0.01;
+
   function draw() {
     if (isLight) {
       ctx.fillStyle = '#ffffff';
@@ -117,21 +120,26 @@ layout: default
     var h_css = window.innerHeight;
     ctx.fillRect(0, 0, w_css, h_css);
 
+    // Elapsed time in seconds
+    var t = (performance.now() - startTime) / 1000;
+
     var waves = [
-      { amplitude: 50, frequency: slider1.value * 0.01, speed: 0.005, yOffset: 0.3, opacity: 0.25 },
-      { amplitude: 50, frequency: slider2.value * 0.01, speed: 0.005, yOffset: 0.5, opacity: 0.25 },
-      { amplitude: 50, frequency: slider3.value * 0.01, speed: 0.005, yOffset: 0.7, opacity: 0.25 }
+      { amplitude: 50, freq: parseFloat(slider1.value), yOffset: 0.3, opacity: 0.25 },
+      { amplitude: 50, freq: parseFloat(slider2.value), yOffset: 0.5, opacity: 0.25 },
+      { amplitude: 50, freq: parseFloat(slider3.value), yOffset: 0.7, opacity: 0.25 }
     ];
 
     for (var w = 0; w < waves.length; w++) {
       var wave = waves[w];
       var baseY = h_css * wave.yOffset;
+      // Phase offset: 2*PI*freq*t gives exactly freq cycles per second
+      var phase = 2 * Math.PI * wave.freq * t;
 
       ctx.beginPath();
       ctx.moveTo(0, baseY);
 
       for (var x = 0; x <= w_css; x++) {
-        var y = baseY + Math.sin(x * wave.frequency + time * wave.speed * 60) * wave.amplitude;
+        var y = baseY + Math.sin(x * spatialFreq - phase) * wave.amplitude;
         ctx.lineTo(x, y);
       }
 
@@ -144,7 +152,6 @@ layout: default
       ctx.stroke();
     }
 
-    time++;
     requestAnimationFrame(draw);
   }
 
