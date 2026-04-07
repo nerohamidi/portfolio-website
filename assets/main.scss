@@ -89,6 +89,15 @@ a, button, label, input[type="checkbox"], .theme-toggle {
   cursor: url('{{ site.baseurl }}/assets/images/ejw-cursor.svg') 6 16, pointer;
 }
 
+// --- Version label in footer ---
+.site-version {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 12px;
+  color: #666;
+  font-family: monospace;
+}
+
 // --- Theme toggle button ---
 .theme-toggle {
   background: none;
