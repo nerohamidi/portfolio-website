@@ -4,6 +4,24 @@ layout: default
 
 <canvas id="sine-wave-bg"></canvas>
 
+<div class="wave-controls">
+  <div class="wave-slider">
+    <label for="freq1">Wave 1 freq</label>
+    <input type="range" id="freq1" min="1" max="30" value="8" step="0.5">
+    <span class="freq-value" id="freq1-val">0.008</span>
+  </div>
+  <div class="wave-slider">
+    <label for="freq2">Wave 2 freq</label>
+    <input type="range" id="freq2" min="1" max="30" value="12" step="0.5">
+    <span class="freq-value" id="freq2-val">0.012</span>
+  </div>
+  <div class="wave-slider">
+    <label for="freq3">Wave 3 freq</label>
+    <input type="range" id="freq3" min="1" max="30" value="6" step="0.5">
+    <span class="freq-value" id="freq3-val">0.006</span>
+  </div>
+</div>
+
 <div class="home">
   {%- if page.title -%}
     <h1 class="page-heading">{{ page.title }}</h1>
@@ -42,6 +60,21 @@ layout: default
   var time = 0;
   var isLight = document.body.classList.contains('light-mode');
 
+  var slider1 = document.getElementById('freq1');
+  var slider2 = document.getElementById('freq2');
+  var slider3 = document.getElementById('freq3');
+  var val1 = document.getElementById('freq1-val');
+  var val2 = document.getElementById('freq2-val');
+  var val3 = document.getElementById('freq3-val');
+
+  function updateLabel(slider, label) {
+    label.textContent = (slider.value / 1000).toFixed(3);
+  }
+
+  slider1.addEventListener('input', function() { updateLabel(slider1, val1); });
+  slider2.addEventListener('input', function() { updateLabel(slider2, val2); });
+  slider3.addEventListener('input', function() { updateLabel(slider3, val3); });
+
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -50,14 +83,12 @@ layout: default
   window.addEventListener('resize', resize);
   resize();
 
-  // Watch for theme changes
   var observer = new MutationObserver(function() {
     isLight = document.body.classList.contains('light-mode');
   });
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   function draw() {
-    // Fill canvas with background color
     if (isLight) {
       ctx.fillStyle = '#ffffff';
     } else {
@@ -66,9 +97,9 @@ layout: default
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     var waves = [
-      { amplitude: 50, frequency: 0.008, speed: 0.02, yOffset: 0.3, opacity: 0.3 },
-      { amplitude: 35, frequency: 0.012, speed: 0.015, yOffset: 0.5, opacity: 0.2 },
-      { amplitude: 60, frequency: 0.006, speed: 0.025, yOffset: 0.7, opacity: 0.15 }
+      { amplitude: 50, frequency: slider1.value / 1000, speed: 0.02, yOffset: 0.3, opacity: 0.3 },
+      { amplitude: 35, frequency: slider2.value / 1000, speed: 0.015, yOffset: 0.5, opacity: 0.2 },
+      { amplitude: 60, frequency: slider3.value / 1000, speed: 0.025, yOffset: 0.7, opacity: 0.15 }
     ];
 
     for (var w = 0; w < waves.length; w++) {
