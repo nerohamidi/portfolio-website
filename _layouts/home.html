@@ -4,9 +4,11 @@ layout: default
 
 <canvas id="sine-wave-bg"></canvas>
 
-<div class="wave-controls">
+<button class="wave-controls-open hidden" id="open-controls">Controls</button>
+<div class="wave-controls" id="wave-controls">
   <div class="wave-controls-header">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
+    <button class="close-controls" id="close-controls">&times;</button>
   </div>
   <div class="wave-slider">
     <label for="freq1">Wave 1 freq</label>
@@ -62,11 +64,24 @@ layout: default
 <script>
 (function() {
   var canvas = document.getElementById('sine-wave-bg');
-  var controls = document.querySelector('.wave-controls');
+  var controls = document.getElementById('wave-controls');
+  var openBtn = document.getElementById('open-controls');
+  var closeBtn = document.getElementById('close-controls');
 
   document.body.insertBefore(canvas, document.body.firstChild);
   document.body.appendChild(controls);
+  document.body.appendChild(openBtn);
   document.body.style.backgroundColor = 'transparent';
+
+  openBtn.addEventListener('click', function() {
+    controls.classList.remove('hidden');
+    openBtn.classList.add('hidden');
+  });
+
+  closeBtn.addEventListener('click', function() {
+    controls.classList.add('hidden');
+    openBtn.classList.remove('hidden');
+  });
 
   var ctx = canvas.getContext('2d');
   var startTime = performance.now();
