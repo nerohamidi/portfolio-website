@@ -10,8 +10,25 @@
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: -1;
+  z-index: 0;
   pointer-events: none;
+}
+
+// Make page content sit above canvas but with transparent backgrounds
+.page-content {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+.site-header {
+  position: relative;
+  z-index: 2;
+}
+
+.site-footer {
+  position: relative;
+  z-index: 1;
 }
 
 // --- Star cursor ---
@@ -42,6 +59,11 @@ a, button, label, input[type="checkbox"], .theme-toggle {
 body {
   background-color: #1e1e1e;
   color: #d4d4d4;
+}
+
+// When sine wave canvas is present, make body transparent so canvas shows
+body:has(#sine-wave-bg) {
+  background-color: transparent;
 }
 
 a {
@@ -109,6 +131,10 @@ table {
 body.light-mode {
   background-color: #ffffff;
   color: #111;
+
+  &:has(#sine-wave-bg) {
+    background-color: transparent;
+  }
 
   .theme-toggle {
     color: #333;

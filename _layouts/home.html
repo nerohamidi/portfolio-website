@@ -57,7 +57,13 @@ layout: default
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Fill canvas with background color
+    if (isLight) {
+      ctx.fillStyle = '#ffffff';
+    } else {
+      ctx.fillStyle = '#1e1e1e';
+    }
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     var waves = [
       { amplitude: 50, frequency: 0.008, speed: 0.02, yOffset: 0.3, opacity: 0.3 },
