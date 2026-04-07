@@ -123,30 +123,27 @@
   }
 }
 
-// Controls header with hide waves + close
-.wave-controls-header {
+// Controls footer with hide waves + close
+.wave-controls-footer {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
-.close-controls {
+.close-panel-btn {
+  flex: 1;
   background: none;
   border: 1px solid #555;
   border-radius: 4px;
-  color: #888;
-  font-size: 16px;
-  line-height: 1;
-  padding: 2px 8px;
+  color: #aaa;
+  font-size: 11px;
+  padding: 4px 0;
   cursor: pointer;
-  pointer-events: auto;
-  position: relative;
-  z-index: 100;
-  &:hover { color: #fff; border-color: #999; }
+  &:hover { border-color: #999; color: #ddd; }
 }
 
 .hide-waves-toggle {
+  flex: 1;
   background: none;
   border: 1px solid #555;
   border-radius: 4px;
@@ -191,10 +188,10 @@ body.light-mode .wave-controls {
   background: rgba(255, 255, 255, 0.85);
   border-color: #ccc;
 
-  .close-controls {
-    color: #999;
+  .close-panel-btn {
     border-color: #ccc;
-    &:hover { color: #333; border-color: #999; }
+    color: #666;
+    &:hover { border-color: #999; color: #333; }
   }
 
   .wave-slider label { color: #555; }

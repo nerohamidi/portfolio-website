@@ -6,10 +6,6 @@ layout: default
 
 <button class="wave-controls-open hidden" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
 <div class="wave-controls" id="wave-controls">
-  <div class="wave-controls-header">
-    <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
-    <button class="close-controls" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">&times;</button>
-  </div>
   <div class="wave-slider">
     <label for="freq1">Wave 1 freq</label>
     <input type="range" id="freq1" min="0.1" max="1.0" value="0.3" step="0.01">
@@ -27,6 +23,10 @@ layout: default
     <input type="range" id="freq3" min="0.1" max="1.0" value="0.2" step="0.01">
     <span class="freq-value" id="freq3-val">0.20 Hz</span>
     <button class="fft-toggle" id="fft3">FFT</button>
+  </div>
+  <div class="wave-controls-footer">
+    <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
+    <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
   </div>
 </div>
 
