@@ -5,7 +5,7 @@ title: Home
 
 # Nero Hamidi
 
-M.S. ECE student at UC San Diego specializing in Signal & Image Processing. I build real-time embedded systems, sensor data pipelines, and ML-driven tools — and write about what I learn along the way.
+M.S. ECE student at UC San Diego specializing in Signal & Image Processing, with a growing interest in IC design. I build real-time embedded systems, sensor data pipelines, and ML-driven tools — and write about what I learn along the way.
 
 **[nehamidi@ucsd.edu](mailto:nehamidi@ucsd.edu)** · [LinkedIn](https://www.linkedin.com/in/nero-hamidi) · [GitHub](https://github.com/nerohamidi)
 

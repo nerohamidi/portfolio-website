@@ -4,7 +4,7 @@ title: About
 permalink: /about/
 ---
 
-I'm an ECE graduate student at UC San Diego specializing in Signal & Image Processing. My work sits at the intersection of embedded systems, DSP, and machine learning — I like building things that process real-world signals under real-world constraints.
+I'm an ECE graduate student at UC San Diego specializing in Signal & Image Processing, with a growing interest in IC design. My work sits at the intersection of embedded systems, DSP, and machine learning — I like building things that process real-world signals under real-world constraints. I'm drawn to IC design because it connects the circuit-level intuition I've built through analog and digital coursework to the challenge of implementing signal processing and ML in silicon.
 
 **[nehamidi@ucsd.edu](mailto:nehamidi@ucsd.edu)** · [LinkedIn](https://www.linkedin.com/in/nero-hamidi) · [GitHub](https://github.com/nerohamidi)
 
@@ -43,6 +43,12 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
 ---
 
-## Past Coursework
+## IC Design & Circuits Coursework
 
-Embedded Systems Programming · Signals & Systems · EE Statistics · VLSI Circuit Design · Analysis & Design of Electronic Circuits · Analog & Pulse Communication Systems · Machine Learning · Sensing & Estimation in Robotics · Graduate Linear Algebra
+**VLSI Circuit Design** (Compe 572) · **Digital Circuit Design** (ECE 165, current) · **Analysis & Design of Electronic Circuits** (EE 430) · **Digital Circuits** (Compe 470) · **Analog & Pulse Communication Systems** (EE 458)
+
+---
+
+## Other Coursework
+
+Embedded Systems Programming · Signals & Systems · EE Statistics · Machine Learning · Sensing & Estimation in Robotics · Graduate Linear Algebra · Digital Signal Processing I · ML for Physical Applications
