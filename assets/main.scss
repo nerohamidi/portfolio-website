@@ -71,6 +71,28 @@
   }
 }
 
+// Hide waves toggle
+.wave-controls-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.hide-waves-toggle {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 11px;
+  padding: 2px 10px;
+  &:hover { border-color: #999; color: #ddd; }
+  &.active {
+    background: rgba(108, 182, 255, 0.15);
+    border-color: #6cb6ff;
+    color: #6cb6ff;
+  }
+}
+
 // FFT toggle button
 .fft-toggle {
   background: none;
@@ -97,6 +119,17 @@ body.light-mode .wave-controls {
   .wave-slider label { color: #555; }
   .wave-slider .freq-value { color: #2a7ae2; }
   .wave-slider input[type="range"] { accent-color: #2a7ae2; }
+
+  .hide-waves-toggle {
+    border-color: #ccc;
+    color: #666;
+    &:hover { border-color: #999; color: #333; }
+    &.active {
+      background: rgba(42, 122, 226, 0.12);
+      border-color: #2a7ae2;
+      color: #2a7ae2;
+    }
+  }
 
   .fft-toggle {
     border-color: #ccc;
