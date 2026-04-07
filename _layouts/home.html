@@ -135,30 +135,42 @@ layout: default
   });
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-  var spatialFreq = 0.01;
+  // Scale spatial frequency so ~3 full cycles always fit on screen
+  function getSpatialFreq() {
+    return (3 * 2 * Math.PI) / window.innerWidth;
+  }
+
+  // Scale amplitude based on screen height
+  function getAmplitude() {
+    return Math.min(50, window.innerHeight * 0.06);
+  }
 
   function drawFreqDomain(freq, baseY, w_css) {
     var spikeColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
     var axisColor = isLight ? 'rgba(100, 100, 100, 0.4)' : 'rgba(150, 150, 150, 0.4)';
     var textColor = isLight ? 'rgba(100, 100, 100, 0.7)' : 'rgba(180, 180, 180, 0.7)';
+    var isMobile = w_css < 600;
+    var margin = isMobile ? 15 : 40;
+    var fontSize = isMobile ? '9px monospace' : '11px monospace';
+    var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
 
     // Draw frequency axis
     ctx.strokeStyle = axisColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(40, baseY);
-    ctx.lineTo(w_css - 40, baseY);
+    ctx.moveTo(margin, baseY);
+    ctx.lineTo(w_css - margin, baseY);
     ctx.stroke();
 
     // Axis labels
     ctx.fillStyle = textColor;
-    ctx.font = '11px monospace';
+    ctx.font = fontSize;
     ctx.textAlign = 'center';
     ctx.fillText('0', w_css / 2, baseY + 14);
-    ctx.fillText('f (Hz)', w_css - 60, baseY - 8);
+    if (!isMobile) ctx.fillText('f (Hz)', w_css - 60, baseY - 8);
 
     // Tick marks at 0.25 intervals
-    var pxPerHz = (w_css * 0.3);
+    var pxPerHz = w_css * (isMobile ? 0.35 : 0.3);
     var center = w_css / 2;
     for (var tick = -1.0; tick <= 1.0; tick += 0.25) {
       if (Math.abs(tick) < 0.01) continue;
@@ -171,10 +183,11 @@ layout: default
     }
 
     // Positive frequency delta spike
-    var spikeHeight = 40;
+    var spikeHeight = isMobile ? 30 : 40;
+    var arrowSize = isMobile ? 3 : 4;
     var posX = center + freq * pxPerHz;
     ctx.strokeStyle = spikeColor + ' 0.9)';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = isMobile ? 2 : 3;
     ctx.beginPath();
     ctx.moveTo(posX, baseY);
     ctx.lineTo(posX, baseY - spikeHeight);
@@ -183,22 +196,22 @@ layout: default
     // Arrowhead
     ctx.beginPath();
     ctx.moveTo(posX, baseY - spikeHeight);
-    ctx.lineTo(posX - 4, baseY - spikeHeight + 8);
-    ctx.lineTo(posX + 4, baseY - spikeHeight + 8);
+    ctx.lineTo(posX - arrowSize, baseY - spikeHeight + arrowSize * 2);
+    ctx.lineTo(posX + arrowSize, baseY - spikeHeight + arrowSize * 2);
     ctx.closePath();
     ctx.fillStyle = spikeColor + ' 0.9)';
     ctx.fill();
 
     // Label
     ctx.fillStyle = spikeColor + ' 1)';
-    ctx.font = '12px monospace';
+    ctx.font = labelFontSize;
     ctx.textAlign = 'center';
-    ctx.fillText(freq.toFixed(2) + ' Hz', posX, baseY - spikeHeight - 8);
+    ctx.fillText(freq.toFixed(2), posX, baseY - spikeHeight - 8);
 
     // Negative frequency delta spike
     var negX = center - freq * pxPerHz;
     ctx.strokeStyle = spikeColor + ' 0.9)';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = isMobile ? 2 : 3;
     ctx.beginPath();
     ctx.moveTo(negX, baseY);
     ctx.lineTo(negX, baseY - spikeHeight);
@@ -206,16 +219,16 @@ layout: default
 
     ctx.beginPath();
     ctx.moveTo(negX, baseY - spikeHeight);
-    ctx.lineTo(negX - 4, baseY - spikeHeight + 8);
-    ctx.lineTo(negX + 4, baseY - spikeHeight + 8);
+    ctx.lineTo(negX - arrowSize, baseY - spikeHeight + arrowSize * 2);
+    ctx.lineTo(negX + arrowSize, baseY - spikeHeight + arrowSize * 2);
     ctx.closePath();
     ctx.fillStyle = spikeColor + ' 0.9)';
     ctx.fill();
 
     ctx.fillStyle = spikeColor + ' 1)';
-    ctx.font = '12px monospace';
+    ctx.font = labelFontSize;
     ctx.textAlign = 'center';
-    ctx.fillText('-' + freq.toFixed(2) + ' Hz', negX, baseY - spikeHeight - 8);
+    ctx.fillText('-' + freq.toFixed(2), negX, baseY - spikeHeight - 8);
 
     ctx.textAlign = 'start';
   }
@@ -241,10 +254,12 @@ layout: default
           drawFreqDomain(freq, baseY, w_css);
         } else {
           var phase = 2 * Math.PI * freq * t;
+          var sf = getSpatialFreq();
+          var amp = getAmplitude();
           ctx.beginPath();
           ctx.moveTo(0, baseY);
           for (var x = 0; x <= w_css; x++) {
-            var y = baseY + Math.sin(x * spatialFreq - phase) * 50;
+            var y = baseY + Math.sin(x * sf - phase) * amp;
             ctx.lineTo(x, y);
           }
           ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, 0.25)' : 'rgba(108, 182, 255, 0.25)';
