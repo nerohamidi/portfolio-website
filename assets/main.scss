@@ -11,8 +11,24 @@
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: -1;
+  z-index: 0;
   pointer-events: none;
+}
+
+// Layer page elements above the canvas
+.site-header {
+  position: relative;
+  z-index: 2;
+}
+
+.page-content {
+  position: relative;
+  z-index: 1;
+}
+
+.site-footer {
+  position: relative;
+  z-index: 1;
 }
 
 // --- Wave frequency sliders ---
