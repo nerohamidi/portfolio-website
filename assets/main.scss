@@ -650,9 +650,24 @@ a {
 .site-nav {
   background-color: #1e1e1e;
   .page-link { color: #d4d4d4; }
+
   @media screen and (max-width: 600px) {
     background-color: #2a2a2a;
     border: 1px solid #444;
+
+    .menu-icon > svg {
+      fill: #d4d4d4;
+    }
+
+    .page-link {
+      color: #d4d4d4;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+
+    .theme-toggle {
+      margin: 8px 16px;
+    }
   }
 }
 
@@ -722,9 +737,24 @@ body.light-mode {
   .site-nav {
     background-color: #fdfdfd;
     .page-link { color: #111; }
+
     @media screen and (max-width: 600px) {
       background-color: #fdfdfd;
       border-color: #e8e8e8;
+
+      .menu-icon > svg {
+        fill: #424242;
+      }
+
+      .page-link {
+        color: #111;
+        padding: 8px 16px;
+        font-size: 14px;
+      }
+
+      .theme-toggle {
+        margin: 8px 16px;
+      }
     }
   }
 
