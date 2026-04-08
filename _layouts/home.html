@@ -80,6 +80,7 @@ layout: default
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
     <button class="hide-waves-toggle" id="hide-text">Hide Text</button>
+    <button class="hide-waves-toggle" id="audio-only">Audio Only</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
   </div>
 </div>
@@ -255,6 +256,61 @@ layout: default
       });
     })(ei);
   }
+
+  var audioOnlyBtn = document.getElementById('audio-only');
+  var audioOnlyActive = false;
+  audioOnlyBtn.addEventListener('click', function() {
+    audioOnlyActive = !audioOnlyActive;
+    audioOnlyBtn.textContent = audioOnlyActive ? 'Show All' : 'Audio Only';
+    audioOnlyBtn.classList.toggle('active', audioOnlyActive);
+
+    if (audioOnlyActive) {
+      // Disable all waves
+      for (var i = 0; i < 3; i++) {
+        waveEnabled[i] = false;
+        enableBtns[i].classList.remove('active');
+      }
+      // Disable combine
+      if (combineActive) {
+        combineActive = false;
+        combinePowerBtn.classList.remove('active');
+        combineExpr.classList.add('hidden');
+        combineFft = false;
+        fftCombinedBtn.classList.remove('active');
+        fftCombinedBtn.textContent = 'FFT';
+      }
+      // Hide text
+      if (!textHidden) {
+        textHidden = true;
+        hideTextBtn.textContent = 'Show Text';
+        hideTextBtn.classList.add('active');
+        var pageContent = document.querySelector('.page-content');
+        var header = document.querySelector('.site-header');
+        var footer = document.querySelector('.site-footer');
+        if (pageContent) pageContent.style.display = 'none';
+        if (header) header.style.display = 'none';
+        if (footer) footer.style.display = 'none';
+      }
+    } else {
+      // Re-enable all waves
+      for (var i = 0; i < 3; i++) {
+        waveEnabled[i] = true;
+        enableBtns[i].classList.add('active');
+      }
+      // Show text
+      if (textHidden) {
+        textHidden = false;
+        hideTextBtn.textContent = 'Hide Text';
+        hideTextBtn.classList.remove('active');
+        var pageContent = document.querySelector('.page-content');
+        var header = document.querySelector('.site-header');
+        var footer = document.querySelector('.site-footer');
+        if (pageContent) pageContent.style.display = '';
+        if (header) header.style.display = '';
+        if (footer) footer.style.display = '';
+      }
+    }
+  });
 
   function updateFftButtons() {
     for (var i = 0; i < 3; i++) {
