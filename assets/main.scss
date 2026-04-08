@@ -124,6 +124,65 @@
   }
 }
 
+// Combine controls row
+.wave-combine-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #444;
+
+  label {
+    color: #aaa;
+    font-size: 11px;
+    margin-right: 2px;
+  }
+}
+
+.combine-toggle {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #aaa;
+  font-size: 11px;
+  font-family: monospace;
+  padding: 2px 8px;
+  cursor: pointer;
+  &:hover { border-color: #999; color: #ddd; }
+  &.active {
+    background: rgba(220, 140, 255, 0.15);
+    border-color: #dc8cff;
+    color: #dc8cff;
+  }
+}
+
+.wave-combine-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 8px;
+}
+
+.combine-op-select {
+  background: rgba(30, 30, 30, 0.8);
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #aaa;
+  font-size: 12px;
+  font-family: monospace;
+  padding: 1px 4px;
+  cursor: pointer;
+  &:hover { border-color: #999; color: #ddd; }
+}
+
+.combine-label {
+  color: #aaa;
+  font-size: 11px;
+  font-family: monospace;
+}
+
 // Controls footer with hide waves + close
 .wave-controls-footer {
   display: flex;
@@ -240,6 +299,31 @@ body.light-mode .wave-controls {
     color: #555;
     &:hover { border-color: #999; color: #333; }
   }
+
+  .wave-combine-row {
+    border-top-color: #ddd;
+    label { color: #555; }
+  }
+
+  .combine-toggle {
+    border-color: #ccc;
+    color: #666;
+    &:hover { border-color: #999; color: #333; }
+    &.active {
+      background: rgba(180, 60, 180, 0.12);
+      border-color: #b43cb4;
+      color: #b43cb4;
+    }
+  }
+
+  .combine-op-select {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #999; color: #333; }
+  }
+
+  .combine-label { color: #555; }
 }
 
 

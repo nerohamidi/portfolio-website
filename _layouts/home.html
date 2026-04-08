@@ -36,6 +36,18 @@ layout: default
     <select id="type3" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
     <button class="fft-toggle" id="fft3">FFT</button>
   </div>
+  <div class="wave-combine-row">
+    <label>Combine:</label>
+    <button class="combine-toggle" id="combine-add">Add (1+2+3)</button>
+    <button class="combine-toggle" id="combine-sub">Sub (1−2−3)</button>
+    <button class="combine-toggle" id="combine-custom">Custom</button>
+  </div>
+  <div class="wave-combine-custom hidden" id="combine-custom-row">
+    <select id="combine-op12" class="combine-op-select"><option value="+">+</option><option value="-">−</option></select>
+    <span class="combine-label">W2</span>
+    <select id="combine-op23" class="combine-op-select"><option value="+">+</option><option value="-">−</option></select>
+    <span class="combine-label">W3</span>
+  </div>
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
@@ -122,6 +134,31 @@ layout: default
   var fftBtn3 = document.getElementById('fft3');
   var fftBtns = [fftBtn1, fftBtn2, fftBtn3];
   var hideBtn = document.getElementById('hide-waves');
+  var combineAddBtn = document.getElementById('combine-add');
+  var combineSubBtn = document.getElementById('combine-sub');
+  var combineCustomBtn = document.getElementById('combine-custom');
+  var combineCustomRow = document.getElementById('combine-custom-row');
+  var combineOp12 = document.getElementById('combine-op12');
+  var combineOp23 = document.getElementById('combine-op23');
+
+  // 'none', 'add', 'sub', 'custom'
+  var combineMode = 'none';
+
+  function setCombineMode(mode) {
+    combineMode = combineMode === mode ? 'none' : mode;
+    combineAddBtn.classList.toggle('active', combineMode === 'add');
+    combineSubBtn.classList.toggle('active', combineMode === 'sub');
+    combineCustomBtn.classList.toggle('active', combineMode === 'custom');
+    if (combineMode === 'custom') {
+      combineCustomRow.classList.remove('hidden');
+    } else {
+      combineCustomRow.classList.add('hidden');
+    }
+  }
+
+  combineAddBtn.addEventListener('click', function() { setCombineMode('add'); });
+  combineSubBtn.addEventListener('click', function() { setCombineMode('sub'); });
+  combineCustomBtn.addEventListener('click', function() { setCombineMode('custom'); });
 
   function updateLabel(slider, label) {
     label.textContent = parseFloat(slider.value).toFixed(2) + ' Hz';
@@ -290,30 +327,61 @@ layout: default
     var typeSelects = [typeSelect1, typeSelect2, typeSelect3];
     var yOffsets = [0.3, 0.5, 0.7];
 
+    // Compute wave value for a given wave index at position x and time t
+    function waveVal(i, x, t) {
+      var freq = parseFloat(sliders[i].value);
+      var ampMult = parseFloat(ampSliders[i].value);
+      var waveType = typeSelects[i].value;
+      var waveFn = waveType === 'cos' ? Math.cos : Math.sin;
+      var phase = 2 * Math.PI * freq * t;
+      var sf = getSpatialFreq();
+      var amp = getAmplitude() * ampMult;
+      return waveFn(x * sf - phase) * amp;
+    }
+
     if (!wavesHidden) {
+      // Draw individual waves
       for (var i = 0; i < 3; i++) {
         var freq = parseFloat(sliders[i].value);
-        var ampMult = parseFloat(ampSliders[i].value);
-        var waveType = typeSelects[i].value;
-        var waveFn = waveType === 'cos' ? Math.cos : Math.sin;
         var baseY = h_css * yOffsets[i];
 
         if (fftState[i]) {
           drawFreqDomain(freq, baseY, w_css);
         } else {
-          var phase = 2 * Math.PI * freq * t;
-          var sf = getSpatialFreq();
-          var amp = getAmplitude() * ampMult;
           ctx.beginPath();
           ctx.moveTo(0, baseY);
           for (var x = 0; x <= w_css; x++) {
-            var y = baseY + waveFn(x * sf - phase) * amp;
+            var y = baseY + waveVal(i, x, t);
             ctx.lineTo(x, y);
           }
           ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, 0.25)' : 'rgba(108, 182, 255, 0.25)';
           ctx.lineWidth = 2;
           ctx.stroke();
         }
+      }
+
+      // Draw combined wave if active
+      if (combineMode !== 'none') {
+        var combinedY = h_css * 0.5;
+        var signs;
+        if (combineMode === 'add') {
+          signs = [1, 1, 1];
+        } else if (combineMode === 'sub') {
+          signs = [1, -1, -1];
+        } else {
+          // custom
+          signs = [1, combineOp12.value === '+' ? 1 : -1, combineOp23.value === '+' ? 1 : -1];
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(0, combinedY);
+        for (var x = 0; x <= w_css; x++) {
+          var val = signs[0] * waveVal(0, x, t) + signs[1] * waveVal(1, x, t) + signs[2] * waveVal(2, x, t);
+          ctx.lineTo(x, combinedY + val);
+        }
+        ctx.strokeStyle = isLight ? 'rgba(180, 60, 180, 0.5)' : 'rgba(220, 140, 255, 0.5)';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
       }
     }
 
