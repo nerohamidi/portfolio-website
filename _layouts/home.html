@@ -4,8 +4,8 @@ layout: default
 
 <canvas id="sine-wave-bg"></canvas>
 
-<button class="wave-controls-open hidden" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
-<div class="wave-controls" id="wave-controls">
+<button class="wave-controls-open" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
+<div class="wave-controls hidden" id="wave-controls">
   <div class="wave-slider">
     <button class="wave-enable-btn active" id="enable1">W1</button>
     <label for="freq1">freq</label>
@@ -128,14 +128,18 @@ layout: default
   document.body.appendChild(openBtn);
   document.body.style.backgroundColor = 'transparent';
 
+  var controlsOpen = false;
+
   openBtn.addEventListener('click', function() {
     controls.classList.remove('hidden');
     openBtn.classList.add('hidden');
+    controlsOpen = true;
   });
 
   closeBtn.addEventListener('click', function() {
     controls.classList.add('hidden');
     openBtn.classList.remove('hidden');
+    controlsOpen = false;
   });
 
   var ctx = canvas.getContext('2d');
@@ -928,7 +932,8 @@ layout: default
             var y = baseY + waveVal(i, x, t);
             ctx.lineTo(x, y);
           }
-          ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, 0.25)' : 'rgba(108, 182, 255, 0.25)';
+          var waveAlpha = controlsOpen ? 0.25 : 0.1;
+          ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, ' + waveAlpha + ')' : 'rgba(108, 182, 255, ' + waveAlpha + ')';
           ctx.lineWidth = 2;
           ctx.stroke();
         }
@@ -947,7 +952,8 @@ layout: default
             var val = (waveEnabled[0] ? combineSigns[0] * waveVal(0, x, t) : 0) + (waveEnabled[1] ? combineSigns[1] * waveVal(1, x, t) : 0) + (waveEnabled[2] ? combineSigns[2] * waveVal(2, x, t) : 0);
             ctx.lineTo(x, combinedY + val);
           }
-          ctx.strokeStyle = isLight ? 'rgba(180, 60, 180, 0.5)' : 'rgba(220, 140, 255, 0.5)';
+          var combAlpha = controlsOpen ? 0.5 : 0.15;
+          ctx.strokeStyle = isLight ? 'rgba(180, 60, 180, ' + combAlpha + ')' : 'rgba(220, 140, 255, ' + combAlpha + ')';
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }
