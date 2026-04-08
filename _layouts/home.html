@@ -6,6 +6,9 @@ layout: default
 
 <button class="wave-controls-open" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
 <div class="wave-controls hidden" id="wave-controls">
+  <div class="wave-controls-top">
+    <button class="hide-waves-toggle" id="hide-text">Hide Text</button>
+  </div>
   <div class="wave-slider">
     <button class="wave-enable-btn active" id="enable1">W1</button>
     <label for="freq1">freq</label>
@@ -118,7 +121,6 @@ layout: default
   </div>
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
-    <button class="hide-waves-toggle" id="hide-text">Hide Text</button>
     <button class="hide-waves-toggle" id="audio-only">Audio Only</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
   </div>
