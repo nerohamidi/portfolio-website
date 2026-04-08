@@ -12,12 +12,10 @@ I'm an ECE graduate student at UC San Diego specializing in Signal & Image Proce
 
 ## Education
 
-**University of California, San Diego**
-M.S. in Electrical and Computer Engineering — Signal & Image Processing
+**University of California, San Diego** · M.S. in Electrical and Computer Engineering — Signal & Image Processing
 *Sep 2025 – Jun 2027*
 
-**San Diego State University**
-B.S. in Electrical Engineering, Minor in Computer Science
+**San Diego State University** · B.S. in Electrical Engineering, Minor in Computer Science
 *Aug 2022 – Jun 2025*
 William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
