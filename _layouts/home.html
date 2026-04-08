@@ -7,7 +7,8 @@ layout: default
 <button class="wave-controls-open hidden" id="open-controls" onclick="document.getElementById('wave-controls').classList.remove('hidden'); this.classList.add('hidden');">Controls</button>
 <div class="wave-controls" id="wave-controls">
   <div class="wave-slider">
-    <label for="freq1">Wave 1 freq</label>
+    <button class="wave-enable-btn active" id="enable1">W1</button>
+    <label for="freq1">freq</label>
     <input type="range" id="freq1" min="0.1" max="1.0" value="0.3" step="0.01">
     <span class="freq-value" id="freq1-val">0.30 Hz</span>
     <label for="amp1">Amp</label>
@@ -17,7 +18,8 @@ layout: default
     <button class="fft-toggle" id="fft1">FFT</button>
   </div>
   <div class="wave-slider">
-    <label for="freq2">Wave 2 freq</label>
+    <button class="wave-enable-btn active" id="enable2">W2</button>
+    <label for="freq2">freq</label>
     <input type="range" id="freq2" min="0.1" max="1.0" value="0.5" step="0.01">
     <span class="freq-value" id="freq2-val">0.50 Hz</span>
     <label for="amp2">Amp</label>
@@ -27,7 +29,8 @@ layout: default
     <button class="fft-toggle" id="fft2">FFT</button>
   </div>
   <div class="wave-slider">
-    <label for="freq3">Wave 3 freq</label>
+    <button class="wave-enable-btn active" id="enable3">W3</button>
+    <label for="freq3">freq</label>
     <input type="range" id="freq3" min="0.1" max="1.0" value="0.2" step="0.01">
     <span class="freq-value" id="freq3-val">0.20 Hz</span>
     <label for="amp3">Amp</label>
@@ -240,6 +243,17 @@ layout: default
     if (header) header.style.display = textHidden ? 'none' : '';
     if (footer) footer.style.display = textHidden ? 'none' : '';
   });
+
+  var waveEnabled = [true, true, true];
+  var enableBtns = [document.getElementById('enable1'), document.getElementById('enable2'), document.getElementById('enable3')];
+  for (var ei = 0; ei < 3; ei++) {
+    (function(idx) {
+      enableBtns[idx].addEventListener('click', function() {
+        waveEnabled[idx] = !waveEnabled[idx];
+        enableBtns[idx].classList.toggle('active', waveEnabled[idx]);
+      });
+    })(ei);
+  }
 
   function updateFftButtons() {
     for (var i = 0; i < 3; i++) {
@@ -834,6 +848,7 @@ layout: default
     if (!wavesHidden) {
       // Draw individual waves
       for (var i = 0; i < 3; i++) {
+        if (!waveEnabled[i]) continue;
         var freq = parseFloat(sliders[i].value);
         var ampMult = parseFloat(ampSliders[i].value);
         var waveType = typeSelects[i].value;
@@ -864,7 +879,7 @@ layout: default
           ctx.beginPath();
           ctx.moveTo(0, combinedY);
           for (var x = 0; x <= w_css; x++) {
-            var val = combineSigns[0] * waveVal(0, x, t) + combineSigns[1] * waveVal(1, x, t) + combineSigns[2] * waveVal(2, x, t);
+            var val = (waveEnabled[0] ? combineSigns[0] * waveVal(0, x, t) : 0) + (waveEnabled[1] ? combineSigns[1] * waveVal(1, x, t) : 0) + (waveEnabled[2] ? combineSigns[2] * waveVal(2, x, t) : 0);
             ctx.lineTo(x, combinedY + val);
           }
           ctx.strokeStyle = isLight ? 'rgba(180, 60, 180, 0.5)' : 'rgba(220, 140, 255, 0.5)';

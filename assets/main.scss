@@ -345,6 +345,25 @@
   }
 }
 
+// Wave enable/disable toggle
+.wave-enable-btn {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #666;
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: bold;
+  padding: 1px 6px;
+  cursor: pointer;
+  &:hover { border-color: #999; }
+  &.active {
+    background: rgba(108, 182, 255, 0.15);
+    border-color: #6cb6ff;
+    color: #6cb6ff;
+  }
+}
+
 // Wave type select dropdown
 .wave-type-select {
   background: rgba(30, 30, 30, 0.8);
@@ -417,6 +436,17 @@ body.light-mode .wave-controls {
       background: rgba(200, 50, 50, 0.15);
       border-color: #c83232;
       color: #c83232;
+    }
+  }
+
+  .wave-enable-btn {
+    border-color: #ccc;
+    color: #aaa;
+    &:hover { border-color: #999; }
+    &.active {
+      background: rgba(42, 122, 226, 0.12);
+      border-color: #2a7ae2;
+      color: #2a7ae2;
     }
   }
 
