@@ -75,6 +75,26 @@ layout: default
         <button class="audio-viz-btn active" id="audio-viz-wave">Waveform</button>
         <button class="audio-viz-btn active" id="audio-viz-freq">Spectrum</button>
       </div>
+      <div class="audio-filter-section">
+        <div class="audio-filter-header">
+          <span class="audio-filter-label">Filter</span>
+          <button class="audio-viz-btn" id="audio-filter-lp">Low Pass</button>
+          <button class="audio-viz-btn" id="audio-filter-hp">High Pass</button>
+          <button class="audio-viz-btn" id="audio-filter-bp">Band Pass</button>
+        </div>
+        <div class="audio-filter-params hidden" id="audio-filter-params">
+          <div class="audio-filter-row">
+            <span class="audio-filter-param-label">Freq</span>
+            <input type="range" id="audio-filter-freq" min="0" max="1000" value="500" step="1" class="audio-filter-slider">
+            <span class="audio-filter-value" id="audio-filter-freq-label">1000 Hz</span>
+          </div>
+          <div class="audio-filter-row">
+            <span class="audio-filter-param-label">Q</span>
+            <input type="range" id="audio-filter-q" min="0.1" max="20" value="1" step="0.1" class="audio-filter-slider">
+            <span class="audio-filter-value" id="audio-filter-q-label">1.0</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="wave-controls-footer">
@@ -664,11 +684,21 @@ layout: default
   var audioDuration = document.getElementById('audio-duration');
   var audioVizWaveBtn = document.getElementById('audio-viz-wave');
   var audioVizFreqBtn = document.getElementById('audio-viz-freq');
+  var audioFilterLpBtn = document.getElementById('audio-filter-lp');
+  var audioFilterHpBtn = document.getElementById('audio-filter-hp');
+  var audioFilterBpBtn = document.getElementById('audio-filter-bp');
+  var audioFilterParamsDiv = document.getElementById('audio-filter-params');
+  var audioFilterFreqSlider = document.getElementById('audio-filter-freq');
+  var audioFilterFreqLabel = document.getElementById('audio-filter-freq-label');
+  var audioFilterQSlider = document.getElementById('audio-filter-q');
+  var audioFilterQLabel = document.getElementById('audio-filter-q-label');
 
   var audioCtx = null;
   var audioSource = null;
   var audioAnalyser = null;
   var audioGain = null;
+  var audioFilter = null;
+  var audioFilterType = null; // null, 'lowpass', 'highpass', 'bandpass'
   var audioElement = null;
   var audioPlaying = false;
   var audioShowWave = true;
@@ -679,6 +709,73 @@ layout: default
     var sec = Math.floor(s % 60);
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
+
+  function rebuildAudioChain() {
+    if (!audioCtx) return;
+    // Disconnect existing chain
+    try { audioGain.disconnect(); } catch(e) {}
+    if (audioFilter) { try { audioFilter.disconnect(); } catch(e) {} }
+    try { audioAnalyser.disconnect(); } catch(e) {}
+
+    if (audioFilterType) {
+      if (!audioFilter) {
+        audioFilter = audioCtx.createBiquadFilter();
+      }
+      audioFilter.type = audioFilterType;
+      audioFilter.frequency.value = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
+      audioFilter.Q.value = parseFloat(audioFilterQSlider.value);
+      audioGain.connect(audioFilter);
+      audioFilter.connect(audioAnalyser);
+    } else {
+      audioGain.connect(audioAnalyser);
+    }
+    audioAnalyser.connect(audioCtx.destination);
+  }
+
+  function setFilterType(type) {
+    var btns = [audioFilterLpBtn, audioFilterHpBtn, audioFilterBpBtn];
+    var types = ['lowpass', 'highpass', 'bandpass'];
+    if (audioFilterType === type) {
+      // Toggle off
+      audioFilterType = null;
+      btns.forEach(function(b) { b.classList.remove('active'); });
+      audioFilterParamsDiv.classList.add('hidden');
+    } else {
+      audioFilterType = type;
+      btns.forEach(function(b, i) {
+        b.classList.toggle('active', types[i] === type);
+      });
+      audioFilterParamsDiv.classList.remove('hidden');
+    }
+    rebuildAudioChain();
+  }
+
+  audioFilterLpBtn.addEventListener('click', function() { setFilterType('lowpass'); });
+  audioFilterHpBtn.addEventListener('click', function() { setFilterType('highpass'); });
+  audioFilterBpBtn.addEventListener('click', function() { setFilterType('bandpass'); });
+
+  function filterSliderToFreq(val) {
+    // Logarithmic mapping: 0-1000 slider -> 20-20000 Hz
+    var minLog = Math.log(20);
+    var maxLog = Math.log(20000);
+    return Math.exp(minLog + (val / 1000) * (maxLog - minLog));
+  }
+
+  function formatFilterFreq(hz) {
+    return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
+  }
+
+  audioFilterFreqSlider.addEventListener('input', function() {
+    var hz = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
+    audioFilterFreqLabel.textContent = formatFilterFreq(hz);
+    if (audioFilter && audioFilterType) audioFilter.frequency.value = hz;
+  });
+
+  audioFilterQSlider.addEventListener('input', function() {
+    var v = parseFloat(audioFilterQSlider.value);
+    audioFilterQLabel.textContent = v.toFixed(1);
+    if (audioFilter && audioFilterType) audioFilter.Q.value = v;
+  });
 
   function loadAudioSrc(src, name) {
     audioFilename.textContent = name.length > 20 ? name.substring(0, 17) + '...' : name;
@@ -698,8 +795,7 @@ layout: default
       audioGain = audioCtx.createGain();
       audioAnalyser = audioCtx.createAnalyser();
       audioAnalyser.fftSize = 2048;
-      audioGain.connect(audioAnalyser);
-      audioAnalyser.connect(audioCtx.destination);
+      rebuildAudioChain();
     }
 
     audioElement = new Audio();
