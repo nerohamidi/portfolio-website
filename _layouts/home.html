@@ -75,6 +75,16 @@ layout: default
         <button class="audio-viz-btn active" id="audio-viz-wave">Waveform</button>
         <button class="audio-viz-btn active" id="audio-viz-freq">Spectrum</button>
       </div>
+      <div class="audio-mix-section">
+        <div class="audio-filter-header">
+          <span class="audio-filter-label">Mix</span>
+          <button class="audio-viz-btn" id="audio-mix-w1">W1</button>
+          <button class="audio-viz-btn" id="audio-mix-w2">W2</button>
+          <button class="audio-viz-btn" id="audio-mix-w3">W3</button>
+          <input type="range" id="audio-mix-gain" min="0" max="1" value="0.3" step="0.01" class="audio-mix-gain-slider">
+          <span class="audio-filter-value" id="audio-mix-gain-label">30%</span>
+        </div>
+      </div>
       <div class="audio-filter-section">
         <div class="audio-filter-header">
           <span class="audio-filter-label">Filter</span>
@@ -692,6 +702,9 @@ layout: default
   var audioFilterFreqLabel = document.getElementById('audio-filter-freq-label');
   var audioFilterQSlider = document.getElementById('audio-filter-q');
   var audioFilterQLabel = document.getElementById('audio-filter-q-label');
+  var audioMixBtns = [document.getElementById('audio-mix-w1'), document.getElementById('audio-mix-w2'), document.getElementById('audio-mix-w3')];
+  var audioMixGainSlider = document.getElementById('audio-mix-gain');
+  var audioMixGainLabel = document.getElementById('audio-mix-gain-label');
 
   var audioCtx = null;
   var audioSource = null;
@@ -699,6 +712,10 @@ layout: default
   var audioGain = null;
   var audioFilter = null;
   var audioFilterType = null; // null, 'lowpass', 'highpass', 'bandpass'
+  var audioMixEnabled = [false, false, false];
+  var audioOscillators = [null, null, null];
+  var audioOscGains = [null, null, null];
+  var audioMixGain = null; // summing node for oscillators
   var audioElement = null;
   var audioPlaying = false;
   var audioShowWave = true;
@@ -714,9 +731,12 @@ layout: default
     if (!audioCtx) return;
     // Disconnect existing chain
     try { audioGain.disconnect(); } catch(e) {}
+    if (audioMixGain) { try { audioMixGain.disconnect(); } catch(e) {} }
     if (audioFilter) { try { audioFilter.disconnect(); } catch(e) {} }
     try { audioAnalyser.disconnect(); } catch(e) {}
 
+    // Determine the first node after the sources
+    var chainInput;
     if (audioFilterType) {
       if (!audioFilter) {
         audioFilter = audioCtx.createBiquadFilter();
@@ -724,11 +744,25 @@ layout: default
       audioFilter.type = audioFilterType;
       audioFilter.frequency.value = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
       audioFilter.Q.value = parseFloat(audioFilterQSlider.value);
-      audioGain.connect(audioFilter);
+      chainInput = audioFilter;
       audioFilter.connect(audioAnalyser);
     } else {
-      audioGain.connect(audioAnalyser);
+      chainInput = audioAnalyser;
     }
+
+    // Connect audio source
+    audioGain.connect(chainInput);
+
+    // Connect oscillator mix if any are active
+    var anyMix = audioMixEnabled[0] || audioMixEnabled[1] || audioMixEnabled[2];
+    if (anyMix) {
+      if (!audioMixGain) {
+        audioMixGain = audioCtx.createGain();
+      }
+      audioMixGain.gain.value = parseFloat(audioMixGainSlider.value);
+      audioMixGain.connect(chainInput);
+    }
+
     audioAnalyser.connect(audioCtx.destination);
   }
 
@@ -776,6 +810,87 @@ layout: default
     audioFilterQLabel.textContent = v.toFixed(1);
     if (audioFilter && audioFilterType) audioFilter.Q.value = v;
   });
+
+  var waveSliders = [document.getElementById('freq1'), document.getElementById('freq2'), document.getElementById('freq3')];
+  var waveAmpSliders = [document.getElementById('amp1'), document.getElementById('amp2'), document.getElementById('amp3')];
+  var waveTypeSelects = [document.getElementById('type1'), document.getElementById('type2'), document.getElementById('type3')];
+
+  function startOscillator(idx) {
+    if (!audioCtx || audioOscillators[idx]) return;
+    if (!audioMixGain) {
+      audioMixGain = audioCtx.createGain();
+      audioMixGain.gain.value = parseFloat(audioMixGainSlider.value);
+    }
+    var freq = parseFloat(waveSliders[idx].value);
+    var ampMult = parseFloat(waveAmpSliders[idx].value);
+    var waveType = waveTypeSelects[idx].value;
+
+    var osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    // Use cosine by shifting phase — Web Audio doesn't have cos type,
+    // but sin and cos differ by phase only, which is inaudible for steady tones
+
+    var gain = audioCtx.createGain();
+    gain.gain.value = ampMult;
+    osc.connect(gain);
+    gain.connect(audioMixGain);
+    osc.start();
+
+    audioOscillators[idx] = osc;
+    audioOscGains[idx] = gain;
+    rebuildAudioChain();
+  }
+
+  function stopOscillator(idx) {
+    if (audioOscillators[idx]) {
+      audioOscillators[idx].stop();
+      audioOscillators[idx].disconnect();
+      audioOscillators[idx] = null;
+    }
+    if (audioOscGains[idx]) {
+      audioOscGains[idx].disconnect();
+      audioOscGains[idx] = null;
+    }
+    rebuildAudioChain();
+  }
+
+  function toggleMixWave(idx) {
+    if (!audioCtx) return;
+    audioMixEnabled[idx] = !audioMixEnabled[idx];
+    audioMixBtns[idx].classList.toggle('active', audioMixEnabled[idx]);
+    if (audioMixEnabled[idx]) {
+      startOscillator(idx);
+    } else {
+      stopOscillator(idx);
+    }
+  }
+
+  audioMixBtns[0].addEventListener('click', function() { toggleMixWave(0); });
+  audioMixBtns[1].addEventListener('click', function() { toggleMixWave(1); });
+  audioMixBtns[2].addEventListener('click', function() { toggleMixWave(2); });
+
+  audioMixGainSlider.addEventListener('input', function() {
+    var v = parseFloat(audioMixGainSlider.value);
+    audioMixGainLabel.textContent = Math.round(v * 100) + '%';
+    if (audioMixGain) audioMixGain.gain.value = v;
+  });
+
+  // Keep oscillator params in sync with wave control sliders
+  function updateOscillatorParams(idx) {
+    if (!audioOscillators[idx]) return;
+    audioOscillators[idx].frequency.value = parseFloat(waveSliders[idx].value);
+    if (audioOscGains[idx]) {
+      audioOscGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value);
+    }
+  }
+
+  for (var mi = 0; mi < 3; mi++) {
+    (function(idx) {
+      waveSliders[idx].addEventListener('input', function() { updateOscillatorParams(idx); });
+      waveAmpSliders[idx].addEventListener('input', function() { updateOscillatorParams(idx); });
+    })(mi);
+  }
 
   function loadAudioSrc(src, name) {
     audioFilename.textContent = name.length > 20 ? name.substring(0, 17) + '...' : name;

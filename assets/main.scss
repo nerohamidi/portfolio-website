@@ -354,6 +354,18 @@
   }
 }
 
+.audio-mix-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #333;
+}
+
+.audio-mix-gain-slider {
+  width: 50px;
+  accent-color: #b080ff;
+  margin-left: 4px;
+}
+
 .audio-filter-section {
   margin-top: 4px;
   padding-top: 4px;
@@ -642,6 +654,8 @@ body.light-mode .wave-controls {
   }
 
   .audio-volume, .audio-seek { accent-color: #2a7ae2; }
+  .audio-mix-section { border-top-color: #ddd; }
+  .audio-mix-gain-slider { accent-color: #8050d0; }
   .audio-filter-section { border-top-color: #ddd; }
   .audio-filter-slider { accent-color: #c08020; }
 
