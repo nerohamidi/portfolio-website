@@ -46,12 +46,13 @@ layout: default
     <div class="wave-combine-header">
       <button class="combine-power" id="combine-power">Combine</button>
       <button class="fft-toggle" id="fft-combined">FFT</button>
+      <button class="fft-toggle" id="play-combined">&#9654;</button>
     </div>
     <div class="wave-combine-expr hidden" id="combine-expr">
       <span class="combine-wave-label">W1</span>
-      <button class="combine-sign-btn" id="sign12">+</button>
+      <button class="combine-op-btn" id="op12">+</button>
       <span class="combine-wave-label">W2</span>
-      <button class="combine-sign-btn" id="sign23">+</button>
+      <button class="combine-op-btn" id="op23">+</button>
       <span class="combine-wave-label">W3</span>
     </div>
   </div>
@@ -207,13 +208,18 @@ layout: default
   var hideBtn = document.getElementById('hide-waves');
   var combinePowerBtn = document.getElementById('combine-power');
   var combineExpr = document.getElementById('combine-expr');
-  var sign12Btn = document.getElementById('sign12');
-  var sign23Btn = document.getElementById('sign23');
+  var op12Btn = document.getElementById('op12');
+  var op23Btn = document.getElementById('op23');
   var fftCombinedBtn = document.getElementById('fft-combined');
+  var playCombinedBtn = document.getElementById('play-combined');
 
   var combineActive = false;
   var combineFft = false;
-  var combineSigns = [1, 1, 1]; // W1 always +1, W2 sign, W3 sign
+  var combineSigns = [1, 1, 1]; // sign multipliers for add/sub
+  var combineOps = [null, '+', '+']; // ops between waves: index 1 = W1 op W2, index 2 = W2 op W3
+  // '+' = add, '−' = subtract, '∗' = convolve
+  var combinedPlayOsc = null; // ScriptProcessorNode for combined playback
+  var combinedPlayGain = null;
 
   combinePowerBtn.addEventListener('click', function() {
     combineActive = !combineActive;
@@ -225,26 +231,160 @@ layout: default
       combineFft = false;
       fftCombinedBtn.classList.remove('active');
       fftCombinedBtn.textContent = 'FFT';
+      stopCombinedPlay();
     }
   });
 
-  sign12Btn.addEventListener('click', function() {
-    combineSigns[1] = combineSigns[1] === 1 ? -1 : 1;
-    sign12Btn.textContent = combineSigns[1] === 1 ? '+' : '\u2212';
-    sign12Btn.classList.toggle('subtract', combineSigns[1] === -1);
-  });
+  function cycleOp(btn, opIdx) {
+    var ops = ['+', '\u2212', '\u2217'];
+    var current = combineOps[opIdx];
+    var nextIdx = (ops.indexOf(current) + 1) % ops.length;
+    combineOps[opIdx] = ops[nextIdx];
+    btn.textContent = ops[nextIdx];
+    // Update combineSigns for backward compat with add/sub
+    if (ops[nextIdx] === '+') combineSigns[opIdx] = 1;
+    else if (ops[nextIdx] === '\u2212') combineSigns[opIdx] = -1;
+    else combineSigns[opIdx] = 1; // conv doesn't use sign
+    btn.classList.remove('subtract', 'convolve');
+    if (ops[nextIdx] === '\u2212') btn.classList.add('subtract');
+    if (ops[nextIdx] === '\u2217') btn.classList.add('convolve');
+    // Rebuild combined playback if active
+    if (combinedPlayOsc) { stopCombinedPlay(); startCombinedPlay(); }
+  }
 
-  sign23Btn.addEventListener('click', function() {
-    combineSigns[2] = combineSigns[2] === 1 ? -1 : 1;
-    sign23Btn.textContent = combineSigns[2] === 1 ? '+' : '\u2212';
-    sign23Btn.classList.toggle('subtract', combineSigns[2] === -1);
-  });
+  op12Btn.addEventListener('click', function() { cycleOp(op12Btn, 1); });
+  op23Btn.addEventListener('click', function() { cycleOp(op23Btn, 2); });
 
   fftCombinedBtn.addEventListener('click', function() {
     if (!combineActive) return;
     combineFft = !combineFft;
     fftCombinedBtn.classList.toggle('active', combineFft);
     fftCombinedBtn.textContent = combineFft ? 'IFFT' : 'FFT';
+  });
+
+  // --- Discrete convolution of two arrays ---
+  function discreteConvolve(a, b) {
+    var len = a.length + b.length - 1;
+    var result = new Float32Array(len);
+    for (var i = 0; i < a.length; i++) {
+      for (var j = 0; j < b.length; j++) {
+        result[i + j] += a[i] * b[j];
+      }
+    }
+    // Normalize to prevent clipping
+    var maxVal = 0;
+    for (var k = 0; k < len; k++) {
+      if (Math.abs(result[k]) > maxVal) maxVal = Math.abs(result[k]);
+    }
+    if (maxVal > 0) {
+      for (var k = 0; k < len; k++) result[k] /= maxVal;
+    }
+    return result;
+  }
+
+  // Generate one cycle of samples for a wave at audio rate
+  function generateWaveCycle(idx, sampleRate) {
+    var freq = parseFloat(document.getElementById('freq' + (idx + 1)).value);
+    var ampMult = parseFloat(document.getElementById('amp' + (idx + 1)).value);
+    var waveType = document.getElementById('type' + (idx + 1)).value;
+    var cycleSamples = Math.round(sampleRate / freq);
+    cycleSamples = Math.min(cycleSamples, sampleRate * 2);
+    var samples = new Float32Array(cycleSamples);
+    for (var i = 0; i < cycleSamples; i++) {
+      var angle = 2 * Math.PI * freq * i / sampleRate;
+      samples[i] = waveFnEval(waveType, angle) * ampMult;
+    }
+    return samples;
+  }
+
+  // Compute the combined signal as an audio buffer
+  function buildCombinedBuffer() {
+    if (!audioCtx) return null;
+    var sr = audioCtx.sampleRate;
+
+    // Start with W1 if enabled
+    var result = waveEnabled[0] ? generateWaveCycle(0, sr) : new Float32Array(1);
+
+    // Apply op12 with W2
+    if (waveEnabled[1]) {
+      var w2 = generateWaveCycle(1, sr);
+      if (combineOps[1] === '\u2217') {
+        result = discreteConvolve(result, w2);
+      } else {
+        // Add or subtract: match lengths by repeating shorter
+        var maxLen = Math.max(result.length, w2.length);
+        var combined = new Float32Array(maxLen);
+        var sign = combineSigns[1];
+        for (var i = 0; i < maxLen; i++) {
+          combined[i] = result[i % result.length] + sign * w2[i % w2.length];
+        }
+        result = combined;
+      }
+    }
+
+    // Apply op23 with W3
+    if (waveEnabled[2]) {
+      var w3 = generateWaveCycle(2, sr);
+      if (combineOps[2] === '\u2217') {
+        result = discreteConvolve(result, w3);
+      } else {
+        var maxLen = Math.max(result.length, w3.length);
+        var combined = new Float32Array(maxLen);
+        var sign = combineSigns[2];
+        for (var i = 0; i < maxLen; i++) {
+          combined[i] = result[i % result.length] + sign * w3[i % w3.length];
+        }
+        result = combined;
+      }
+    }
+
+    // Create looping AudioBuffer
+    var buf = audioCtx.createBuffer(1, result.length, sr);
+    buf.copyToChannel(result, 0);
+    return buf;
+  }
+
+  function startCombinedPlay() {
+    if (combinedPlayOsc) return;
+    ensureAudioCtx();
+    var buf = buildCombinedBuffer();
+    if (!buf) return;
+
+    var src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    var gain = audioCtx.createGain();
+    gain.gain.value = 0.3;
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start();
+
+    combinedPlayOsc = src;
+    combinedPlayGain = gain;
+    playCombinedBtn.classList.add('active');
+  }
+
+  function stopCombinedPlay() {
+    if (combinedPlayOsc) {
+      combinedPlayOsc.stop();
+      combinedPlayOsc.disconnect();
+      combinedPlayOsc = null;
+    }
+    if (combinedPlayGain) {
+      combinedPlayGain.disconnect();
+      combinedPlayGain = null;
+    }
+    playCombinedBtn.classList.remove('active');
+  }
+
+  playCombinedBtn.addEventListener('click', function() {
+    if (!combineActive) return;
+    if (combinedPlayOsc) {
+      stopCombinedPlay();
+    } else {
+      startCombinedPlay();
+    }
   });
 
   function updateLabel(slider, label) {
@@ -1312,6 +1452,66 @@ layout: default
       return waveFnEval(waveType, angle) * amp;
     }
 
+    // Compute visual combined signal with convolution support
+    function computeVisualCombined(width, t) {
+      // Generate pixel-domain samples for each enabled wave
+      function getWaveSamples(idx) {
+        var samples = new Float32Array(width + 1);
+        if (!waveEnabled[idx]) return null;
+        for (var x = 0; x <= width; x++) {
+          samples[x] = waveVal(idx, x, t);
+        }
+        return samples;
+      }
+
+      // Visual convolution (normalized to screen scale)
+      function visualConvolve(a, b) {
+        var len = a.length;
+        var result = new Float32Array(len);
+        var halfKern = Math.min(Math.floor(b.length / 2), 50); // limit kernel for performance
+        for (var i = 0; i < len; i++) {
+          var sum = 0;
+          for (var j = -halfKern; j <= halfKern; j++) {
+            var bi = j + halfKern;
+            var ai = i - j;
+            if (ai >= 0 && ai < len && bi < b.length) {
+              sum += a[ai] * b[bi];
+            }
+          }
+          result[i] = sum / (halfKern + 1);
+        }
+        return result;
+      }
+
+      // Start with W1
+      var result = getWaveSamples(0);
+      if (!result) result = new Float32Array(width + 1);
+
+      // Apply op12 with W2
+      var w2 = getWaveSamples(1);
+      if (w2) {
+        if (combineOps[1] === '\u2217') {
+          result = visualConvolve(result, w2);
+        } else {
+          var sign = combineSigns[1];
+          for (var i = 0; i <= width; i++) result[i] += sign * w2[i];
+        }
+      }
+
+      // Apply op23 with W3
+      var w3 = getWaveSamples(2);
+      if (w3) {
+        if (combineOps[2] === '\u2217') {
+          result = visualConvolve(result, w3);
+        } else {
+          var sign = combineSigns[2];
+          for (var i = 0; i <= width; i++) result[i] += sign * w3[i];
+        }
+      }
+
+      return result;
+    }
+
     // Draw audio visualization (behind waves if playing)
     if (audioPlaying) {
       drawAudioViz(w_css, h_css);
@@ -1345,9 +1545,22 @@ layout: default
       // Draw combined wave if active
       if (combineActive) {
         var combinedY = h_css * 0.5;
+        var hasConv = combineOps[1] === '\u2217' || combineOps[2] === '\u2217';
 
         if (combineFft) {
           drawCombinedFreqDomain(combinedY, w_css);
+        } else if (hasConv) {
+          // Compute combined with convolution visually
+          var combinedSamples = computeVisualCombined(w_css, t);
+          ctx.beginPath();
+          ctx.moveTo(0, combinedY);
+          for (var x = 0; x <= w_css; x++) {
+            ctx.lineTo(x, combinedY + combinedSamples[x]);
+          }
+          var combAlpha = controlsOpen ? 0.5 : 0.15;
+          ctx.strokeStyle = isLight ? 'rgba(180, 60, 180, ' + combAlpha + ')' : 'rgba(220, 140, 255, ' + combAlpha + ')';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
         } else {
           ctx.beginPath();
           ctx.moveTo(0, combinedY);

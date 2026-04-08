@@ -185,7 +185,7 @@
   font-weight: bold;
 }
 
-.combine-sign-btn {
+.combine-sign-btn, .combine-op-btn {
   background: rgba(108, 182, 255, 0.1);
   border: 1px solid #6cb6ff;
   border-radius: 3px;
@@ -205,6 +205,12 @@
     border-color: #ff6464;
     color: #ff6464;
     &:hover { background: rgba(255, 100, 100, 0.2); }
+  }
+  &.convolve {
+    background: rgba(220, 140, 255, 0.1);
+    border-color: #dc8cff;
+    color: #dc8cff;
+    &:hover { background: rgba(220, 140, 255, 0.2); }
   }
 
   @media screen and (max-width: 600px) {
@@ -631,7 +637,7 @@ body.light-mode .wave-controls {
 
   .combine-wave-label { color: #333; }
 
-  .combine-sign-btn {
+  .combine-sign-btn, .combine-op-btn {
     background: rgba(42, 122, 226, 0.08);
     border-color: #2a7ae2;
     color: #2a7ae2;
@@ -641,6 +647,12 @@ body.light-mode .wave-controls {
       border-color: #c83232;
       color: #c83232;
       &:hover { background: rgba(200, 50, 50, 0.15); }
+    }
+    &.convolve {
+      background: rgba(160, 60, 200, 0.08);
+      border-color: #a03cc8;
+      color: #a03cc8;
+      &:hover { background: rgba(160, 60, 200, 0.15); }
     }
   }
 
