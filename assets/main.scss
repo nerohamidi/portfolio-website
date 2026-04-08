@@ -360,6 +360,18 @@
   border-top: 1px solid #333;
 }
 
+.audio-mix-mode {
+  background: none;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #777;
+  font-size: 9px;
+  font-family: monospace;
+  padding: 1px 4px;
+  cursor: pointer;
+  &:hover { border-color: #888; color: #bbb; }
+}
+
 .audio-mix-gain-slider {
   width: 50px;
   accent-color: #b080ff;
@@ -655,6 +667,7 @@ body.light-mode .wave-controls {
 
   .audio-volume, .audio-seek { accent-color: #2a7ae2; }
   .audio-mix-section { border-top-color: #ddd; }
+  .audio-mix-mode { border-color: #ccc; color: #999; &:hover { border-color: #999; color: #555; } }
   .audio-mix-gain-slider { accent-color: #8050d0; }
   .audio-filter-section { border-top-color: #ddd; }
   .audio-filter-slider { accent-color: #c08020; }

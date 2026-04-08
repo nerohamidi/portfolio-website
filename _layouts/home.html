@@ -16,6 +16,7 @@ layout: default
     <span class="freq-value" id="amp1-val">1.00</span>
     <select id="type1" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option><option value="square">square</option><option value="sawtooth">saw</option><option value="triangle">tri</option></select>
     <button class="fft-toggle" id="fft1">FFT</button>
+    <button class="fft-toggle" id="play1">&#9654;</button>
   </div>
   <div class="wave-slider">
     <button class="wave-enable-btn active" id="enable2">W2</button>
@@ -25,8 +26,9 @@ layout: default
     <label for="amp2">Amp</label>
     <input type="range" id="amp2" min="0.1" max="2.0" value="1.0" step="0.05">
     <span class="freq-value" id="amp2-val">1.00</span>
-    <select id="type2" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
+    <select id="type2" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option><option value="square">square</option><option value="sawtooth">saw</option><option value="triangle">tri</option></select>
     <button class="fft-toggle" id="fft2">FFT</button>
+    <button class="fft-toggle" id="play2">&#9654;</button>
   </div>
   <div class="wave-slider">
     <button class="wave-enable-btn active" id="enable3">W3</button>
@@ -36,8 +38,9 @@ layout: default
     <label for="amp3">Amp</label>
     <input type="range" id="amp3" min="0.1" max="2.0" value="1.0" step="0.05">
     <span class="freq-value" id="amp3-val">1.00</span>
-    <select id="type3" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
+    <select id="type3" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option><option value="square">square</option><option value="sawtooth">saw</option><option value="triangle">tri</option></select>
     <button class="fft-toggle" id="fft3">FFT</button>
+    <button class="fft-toggle" id="play3">&#9654;</button>
   </div>
   <div class="wave-combine-section">
     <div class="wave-combine-header">
@@ -79,8 +82,11 @@ layout: default
         <div class="audio-filter-header">
           <span class="audio-filter-label">Mix</span>
           <button class="audio-viz-btn" id="audio-mix-w1">W1</button>
+          <button class="audio-mix-mode" id="audio-mix-mode1">add</button>
           <button class="audio-viz-btn" id="audio-mix-w2">W2</button>
+          <button class="audio-mix-mode" id="audio-mix-mode2">add</button>
           <button class="audio-viz-btn" id="audio-mix-w3">W3</button>
+          <button class="audio-mix-mode" id="audio-mix-mode3">add</button>
           <input type="range" id="audio-mix-gain" min="0" max="1" value="0.3" step="0.01" class="audio-mix-gain-slider">
           <span class="audio-filter-value" id="audio-mix-gain-label">30%</span>
         </div>
@@ -727,8 +733,10 @@ layout: default
   var audioFilterQSlider = document.getElementById('audio-filter-q');
   var audioFilterQLabel = document.getElementById('audio-filter-q-label');
   var audioMixBtns = [document.getElementById('audio-mix-w1'), document.getElementById('audio-mix-w2'), document.getElementById('audio-mix-w3')];
+  var audioMixModeBtns = [document.getElementById('audio-mix-mode1'), document.getElementById('audio-mix-mode2'), document.getElementById('audio-mix-mode3')];
   var audioMixGainSlider = document.getElementById('audio-mix-gain');
   var audioMixGainLabel = document.getElementById('audio-mix-gain-label');
+  var wavePlayBtns = [document.getElementById('play1'), document.getElementById('play2'), document.getElementById('play3')];
 
   var audioCtx = null;
   var audioSource = null;
@@ -737,9 +745,14 @@ layout: default
   var audioFilter = null;
   var audioFilterType = null; // null, 'lowpass', 'highpass', 'bandpass'
   var audioMixEnabled = [false, false, false];
+  var audioMixModes = ['add', 'add', 'add']; // 'add' or 'conv'
   var audioOscillators = [null, null, null];
   var audioOscGains = [null, null, null];
+  var audioConvolvers = [null, null, null];
+  var audioConvGains = [null, null, null];
   var audioMixGain = null; // summing node for oscillators
+  var wavePlayOscs = [null, null, null]; // standalone play oscillators
+  var wavePlayGains = [null, null, null];
   var audioElement = null;
   var audioPlaying = false;
   var audioShowWave = true;
@@ -757,6 +770,10 @@ layout: default
     try { audioGain.disconnect(); } catch(e) {}
     if (audioMixGain) { try { audioMixGain.disconnect(); } catch(e) {} }
     if (audioFilter) { try { audioFilter.disconnect(); } catch(e) {} }
+    for (var ci = 0; ci < 3; ci++) {
+      if (audioConvolvers[ci]) { try { audioConvolvers[ci].disconnect(); } catch(e) {} }
+      if (audioConvGains[ci]) { try { audioConvGains[ci].disconnect(); } catch(e) {} }
+    }
     try { audioAnalyser.disconnect(); } catch(e) {}
 
     // Determine the first node after the sources
@@ -777,9 +794,21 @@ layout: default
     // Connect audio source
     audioGain.connect(chainInput);
 
-    // Connect oscillator mix if any are active
-    var anyMix = audioMixEnabled[0] || audioMixEnabled[1] || audioMixEnabled[2];
-    if (anyMix) {
+    // Connect convolvers: audioGain -> convolver -> convGain -> chainInput
+    for (var ci = 0; ci < 3; ci++) {
+      if (audioMixEnabled[ci] && audioMixModes[ci] === 'conv' && audioConvolvers[ci]) {
+        audioGain.connect(audioConvolvers[ci]);
+        audioConvolvers[ci].connect(audioConvGains[ci]);
+        audioConvGains[ci].connect(chainInput);
+      }
+    }
+
+    // Connect oscillator mix (add mode) if any are active
+    var anyAdd = false;
+    for (var ai = 0; ai < 3; ai++) {
+      if (audioMixEnabled[ai] && audioMixModes[ai] === 'add') anyAdd = true;
+    }
+    if (anyAdd) {
       if (!audioMixGain) {
         audioMixGain = audioCtx.createGain();
       }
@@ -839,6 +868,58 @@ layout: default
   var waveAmpSliders = [document.getElementById('amp1'), document.getElementById('amp2'), document.getElementById('amp3')];
   var waveTypeSelects = [document.getElementById('type1'), document.getElementById('type2'), document.getElementById('type3')];
 
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioGain = audioCtx.createGain();
+      audioAnalyser = audioCtx.createAnalyser();
+      audioAnalyser.fftSize = 2048;
+      rebuildAudioChain();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  function waveTypeToOsc(waveType) {
+    return (waveType === 'sin' || waveType === 'cos') ? 'sine' : waveType;
+  }
+
+  // --- Standalone wave playback ---
+  function toggleWavePlay(idx) {
+    if (wavePlayOscs[idx]) {
+      // Stop
+      wavePlayOscs[idx].stop();
+      wavePlayOscs[idx].disconnect();
+      wavePlayOscs[idx] = null;
+      wavePlayGains[idx].disconnect();
+      wavePlayGains[idx] = null;
+      wavePlayBtns[idx].classList.remove('active');
+      return;
+    }
+    ensureAudioCtx();
+    var freq = parseFloat(waveSliders[idx].value);
+    var ampMult = parseFloat(waveAmpSliders[idx].value);
+    var waveType = waveTypeSelects[idx].value;
+
+    var osc = audioCtx.createOscillator();
+    osc.type = waveTypeToOsc(waveType);
+    osc.frequency.value = freq;
+
+    var gain = audioCtx.createGain();
+    gain.gain.value = ampMult * 0.3; // scale down to avoid clipping
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+
+    wavePlayOscs[idx] = osc;
+    wavePlayGains[idx] = gain;
+    wavePlayBtns[idx].classList.add('active');
+  }
+
+  wavePlayBtns[0].addEventListener('click', function() { toggleWavePlay(0); });
+  wavePlayBtns[1].addEventListener('click', function() { toggleWavePlay(1); });
+  wavePlayBtns[2].addEventListener('click', function() { toggleWavePlay(2); });
+
+  // --- Mix oscillators (add mode) ---
   function startOscillator(idx) {
     if (!audioCtx || audioOscillators[idx]) return;
     if (!audioMixGain) {
@@ -850,10 +931,7 @@ layout: default
     var waveType = waveTypeSelects[idx].value;
 
     var osc = audioCtx.createOscillator();
-    // Map wave type to Web Audio oscillator type
-    // cos maps to sine (phase difference is inaudible for steady tones)
-    var oscType = (waveType === 'sin' || waveType === 'cos') ? 'sine' : waveType;
-    osc.type = oscType;
+    osc.type = waveTypeToOsc(waveType);
     osc.frequency.value = freq;
 
     var gain = audioCtx.createGain();
@@ -880,35 +958,127 @@ layout: default
     rebuildAudioChain();
   }
 
+  // --- Convolution mode ---
+  function generateWaveBuffer(idx) {
+    var freq = parseFloat(waveSliders[idx].value);
+    var ampMult = parseFloat(waveAmpSliders[idx].value);
+    var waveType = waveTypeSelects[idx].value;
+    var sampleRate = audioCtx.sampleRate;
+    // Generate one cycle of the wave as impulse response
+    var cycleSamples = Math.round(sampleRate / freq);
+    // Cap at 2 seconds worth of samples to avoid huge buffers
+    cycleSamples = Math.min(cycleSamples, sampleRate * 2);
+    var buffer = audioCtx.createBuffer(1, cycleSamples, sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < cycleSamples; i++) {
+      var angle = 2 * Math.PI * freq * i / sampleRate;
+      data[i] = waveFnEval(waveType, angle) * ampMult / cycleSamples;
+    }
+    return buffer;
+  }
+
+  function startConvolver(idx) {
+    if (!audioCtx || audioConvolvers[idx]) return;
+    var conv = audioCtx.createConvolver();
+    conv.normalize = false;
+    conv.buffer = generateWaveBuffer(idx);
+
+    var gain = audioCtx.createGain();
+    gain.gain.value = parseFloat(audioMixGainSlider.value);
+
+    // Route: audioGain -> conv -> gain -> chainInput
+    audioConvolvers[idx] = conv;
+    audioConvGains[idx] = gain;
+    rebuildAudioChain();
+  }
+
+  function stopConvolver(idx) {
+    if (audioConvolvers[idx]) {
+      try { audioConvolvers[idx].disconnect(); } catch(e) {}
+      audioConvolvers[idx] = null;
+    }
+    if (audioConvGains[idx]) {
+      try { audioConvGains[idx].disconnect(); } catch(e) {}
+      audioConvGains[idx] = null;
+    }
+    rebuildAudioChain();
+  }
+
+  // --- Toggle mix on/off ---
   function toggleMixWave(idx) {
     if (!audioCtx) return;
     audioMixEnabled[idx] = !audioMixEnabled[idx];
     audioMixBtns[idx].classList.toggle('active', audioMixEnabled[idx]);
     if (audioMixEnabled[idx]) {
-      startOscillator(idx);
+      if (audioMixModes[idx] === 'conv') {
+        startConvolver(idx);
+      } else {
+        startOscillator(idx);
+      }
     } else {
       stopOscillator(idx);
+      stopConvolver(idx);
+    }
+  }
+
+  // --- Toggle mix mode (add/conv) ---
+  function toggleMixMode(idx) {
+    var wasEnabled = audioMixEnabled[idx];
+    // Stop current if active
+    if (wasEnabled) {
+      stopOscillator(idx);
+      stopConvolver(idx);
+    }
+    // Toggle mode
+    audioMixModes[idx] = audioMixModes[idx] === 'add' ? 'conv' : 'add';
+    audioMixModeBtns[idx].textContent = audioMixModes[idx];
+    // Restart with new mode if was enabled
+    if (wasEnabled) {
+      if (audioMixModes[idx] === 'conv') {
+        startConvolver(idx);
+      } else {
+        startOscillator(idx);
+      }
     }
   }
 
   audioMixBtns[0].addEventListener('click', function() { toggleMixWave(0); });
   audioMixBtns[1].addEventListener('click', function() { toggleMixWave(1); });
   audioMixBtns[2].addEventListener('click', function() { toggleMixWave(2); });
+  audioMixModeBtns[0].addEventListener('click', function() { toggleMixMode(0); });
+  audioMixModeBtns[1].addEventListener('click', function() { toggleMixMode(1); });
+  audioMixModeBtns[2].addEventListener('click', function() { toggleMixMode(2); });
 
   audioMixGainSlider.addEventListener('input', function() {
     var v = parseFloat(audioMixGainSlider.value);
     audioMixGainLabel.textContent = Math.round(v * 100) + '%';
     if (audioMixGain) audioMixGain.gain.value = v;
+    for (var i = 0; i < 3; i++) {
+      if (audioConvGains[i]) audioConvGains[i].gain.value = v;
+    }
   });
 
-  // Keep oscillator params in sync with wave control sliders
+  // Keep oscillator/convolver params in sync with wave control sliders
   function updateOscillatorParams(idx) {
-    if (!audioOscillators[idx]) return;
-    audioOscillators[idx].frequency.value = parseFloat(waveSliders[idx].value);
-    var wt = waveTypeSelects[idx].value;
-    audioOscillators[idx].type = (wt === 'sin' || wt === 'cos') ? 'sine' : wt;
-    if (audioOscGains[idx]) {
-      audioOscGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value);
+    // Update standalone play oscillator
+    if (wavePlayOscs[idx]) {
+      wavePlayOscs[idx].frequency.value = parseFloat(waveSliders[idx].value);
+      wavePlayOscs[idx].type = waveTypeToOsc(waveTypeSelects[idx].value);
+      if (wavePlayGains[idx]) {
+        wavePlayGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value) * 0.3;
+      }
+    }
+    // Update mix oscillator
+    if (audioOscillators[idx]) {
+      audioOscillators[idx].frequency.value = parseFloat(waveSliders[idx].value);
+      audioOscillators[idx].type = waveTypeToOsc(waveTypeSelects[idx].value);
+      if (audioOscGains[idx]) {
+        audioOscGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value);
+      }
+    }
+    // Update convolver buffer
+    if (audioConvolvers[idx]) {
+      audioConvolvers[idx].buffer = generateWaveBuffer(idx);
     }
   }
 
@@ -933,13 +1103,7 @@ layout: default
       try { audioSource.disconnect(); } catch(err) {}
     }
 
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      audioGain = audioCtx.createGain();
-      audioAnalyser = audioCtx.createAnalyser();
-      audioAnalyser.fftSize = 2048;
-      rebuildAudioChain();
-    }
+    ensureAudioCtx();
 
     audioElement = new Audio();
     audioElement.src = src;
