@@ -718,6 +718,42 @@ layout: default
     return -posPhase;
   }
 
+  // Get Fourier series harmonics for a wave type
+  // Returns array of {n, mag, phase} objects (positive freq side)
+  function getHarmonics(waveType, ampMult, numHarmonics) {
+    var harmonics = [];
+    switch (waveType) {
+      case 'sin':
+        harmonics.push({n: 1, mag: ampMult, phase: -Math.PI / 2});
+        break;
+      case 'cos':
+        harmonics.push({n: 1, mag: ampMult, phase: 0});
+        break;
+      case 'square':
+        // Fourier: sum of (4/(n*pi)) * sin(n*x) for odd n
+        for (var n = 1; n <= numHarmonics; n += 2) {
+          harmonics.push({n: n, mag: ampMult * 4 / (n * Math.PI), phase: -Math.PI / 2});
+        }
+        break;
+      case 'sawtooth':
+        // Fourier: sum of (2/(n*pi)) * (-1)^(n+1) * sin(n*x)
+        for (var n = 1; n <= numHarmonics; n++) {
+          var sign = (n % 2 === 0) ? -1 : 1;
+          harmonics.push({n: n, mag: ampMult * 2 / (n * Math.PI), phase: sign > 0 ? -Math.PI / 2 : Math.PI / 2});
+        }
+        break;
+      case 'triangle':
+        // Fourier: sum of (8/(n^2*pi^2)) * (-1)^((n-1)/2) * sin(n*x) for odd n
+        for (var n = 1; n <= numHarmonics; n += 2) {
+          var k = (n - 1) / 2;
+          var sign = (k % 2 === 0) ? 1 : -1;
+          harmonics.push({n: n, mag: ampMult * 8 / (n * n * Math.PI * Math.PI), phase: sign > 0 ? -Math.PI / 2 : Math.PI / 2});
+        }
+        break;
+    }
+    return harmonics;
+  }
+
   function drawFreqDomain(freq, ampMult, waveType, baseY, w_css) {
     var spikeColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
     var phaseColor = isLight ? 'rgba(50, 130, 50,' : 'rgba(100, 220, 140,';
@@ -733,44 +769,57 @@ layout: default
     // Magnitude plot (upper)
     var magY = baseY - gap / 2;
     var info = drawFreqAxis(magY, w_css, axisColor, textColor, fontSize, '|X(f)|');
-    var scaledH = spikeHeight * ampMult;
 
     // Title
     ctx.fillStyle = textColor;
     ctx.font = isMobile ? '9px monospace' : '11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('Magnitude', info.margin, magY - scaledH - 10);
-
-    var posX = info.center + freq * info.pxPerHz;
-    var negX = info.center - freq * info.pxPerHz;
-    drawSpike(posX, magY, scaledH, spikeColor + ' 0.9)', isMobile);
-    drawSpike(negX, magY, scaledH, spikeColor + ' 0.9)', isMobile);
-
-    // Magnitude labels
-    ctx.fillStyle = spikeColor + ' 1)';
-    ctx.font = labelFontSize;
-    ctx.textAlign = 'center';
-    ctx.fillText(ampMult.toFixed(2), posX, magY - scaledH - 6);
-    ctx.fillText(ampMult.toFixed(2), negX, magY - scaledH - 6);
-    // Freq labels below axis
-    ctx.fillText(freq.toFixed(2), posX, magY + 24);
-    ctx.fillText('-' + freq.toFixed(2), negX, magY + 24);
+    ctx.fillText('Magnitude', info.margin, magY - spikeHeight * ampMult - 10);
 
     // Phase plot (lower)
     var phaseY = baseY + gap / 2 + phaseHeight;
     drawFreqAxis(phaseY, w_css, axisColor, textColor, fontSize, '\u2220X(f)');
     drawPhaseGrid(phaseY, phaseHeight, info.margin, w_css, axisColor, textColor, fontSize);
 
-    // Title
     ctx.fillStyle = textColor;
     ctx.font = isMobile ? '9px monospace' : '11px monospace';
     ctx.textAlign = 'left';
     ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 10);
 
-    var posPhase = getWavePhase(waveType, 1);
-    var negPhaseVal = getNegPhase(posPhase);
-    drawPhaseDot(posX, phaseY, posPhase, phaseHeight, phaseColor + ' 0.9)', labelFontSize, isMobile);
-    drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, phaseColor + ' 0.9)', labelFontSize, isMobile);
+    // Get harmonics and draw each
+    var maxHarmonics = isMobile ? 7 : 15;
+    var harmonics = getHarmonics(waveType, ampMult, maxHarmonics);
+
+    for (var hi = 0; hi < harmonics.length; hi++) {
+      var h = harmonics[hi];
+      var hFreq = freq * h.n;
+      var scaledH = spikeHeight * h.mag;
+      var posX = info.center + hFreq * info.pxPerHz;
+      var negX = info.center - hFreq * info.pxPerHz;
+      var alpha = hi === 0 ? 0.9 : 0.6;
+
+      // Only draw if within visible axis range
+      if (posX > w_css - info.margin || negX < info.margin) continue;
+
+      drawSpike(posX, magY, scaledH, spikeColor + ' ' + alpha + ')', isMobile);
+      drawSpike(negX, magY, scaledH, spikeColor + ' ' + alpha + ')', isMobile);
+
+      // Labels for fundamental and first few harmonics
+      if (hi < 4) {
+        ctx.fillStyle = spikeColor + ' 1)';
+        ctx.font = labelFontSize;
+        ctx.textAlign = 'center';
+        ctx.fillText(h.mag.toFixed(2), posX, magY - scaledH - 6);
+        var freqLabel = h.n === 1 ? freq.toFixed(2) : (hFreq).toFixed(2);
+        ctx.fillText(freqLabel, posX, magY + 24);
+        ctx.fillText('-' + freqLabel, negX, magY + 24);
+      }
+
+      // Phase dots
+      var negPhaseVal = getNegPhase(h.phase);
+      drawPhaseDot(posX, phaseY, h.phase, phaseHeight, phaseColor + ' ' + alpha + ')', labelFontSize, isMobile);
+      drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, phaseColor + ' ' + alpha + ')', labelFontSize, isMobile);
+    }
 
     ctx.textAlign = 'start';
   }
@@ -811,36 +860,48 @@ layout: default
     ctx.textAlign = 'left';
     ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 10);
 
-    // Draw spikes and phase dots for each wave
+    // Draw spikes and phase dots for each wave (with harmonics)
+    var maxHarmonics = isMobile ? 7 : 15;
     for (var i = 0; i < 3; i++) {
       var freq = parseFloat(sliderEls[i].value);
       var ampMult = parseFloat(ampSliderEls[i].value);
       var waveType = typeSelectEls[i].value;
       var sign = combineSigns[i];
       var color = waveColors[i];
-      var scaledH = spikeHeight * ampMult;
+      var harmonics = getHarmonics(waveType, ampMult, maxHarmonics);
 
-      var posX = info.center + freq * info.pxPerHz;
-      var negX = info.center - freq * info.pxPerHz;
+      for (var hi = 0; hi < harmonics.length; hi++) {
+        var h = harmonics[hi];
+        var hFreq = freq * h.n;
+        var scaledH = spikeHeight * h.mag;
+        var posX = info.center + hFreq * info.pxPerHz;
+        var negX = info.center - hFreq * info.pxPerHz;
+        var alpha = hi === 0 ? 0.9 : 0.5;
 
-      // Magnitude spikes (always positive height)
-      drawSpike(posX, magY, scaledH, color + ' 0.9)', isMobile);
-      drawSpike(negX, magY, scaledH, color + ' 0.9)', isMobile);
+        if (posX > w_css - info.margin || negX < info.margin) continue;
 
-      // Magnitude labels
-      ctx.fillStyle = color + ' 1)';
-      ctx.font = labelFontSize;
-      ctx.textAlign = 'center';
-      ctx.fillText(ampMult.toFixed(2), posX, magY - scaledH - 6);
-      // Freq label
-      ctx.fillText((sign < 0 ? '\u2212' : '') + freq.toFixed(2), posX, magY + 24);
-      ctx.fillText((sign < 0 ? '\u2212' : '') + '-' + freq.toFixed(2), negX, magY + 24);
+        drawSpike(posX, magY, scaledH, color + ' ' + alpha + ')', isMobile);
+        drawSpike(negX, magY, scaledH, color + ' ' + alpha + ')', isMobile);
 
-      // Phase dots
-      var posPhase = getWavePhase(waveType, sign);
-      var negPhaseVal = getNegPhase(posPhase);
-      drawPhaseDot(posX, phaseY, posPhase, phaseHeight, color + ' 0.9)', labelFontSize, isMobile);
-      drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, color + ' 0.9)', labelFontSize, isMobile);
+        // Labels for fundamental only
+        if (hi === 0) {
+          ctx.fillStyle = color + ' 1)';
+          ctx.font = labelFontSize;
+          ctx.textAlign = 'center';
+          ctx.fillText(h.mag.toFixed(2), posX, magY - scaledH - 6);
+          ctx.fillText((sign < 0 ? '\u2212' : '') + freq.toFixed(2), posX, magY + 24);
+          ctx.fillText((sign < 0 ? '\u2212' : '') + '-' + freq.toFixed(2), negX, magY + 24);
+        }
+
+        // Phase dots — adjust phase for sign
+        var hPhase = h.phase;
+        if (sign < 0) hPhase += Math.PI;
+        while (hPhase > Math.PI) hPhase -= 2 * Math.PI;
+        while (hPhase < -Math.PI) hPhase += 2 * Math.PI;
+        var negPhaseVal = getNegPhase(hPhase);
+        drawPhaseDot(posX, phaseY, hPhase, phaseHeight, color + ' ' + alpha + ')', labelFontSize, isMobile);
+        drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, color + ' ' + alpha + ')', labelFontSize, isMobile);
+      }
     }
 
     // Legend
