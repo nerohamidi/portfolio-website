@@ -75,6 +75,7 @@ layout: default
   </div>
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
+    <button class="hide-waves-toggle" id="hide-text">Hide Text</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
   </div>
 </div>
@@ -224,6 +225,20 @@ layout: default
     wavesHidden = !wavesHidden;
     hideBtn.textContent = wavesHidden ? 'Show Waves' : 'Hide Waves';
     hideBtn.classList.toggle('active', wavesHidden);
+  });
+
+  var hideTextBtn = document.getElementById('hide-text');
+  var textHidden = false;
+  hideTextBtn.addEventListener('click', function() {
+    textHidden = !textHidden;
+    hideTextBtn.textContent = textHidden ? 'Show Text' : 'Hide Text';
+    hideTextBtn.classList.toggle('active', textHidden);
+    var pageContent = document.querySelector('.page-content');
+    var header = document.querySelector('.site-header');
+    var footer = document.querySelector('.site-footer');
+    if (pageContent) pageContent.style.display = textHidden ? 'none' : '';
+    if (header) header.style.display = textHidden ? 'none' : '';
+    if (footer) footer.style.display = textHidden ? 'none' : '';
   });
 
   function updateFftButtons() {
