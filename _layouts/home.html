@@ -54,7 +54,8 @@ layout: default
   </div>
   <div class="audio-section">
     <div class="audio-header">
-      <label class="audio-upload-btn" for="audio-file">Upload Audio</label>
+      <button class="audio-upload-btn" id="audio-demo">Demo</button>
+      <label class="audio-upload-btn" for="audio-file">Upload</label>
       <input type="file" id="audio-file" accept="audio/*" style="display:none">
       <span class="audio-filename" id="audio-filename"></span>
     </div>
@@ -619,11 +620,8 @@ layout: default
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
 
-  audioFileInput.addEventListener('change', function(e) {
-    var file = e.target.files[0];
-    if (!file) return;
-
-    audioFilename.textContent = file.name.length > 20 ? file.name.substring(0, 17) + '...' : file.name;
+  function loadAudioSrc(src, name) {
+    audioFilename.textContent = name.length > 20 ? name.substring(0, 17) + '...' : name;
     audioControlsDiv.classList.remove('hidden');
 
     // Clean up previous
@@ -645,7 +643,7 @@ layout: default
     }
 
     audioElement = new Audio();
-    audioElement.src = URL.createObjectURL(file);
+    audioElement.src = src;
     audioElement.crossOrigin = 'anonymous';
 
     audioElement.addEventListener('loadedmetadata', function() {
@@ -665,6 +663,17 @@ layout: default
     audioPlaying = false;
     audioPlayBtn.textContent = 'Play';
     audioPlayBtn.classList.remove('active');
+  }
+
+  audioFileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    loadAudioSrc(URL.createObjectURL(file), file.name);
+  });
+
+  var audioDemoBtn = document.getElementById('audio-demo');
+  audioDemoBtn.addEventListener('click', function() {
+    loadAudioSrc('{{ "/assets/audio/symphony.mp3" | relative_url }}', 'symphony.mp3');
   });
 
   audioPlayBtn.addEventListener('click', function() {
