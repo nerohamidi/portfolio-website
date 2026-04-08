@@ -242,196 +242,271 @@ layout: default
     return Math.min(50, window.innerHeight * 0.06);
   }
 
-  function drawFreqDomain(freq, baseY, w_css) {
-    var spikeColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
-    var axisColor = isLight ? 'rgba(100, 100, 100, 0.4)' : 'rgba(150, 150, 150, 0.4)';
-    var textColor = isLight ? 'rgba(100, 100, 100, 0.7)' : 'rgba(180, 180, 180, 0.7)';
+  // Shared helper: draw a frequency axis with tick marks
+  function drawFreqAxis(axisY, w_css, axisColor, textColor, fontSize, label) {
     var isMobile = w_css < 600;
     var margin = isMobile ? 15 : 40;
-    var fontSize = isMobile ? '9px monospace' : '11px monospace';
-    var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
+    var pxPerHz = w_css * (isMobile ? 0.35 : 0.3);
+    var center = w_css / 2;
 
-    // Draw frequency axis
     ctx.strokeStyle = axisColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(margin, baseY);
-    ctx.lineTo(w_css - margin, baseY);
+    ctx.moveTo(margin, axisY);
+    ctx.lineTo(w_css - margin, axisY);
     ctx.stroke();
 
-    // Axis labels
     ctx.fillStyle = textColor;
     ctx.font = fontSize;
     ctx.textAlign = 'center';
-    ctx.fillText('0', w_css / 2, baseY + 14);
-    if (!isMobile) ctx.fillText('f (Hz)', w_css - 60, baseY - 8);
+    ctx.fillText('0', center, axisY + 14);
+    if (!isMobile && label) ctx.fillText(label, w_css - 60, axisY - 8);
 
-    // Tick marks at 0.25 intervals
-    var pxPerHz = w_css * (isMobile ? 0.35 : 0.3);
-    var center = w_css / 2;
     for (var tick = -1.0; tick <= 1.0; tick += 0.25) {
       if (Math.abs(tick) < 0.01) continue;
       var tx = center + tick * pxPerHz;
       ctx.strokeStyle = axisColor;
       ctx.beginPath();
-      ctx.moveTo(tx, baseY - 3);
-      ctx.lineTo(tx, baseY + 3);
+      ctx.moveTo(tx, axisY - 3);
+      ctx.lineTo(tx, axisY + 3);
       ctx.stroke();
     }
 
-    // Positive frequency delta spike
-    var spikeHeight = isMobile ? 30 : 40;
+    return { pxPerHz: pxPerHz, center: center, margin: margin };
+  }
+
+  // Draw a single magnitude spike with arrowhead at given x position
+  function drawSpike(posX, axisY, height, color, isMobile) {
     var arrowSize = isMobile ? 3 : 4;
-    var posX = center + freq * pxPerHz;
-    ctx.strokeStyle = spikeColor + ' 0.9)';
+    ctx.strokeStyle = color;
     ctx.lineWidth = isMobile ? 2 : 3;
     ctx.beginPath();
-    ctx.moveTo(posX, baseY);
-    ctx.lineTo(posX, baseY - spikeHeight);
+    ctx.moveTo(posX, axisY);
+    ctx.lineTo(posX, axisY - height);
     ctx.stroke();
 
-    // Arrowhead
+    var tipY = axisY - height;
     ctx.beginPath();
-    ctx.moveTo(posX, baseY - spikeHeight);
-    ctx.lineTo(posX - arrowSize, baseY - spikeHeight + arrowSize * 2);
-    ctx.lineTo(posX + arrowSize, baseY - spikeHeight + arrowSize * 2);
+    ctx.moveTo(posX, tipY);
+    ctx.lineTo(posX - arrowSize, tipY + arrowSize * 2);
+    ctx.lineTo(posX + arrowSize, tipY + arrowSize * 2);
     ctx.closePath();
-    ctx.fillStyle = spikeColor + ' 0.9)';
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // Draw a phase dot at given x position, with phase value mapped to vertical position
+  function drawPhaseDot(posX, axisY, phase, maxPhaseHeight, color, labelFontSize, isMobile) {
+    // Map phase from [-pi, pi] to [-maxPhaseHeight, maxPhaseHeight]
+    var py = axisY - (phase / Math.PI) * maxPhaseHeight;
+    var r = isMobile ? 3 : 4;
+    ctx.beginPath();
+    ctx.arc(posX, py, r, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
     ctx.fill();
 
-    // Label
+    // Label the phase value
+    ctx.font = labelFontSize;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color;
+    var phaseLabel = formatPhase(phase);
+    ctx.fillText(phaseLabel, posX, py - r - 4);
+  }
+
+  // Format phase as fraction of pi
+  function formatPhase(phase) {
+    // Normalize to [-pi, pi]
+    var normalized = phase;
+    while (normalized > Math.PI) normalized -= 2 * Math.PI;
+    while (normalized < -Math.PI) normalized += 2 * Math.PI;
+
+    if (Math.abs(normalized) < 0.01) return '0';
+    if (Math.abs(normalized - Math.PI) < 0.01 || Math.abs(normalized + Math.PI) < 0.01) return '\u00b1\u03c0';
+    if (Math.abs(normalized - Math.PI / 2) < 0.01) return '\u03c0/2';
+    if (Math.abs(normalized + Math.PI / 2) < 0.01) return '-\u03c0/2';
+    if (Math.abs(normalized - Math.PI / 4) < 0.01) return '\u03c0/4';
+    if (Math.abs(normalized + Math.PI / 4) < 0.01) return '-\u03c0/4';
+    if (Math.abs(normalized - 3 * Math.PI / 4) < 0.01) return '3\u03c0/4';
+    if (Math.abs(normalized + 3 * Math.PI / 4) < 0.01) return '-3\u03c0/4';
+    return (normalized / Math.PI).toFixed(2) + '\u03c0';
+  }
+
+  // Get the phase of a single wave at positive frequency
+  // sin(2πft) -> phase = -π/2 at +f
+  // cos(2πft) -> phase = 0 at +f
+  // Sign flip adds π to phase
+  function getWavePhase(waveType, sign) {
+    var base = (waveType === 'cos') ? 0 : -Math.PI / 2;
+    if (sign < 0) base += Math.PI;
+    // Normalize
+    while (base > Math.PI) base -= 2 * Math.PI;
+    while (base < -Math.PI) base += 2 * Math.PI;
+    return base;
+  }
+
+  // Negative frequency phase is conjugate (negated)
+  function getNegPhase(posPhase) {
+    return -posPhase;
+  }
+
+  function drawFreqDomain(freq, ampMult, waveType, baseY, w_css) {
+    var spikeColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
+    var phaseColor = isLight ? 'rgba(50, 130, 50,' : 'rgba(100, 220, 140,';
+    var axisColor = isLight ? 'rgba(100, 100, 100, 0.4)' : 'rgba(150, 150, 150, 0.4)';
+    var textColor = isLight ? 'rgba(100, 100, 100, 0.7)' : 'rgba(180, 180, 180, 0.7)';
+    var isMobile = w_css < 600;
+    var fontSize = isMobile ? '9px monospace' : '11px monospace';
+    var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
+    var spikeHeight = isMobile ? 25 : 35;
+    var phaseHeight = isMobile ? 18 : 25;
+    var gap = isMobile ? 20 : 30;
+
+    // Magnitude plot (upper)
+    var magY = baseY - gap / 2;
+    var info = drawFreqAxis(magY, w_css, axisColor, textColor, fontSize, '|X(f)|');
+    var scaledH = spikeHeight * ampMult;
+
+    // Title
+    ctx.fillStyle = textColor;
+    ctx.font = isMobile ? '9px monospace' : '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Magnitude', info.margin, magY - scaledH - 10);
+
+    var posX = info.center + freq * info.pxPerHz;
+    var negX = info.center - freq * info.pxPerHz;
+    drawSpike(posX, magY, scaledH, spikeColor + ' 0.9)', isMobile);
+    drawSpike(negX, magY, scaledH, spikeColor + ' 0.9)', isMobile);
+
+    // Magnitude labels
     ctx.fillStyle = spikeColor + ' 1)';
     ctx.font = labelFontSize;
     ctx.textAlign = 'center';
-    ctx.fillText(freq.toFixed(2), posX, baseY - spikeHeight - 8);
+    ctx.fillText(ampMult.toFixed(2), posX, magY - scaledH - 6);
+    ctx.fillText(ampMult.toFixed(2), negX, magY - scaledH - 6);
+    // Freq labels below axis
+    ctx.fillText(freq.toFixed(2), posX, magY + 24);
+    ctx.fillText('-' + freq.toFixed(2), negX, magY + 24);
 
-    // Negative frequency delta spike
-    var negX = center - freq * pxPerHz;
-    ctx.strokeStyle = spikeColor + ' 0.9)';
-    ctx.lineWidth = isMobile ? 2 : 3;
+    // Phase plot (lower)
+    var phaseY = baseY + gap / 2 + phaseHeight;
+    drawFreqAxis(phaseY, w_css, axisColor, textColor, fontSize, '\u2220X(f)');
+
+    // Phase axis scale lines at ±π
+    ctx.strokeStyle = axisColor;
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(negX, baseY);
-    ctx.lineTo(negX, baseY - spikeHeight);
+    ctx.moveTo(info.margin, phaseY - phaseHeight);
+    ctx.lineTo(w_css - info.margin, phaseY - phaseHeight);
     ctx.stroke();
-
     ctx.beginPath();
-    ctx.moveTo(negX, baseY - spikeHeight);
-    ctx.lineTo(negX - arrowSize, baseY - spikeHeight + arrowSize * 2);
-    ctx.lineTo(negX + arrowSize, baseY - spikeHeight + arrowSize * 2);
-    ctx.closePath();
-    ctx.fillStyle = spikeColor + ' 0.9)';
-    ctx.fill();
+    ctx.moveTo(info.margin, phaseY + phaseHeight);
+    ctx.lineTo(w_css - info.margin, phaseY + phaseHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
-    ctx.fillStyle = spikeColor + ' 1)';
-    ctx.font = labelFontSize;
-    ctx.textAlign = 'center';
-    ctx.fillText('-' + freq.toFixed(2), negX, baseY - spikeHeight - 8);
+    // ±π labels
+    ctx.fillStyle = textColor;
+    ctx.font = fontSize;
+    ctx.textAlign = 'right';
+    ctx.fillText('\u03c0', info.margin - 4, phaseY - phaseHeight + 4);
+    ctx.fillText('-\u03c0', info.margin - 4, phaseY + phaseHeight + 4);
+
+    // Title
+    ctx.textAlign = 'left';
+    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 6);
+
+    var posPhase = getWavePhase(waveType, 1);
+    var negPhaseVal = getNegPhase(posPhase);
+    drawPhaseDot(posX, phaseY, posPhase, phaseHeight, phaseColor + ' 0.9)', labelFontSize, isMobile);
+    drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, phaseColor + ' 0.9)', labelFontSize, isMobile);
 
     ctx.textAlign = 'start';
   }
 
   function drawCombinedFreqDomain(baseY, w_css) {
-    var spikeColor = isLight ? 'rgba(140, 40, 140,' : 'rgba(220, 140, 255,';
     var axisColor = isLight ? 'rgba(100, 100, 100, 0.4)' : 'rgba(150, 150, 150, 0.4)';
     var textColor = isLight ? 'rgba(100, 100, 100, 0.7)' : 'rgba(180, 180, 180, 0.7)';
     var isMobile = w_css < 600;
-    var margin = isMobile ? 15 : 40;
     var fontSize = isMobile ? '9px monospace' : '11px monospace';
     var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
+    var spikeHeight = isMobile ? 25 : 35;
+    var phaseHeight = isMobile ? 18 : 25;
+    var gap = isMobile ? 20 : 30;
 
-    // Draw frequency axis
-    ctx.strokeStyle = axisColor;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(margin, baseY);
-    ctx.lineTo(w_css - margin, baseY);
-    ctx.stroke();
-
-    // Axis labels
-    ctx.fillStyle = textColor;
-    ctx.font = fontSize;
-    ctx.textAlign = 'center';
-    ctx.fillText('0', w_css / 2, baseY + 14);
-    if (!isMobile) ctx.fillText('f (Hz)', w_css - 60, baseY - 8);
-
-    // Tick marks
-    var pxPerHz = w_css * (isMobile ? 0.35 : 0.3);
-    var center = w_css / 2;
-    for (var tick = -1.0; tick <= 1.0; tick += 0.25) {
-      if (Math.abs(tick) < 0.01) continue;
-      var tx = center + tick * pxPerHz;
-      ctx.strokeStyle = axisColor;
-      ctx.beginPath();
-      ctx.moveTo(tx, baseY - 3);
-      ctx.lineTo(tx, baseY + 3);
-      ctx.stroke();
-    }
-
-    // Draw a spike for each wave component with its sign
-    var spikeHeight = isMobile ? 30 : 40;
-    var arrowSize = isMobile ? 3 : 4;
     var sliderEls = [slider1, slider2, slider3];
     var ampSliderEls = [ampSlider1, ampSlider2, ampSlider3];
-    // Colors per wave for distinguishability
+    var typeSelectEls = [typeSelect1, typeSelect2, typeSelect3];
     var waveColors = isLight
       ? ['rgba(42, 122, 226,', 'rgba(34, 160, 80,', 'rgba(200, 120, 20,']
       : ['rgba(108, 182, 255,', 'rgba(100, 220, 140,', 'rgba(255, 180, 80,'];
 
+    // Magnitude plot (upper)
+    var magY = baseY - gap / 2;
+    var info = drawFreqAxis(magY, w_css, axisColor, textColor, fontSize, '|X(f)|');
+
+    ctx.fillStyle = textColor;
+    ctx.font = isMobile ? '9px monospace' : '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Magnitude', info.margin, magY - spikeHeight * 2 - 10);
+
+    // Phase plot (lower)
+    var phaseY = baseY + gap / 2 + phaseHeight;
+    drawFreqAxis(phaseY, w_css, axisColor, textColor, fontSize, '\u2220X(f)');
+
+    // Phase axis scale lines at ±π
+    ctx.strokeStyle = axisColor;
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(info.margin, phaseY - phaseHeight);
+    ctx.lineTo(w_css - info.margin, phaseY - phaseHeight);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(info.margin, phaseY + phaseHeight);
+    ctx.lineTo(w_css - info.margin, phaseY + phaseHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = textColor;
+    ctx.font = fontSize;
+    ctx.textAlign = 'right';
+    ctx.fillText('\u03c0', info.margin - 4, phaseY - phaseHeight + 4);
+    ctx.fillText('-\u03c0', info.margin - 4, phaseY + phaseHeight + 4);
+
+    ctx.textAlign = 'left';
+    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 6);
+
+    // Draw spikes and phase dots for each wave
     for (var i = 0; i < 3; i++) {
       var freq = parseFloat(sliderEls[i].value);
       var ampMult = parseFloat(ampSliderEls[i].value);
+      var waveType = typeSelectEls[i].value;
       var sign = combineSigns[i];
-      var scaledHeight = spikeHeight * ampMult * Math.abs(sign);
       var color = waveColors[i];
+      var scaledH = spikeHeight * ampMult;
 
-      // Positive frequency spike
-      var posX = center + freq * pxPerHz;
-      ctx.strokeStyle = color + ' 0.9)';
-      ctx.lineWidth = isMobile ? 2 : 3;
-      ctx.beginPath();
-      ctx.moveTo(posX, baseY);
-      ctx.lineTo(posX, baseY - sign * scaledHeight);
-      ctx.stroke();
+      var posX = info.center + freq * info.pxPerHz;
+      var negX = info.center - freq * info.pxPerHz;
 
-      // Arrowhead (points in direction of spike)
-      var tipY = baseY - sign * scaledHeight;
-      var arrowDir = sign > 0 ? 1 : -1;
-      ctx.beginPath();
-      ctx.moveTo(posX, tipY);
-      ctx.lineTo(posX - arrowSize, tipY + arrowDir * arrowSize * 2);
-      ctx.lineTo(posX + arrowSize, tipY + arrowDir * arrowSize * 2);
-      ctx.closePath();
-      ctx.fillStyle = color + ' 0.9)';
-      ctx.fill();
+      // Magnitude spikes (always positive height)
+      drawSpike(posX, magY, scaledH, color + ' 0.9)', isMobile);
+      drawSpike(negX, magY, scaledH, color + ' 0.9)', isMobile);
 
-      // Label
+      // Magnitude labels
       ctx.fillStyle = color + ' 1)';
       ctx.font = labelFontSize;
       ctx.textAlign = 'center';
-      var labelY = sign > 0 ? tipY - 8 : tipY + 16;
-      ctx.fillText((sign < 0 ? '\u2212' : '') + freq.toFixed(2), posX, labelY);
+      ctx.fillText(ampMult.toFixed(2), posX, magY - scaledH - 6);
+      // Freq label
+      ctx.fillText((sign < 0 ? '\u2212' : '') + freq.toFixed(2), posX, magY + 24);
+      ctx.fillText((sign < 0 ? '\u2212' : '') + '-' + freq.toFixed(2), negX, magY + 24);
 
-      // Negative frequency spike (mirror)
-      var negX = center - freq * pxPerHz;
-      ctx.strokeStyle = color + ' 0.9)';
-      ctx.lineWidth = isMobile ? 2 : 3;
-      ctx.beginPath();
-      ctx.moveTo(negX, baseY);
-      ctx.lineTo(negX, baseY - sign * scaledHeight);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(negX, tipY);
-      ctx.lineTo(negX - arrowSize, tipY + arrowDir * arrowSize * 2);
-      ctx.lineTo(negX + arrowSize, tipY + arrowDir * arrowSize * 2);
-      ctx.closePath();
-      ctx.fillStyle = color + ' 0.9)';
-      ctx.fill();
-
-      ctx.fillStyle = color + ' 1)';
-      ctx.font = labelFontSize;
-      ctx.textAlign = 'center';
-      ctx.fillText((sign < 0 ? '\u2212' : '') + '-' + freq.toFixed(2), negX, labelY);
+      // Phase dots
+      var posPhase = getWavePhase(waveType, sign);
+      var negPhaseVal = getNegPhase(posPhase);
+      drawPhaseDot(posX, phaseY, posPhase, phaseHeight, color + ' 0.9)', labelFontSize, isMobile);
+      drawPhaseDot(negX, phaseY, negPhaseVal, phaseHeight, color + ' 0.9)', labelFontSize, isMobile);
     }
 
     // Legend
@@ -439,7 +514,8 @@ layout: default
     ctx.textAlign = 'left';
     for (var j = 0; j < 3; j++) {
       ctx.fillStyle = waveColors[j] + ' 0.8)';
-      ctx.fillText('W' + (j + 1), margin, baseY - spikeHeight - 12 + j * 14);
+      var signLabel = combineSigns[j] < 0 ? '\u2212' : '+';
+      ctx.fillText(signLabel + 'W' + (j + 1), info.margin, magY - spikeHeight * 2 + 4 + j * 14);
     }
 
     ctx.textAlign = 'start';
@@ -475,10 +551,12 @@ layout: default
       // Draw individual waves
       for (var i = 0; i < 3; i++) {
         var freq = parseFloat(sliders[i].value);
+        var ampMult = parseFloat(ampSliders[i].value);
+        var waveType = typeSelects[i].value;
         var baseY = h_css * yOffsets[i];
 
         if (fftState[i]) {
-          drawFreqDomain(freq, baseY, w_css);
+          drawFreqDomain(freq, ampMult, waveType, baseY, w_css);
         } else {
           ctx.beginPath();
           ctx.moveTo(0, baseY);
