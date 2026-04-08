@@ -98,6 +98,8 @@ layout: default
           <button class="audio-viz-btn" id="audio-filter-lp">Low Pass</button>
           <button class="audio-viz-btn" id="audio-filter-hp">High Pass</button>
           <button class="audio-viz-btn" id="audio-filter-bp">Band Pass</button>
+          <button class="audio-viz-btn" id="audio-filter-bs">Band Stop</button>
+          <button class="audio-viz-btn" id="audio-filter-notch">Notch</button>
         </div>
         <div class="audio-filter-params hidden" id="audio-filter-params">
           <div class="audio-filter-row">
@@ -867,6 +869,8 @@ layout: default
   var audioFilterLpBtn = document.getElementById('audio-filter-lp');
   var audioFilterHpBtn = document.getElementById('audio-filter-hp');
   var audioFilterBpBtn = document.getElementById('audio-filter-bp');
+  var audioFilterBsBtn = document.getElementById('audio-filter-bs');
+  var audioFilterNotchBtn = document.getElementById('audio-filter-notch');
   var audioFilterParamsDiv = document.getElementById('audio-filter-params');
   var audioFilterFreqSlider = document.getElementById('audio-filter-freq');
   var audioFilterFreqLabel = document.getElementById('audio-filter-freq-label');
@@ -922,7 +926,7 @@ layout: default
       if (!audioFilter) {
         audioFilter = audioCtx.createBiquadFilter();
       }
-      audioFilter.type = audioFilterType;
+      audioFilter.type = audioFilterType.replace('-wide', '').replace('-narrow', '');
       audioFilter.frequency.value = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
       audioFilter.Q.value = parseFloat(audioFilterQSlider.value);
       chainInput = audioFilter;
@@ -959,9 +963,10 @@ layout: default
     audioAnalyser.connect(audioCtx.destination);
   }
 
-  function setFilterType(type) {
-    var btns = [audioFilterLpBtn, audioFilterHpBtn, audioFilterBpBtn];
-    var types = ['lowpass', 'highpass', 'bandpass'];
+  function setFilterType(type, defaultQ) {
+    var btns = [audioFilterLpBtn, audioFilterHpBtn, audioFilterBpBtn, audioFilterBsBtn, audioFilterNotchBtn];
+    var types = ['lowpass', 'highpass', 'bandpass', 'notch-wide', 'notch-narrow'];
+    var actualType = type.replace('-wide', '').replace('-narrow', '');
     if (audioFilterType === type) {
       // Toggle off
       audioFilterType = null;
@@ -973,6 +978,10 @@ layout: default
         b.classList.toggle('active', types[i] === type);
       });
       audioFilterParamsDiv.classList.remove('hidden');
+      if (defaultQ !== undefined) {
+        audioFilterQSlider.value = defaultQ;
+        audioFilterQLabel.textContent = defaultQ.toFixed(1);
+      }
     }
     rebuildAudioChain();
   }
@@ -980,6 +989,8 @@ layout: default
   audioFilterLpBtn.addEventListener('click', function() { setFilterType('lowpass'); });
   audioFilterHpBtn.addEventListener('click', function() { setFilterType('highpass'); });
   audioFilterBpBtn.addEventListener('click', function() { setFilterType('bandpass'); });
+  audioFilterBsBtn.addEventListener('click', function() { setFilterType('notch-wide', 0.5); });
+  audioFilterNotchBtn.addEventListener('click', function() { setFilterType('notch-narrow', 10); });
 
   function filterSliderToFreq(val) {
     // Logarithmic mapping: 0-1000 slider -> 20-20000 Hz
