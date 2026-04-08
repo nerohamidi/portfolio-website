@@ -10,18 +10,30 @@ layout: default
     <label for="freq1">Wave 1 freq</label>
     <input type="range" id="freq1" min="0.1" max="1.0" value="0.3" step="0.01">
     <span class="freq-value" id="freq1-val">0.30 Hz</span>
+    <label for="amp1">Amp</label>
+    <input type="range" id="amp1" min="0.1" max="2.0" value="1.0" step="0.05">
+    <span class="freq-value" id="amp1-val">1.00</span>
+    <select id="type1" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
     <button class="fft-toggle" id="fft1">FFT</button>
   </div>
   <div class="wave-slider">
     <label for="freq2">Wave 2 freq</label>
     <input type="range" id="freq2" min="0.1" max="1.0" value="0.5" step="0.01">
     <span class="freq-value" id="freq2-val">0.50 Hz</span>
+    <label for="amp2">Amp</label>
+    <input type="range" id="amp2" min="0.1" max="2.0" value="1.0" step="0.05">
+    <span class="freq-value" id="amp2-val">1.00</span>
+    <select id="type2" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
     <button class="fft-toggle" id="fft2">FFT</button>
   </div>
   <div class="wave-slider">
     <label for="freq3">Wave 3 freq</label>
     <input type="range" id="freq3" min="0.1" max="1.0" value="0.2" step="0.01">
     <span class="freq-value" id="freq3-val">0.20 Hz</span>
+    <label for="amp3">Amp</label>
+    <input type="range" id="amp3" min="0.1" max="2.0" value="1.0" step="0.05">
+    <span class="freq-value" id="amp3-val">1.00</span>
+    <select id="type3" class="wave-type-select"><option value="sin">sin</option><option value="cos">cos</option></select>
     <button class="fft-toggle" id="fft3">FFT</button>
   </div>
   <div class="wave-controls-footer">
@@ -96,6 +108,15 @@ layout: default
   var val1 = document.getElementById('freq1-val');
   var val2 = document.getElementById('freq2-val');
   var val3 = document.getElementById('freq3-val');
+  var ampSlider1 = document.getElementById('amp1');
+  var ampSlider2 = document.getElementById('amp2');
+  var ampSlider3 = document.getElementById('amp3');
+  var ampVal1 = document.getElementById('amp1-val');
+  var ampVal2 = document.getElementById('amp2-val');
+  var ampVal3 = document.getElementById('amp3-val');
+  var typeSelect1 = document.getElementById('type1');
+  var typeSelect2 = document.getElementById('type2');
+  var typeSelect3 = document.getElementById('type3');
   var fftBtn1 = document.getElementById('fft1');
   var fftBtn2 = document.getElementById('fft2');
   var fftBtn3 = document.getElementById('fft3');
@@ -106,9 +127,16 @@ layout: default
     label.textContent = parseFloat(slider.value).toFixed(2) + ' Hz';
   }
 
+  function updateAmpLabel(slider, label) {
+    label.textContent = parseFloat(slider.value).toFixed(2);
+  }
+
   slider1.addEventListener('input', function() { updateLabel(slider1, val1); });
   slider2.addEventListener('input', function() { updateLabel(slider2, val2); });
   slider3.addEventListener('input', function() { updateLabel(slider3, val3); });
+  ampSlider1.addEventListener('input', function() { updateAmpLabel(ampSlider1, ampVal1); });
+  ampSlider2.addEventListener('input', function() { updateAmpLabel(ampSlider2, ampVal2); });
+  ampSlider3.addEventListener('input', function() { updateAmpLabel(ampSlider3, ampVal3); });
 
   fftBtn1.addEventListener('click', function() { fftState[0] = !fftState[0]; updateFftButtons(); });
   fftBtn2.addEventListener('click', function() { fftState[1] = !fftState[1]; updateFftButtons(); });
@@ -258,11 +286,16 @@ layout: default
     var t = (performance.now() - startTime) / 1000;
 
     var sliders = [slider1, slider2, slider3];
+    var ampSliders = [ampSlider1, ampSlider2, ampSlider3];
+    var typeSelects = [typeSelect1, typeSelect2, typeSelect3];
     var yOffsets = [0.3, 0.5, 0.7];
 
     if (!wavesHidden) {
       for (var i = 0; i < 3; i++) {
         var freq = parseFloat(sliders[i].value);
+        var ampMult = parseFloat(ampSliders[i].value);
+        var waveType = typeSelects[i].value;
+        var waveFn = waveType === 'cos' ? Math.cos : Math.sin;
         var baseY = h_css * yOffsets[i];
 
         if (fftState[i]) {
@@ -270,11 +303,11 @@ layout: default
         } else {
           var phase = 2 * Math.PI * freq * t;
           var sf = getSpatialFreq();
-          var amp = getAmplitude();
+          var amp = getAmplitude() * ampMult;
           ctx.beginPath();
           ctx.moveTo(0, baseY);
           for (var x = 0; x <= w_css; x++) {
-            var y = baseY + Math.sin(x * sf - phase) * amp;
+            var y = baseY + waveFn(x * sf - phase) * amp;
             ctx.lineTo(x, y);
           }
           ctx.strokeStyle = isLight ? 'rgba(42, 122, 226, 0.25)' : 'rgba(108, 182, 255, 0.25)';

@@ -85,6 +85,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 
   label {
     color: #aaa;
@@ -158,6 +159,19 @@
   }
 }
 
+// Wave type select dropdown
+.wave-type-select {
+  background: rgba(30, 30, 30, 0.8);
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #aaa;
+  font-size: 11px;
+  font-family: monospace;
+  padding: 1px 4px;
+  cursor: pointer;
+  &:hover { border-color: #999; color: #ddd; }
+}
+
 // FFT toggle button
 .fft-toggle {
   background: none;
@@ -218,6 +232,13 @@ body.light-mode .wave-controls {
       border-color: #c83232;
       color: #c83232;
     }
+  }
+
+  .wave-type-select {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #999; color: #333; }
   }
 }
 
