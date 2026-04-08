@@ -49,6 +49,30 @@ layout: default
       <span class="combine-wave-label">W3</span>
     </div>
   </div>
+  <div class="audio-section">
+    <div class="audio-header">
+      <label class="audio-upload-btn" for="audio-file">Upload Audio</label>
+      <input type="file" id="audio-file" accept="audio/*" style="display:none">
+      <span class="audio-filename" id="audio-filename"></span>
+    </div>
+    <div class="audio-controls hidden" id="audio-controls">
+      <div class="audio-transport">
+        <button class="audio-btn" id="audio-play">Play</button>
+        <button class="audio-btn" id="audio-stop">Stop</button>
+        <input type="range" id="audio-volume" min="0" max="1" value="0.5" step="0.01" class="audio-volume">
+        <span class="audio-vol-label" id="audio-vol-label">50%</span>
+      </div>
+      <div class="audio-progress-row">
+        <span class="audio-time" id="audio-current">0:00</span>
+        <input type="range" id="audio-seek" min="0" max="100" value="0" step="0.1" class="audio-seek">
+        <span class="audio-time" id="audio-duration">0:00</span>
+      </div>
+      <div class="audio-viz-options">
+        <button class="audio-viz-btn active" id="audio-viz-wave">Waveform</button>
+        <button class="audio-viz-btn active" id="audio-viz-freq">Spectrum</button>
+      </div>
+    </div>
+  </div>
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
@@ -537,6 +561,230 @@ layout: default
     ctx.textAlign = 'start';
   }
 
+  // --- Audio visualizer ---
+  var audioFileInput = document.getElementById('audio-file');
+  var audioFilename = document.getElementById('audio-filename');
+  var audioControlsDiv = document.getElementById('audio-controls');
+  var audioPlayBtn = document.getElementById('audio-play');
+  var audioStopBtn = document.getElementById('audio-stop');
+  var audioVolumeSlider = document.getElementById('audio-volume');
+  var audioVolLabel = document.getElementById('audio-vol-label');
+  var audioSeek = document.getElementById('audio-seek');
+  var audioCurrent = document.getElementById('audio-current');
+  var audioDuration = document.getElementById('audio-duration');
+  var audioVizWaveBtn = document.getElementById('audio-viz-wave');
+  var audioVizFreqBtn = document.getElementById('audio-viz-freq');
+
+  var audioCtx = null;
+  var audioSource = null;
+  var audioAnalyser = null;
+  var audioGain = null;
+  var audioElement = null;
+  var audioPlaying = false;
+  var audioShowWave = true;
+  var audioShowFreq = true;
+
+  function formatTime(s) {
+    var m = Math.floor(s / 60);
+    var sec = Math.floor(s % 60);
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  audioFileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+
+    audioFilename.textContent = file.name.length > 20 ? file.name.substring(0, 17) + '...' : file.name;
+    audioControlsDiv.classList.remove('hidden');
+
+    // Clean up previous
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.src = '';
+    }
+    if (audioSource) {
+      try { audioSource.disconnect(); } catch(err) {}
+    }
+
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioGain = audioCtx.createGain();
+      audioAnalyser = audioCtx.createAnalyser();
+      audioAnalyser.fftSize = 2048;
+      audioGain.connect(audioAnalyser);
+      audioAnalyser.connect(audioCtx.destination);
+    }
+
+    audioElement = new Audio();
+    audioElement.src = URL.createObjectURL(file);
+    audioElement.crossOrigin = 'anonymous';
+
+    audioElement.addEventListener('loadedmetadata', function() {
+      audioDuration.textContent = formatTime(audioElement.duration);
+      audioSeek.max = audioElement.duration;
+    });
+
+    audioElement.addEventListener('ended', function() {
+      audioPlaying = false;
+      audioPlayBtn.textContent = 'Play';
+      audioPlayBtn.classList.remove('active');
+    });
+
+    audioSource = audioCtx.createMediaElementSource(audioElement);
+    audioSource.connect(audioGain);
+    audioGain.gain.value = parseFloat(audioVolumeSlider.value);
+    audioPlaying = false;
+    audioPlayBtn.textContent = 'Play';
+    audioPlayBtn.classList.remove('active');
+  });
+
+  audioPlayBtn.addEventListener('click', function() {
+    if (!audioElement) return;
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioPlaying) {
+      audioElement.pause();
+      audioPlaying = false;
+      audioPlayBtn.textContent = 'Play';
+      audioPlayBtn.classList.remove('active');
+    } else {
+      audioElement.play();
+      audioPlaying = true;
+      audioPlayBtn.textContent = 'Pause';
+      audioPlayBtn.classList.add('active');
+    }
+  });
+
+  audioStopBtn.addEventListener('click', function() {
+    if (!audioElement) return;
+    audioElement.pause();
+    audioElement.currentTime = 0;
+    audioPlaying = false;
+    audioPlayBtn.textContent = 'Play';
+    audioPlayBtn.classList.remove('active');
+  });
+
+  audioVolumeSlider.addEventListener('input', function() {
+    var v = parseFloat(audioVolumeSlider.value);
+    if (audioGain) audioGain.gain.value = v;
+    audioVolLabel.textContent = Math.round(v * 100) + '%';
+  });
+
+  audioSeek.addEventListener('input', function() {
+    if (audioElement) audioElement.currentTime = parseFloat(audioSeek.value);
+  });
+
+  audioVizWaveBtn.addEventListener('click', function() {
+    audioShowWave = !audioShowWave;
+    audioVizWaveBtn.classList.toggle('active', audioShowWave);
+  });
+
+  audioVizFreqBtn.addEventListener('click', function() {
+    audioShowFreq = !audioShowFreq;
+    audioVizFreqBtn.classList.toggle('active', audioShowFreq);
+  });
+
+  function drawAudioViz(w_css, h_css) {
+    if (!audioAnalyser || !audioPlaying) return;
+
+    // Update seek bar and time
+    if (audioElement) {
+      audioSeek.value = audioElement.currentTime;
+      audioCurrent.textContent = formatTime(audioElement.currentTime);
+    }
+
+    var bufferLength = audioAnalyser.frequencyBinCount;
+
+    if (audioShowWave) {
+      var timeData = new Uint8Array(bufferLength);
+      audioAnalyser.getByteTimeDomainData(timeData);
+
+      var waveY = h_css * 0.35;
+      var waveH = h_css * 0.12;
+      var waveColor = isLight ? 'rgba(34, 160, 80, 0.6)' : 'rgba(100, 220, 140, 0.6)';
+
+      // Waveform label
+      var labelColor = isLight ? 'rgba(34, 160, 80, 0.5)' : 'rgba(100, 220, 140, 0.4)';
+      ctx.fillStyle = labelColor;
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('Waveform', 15, waveY - waveH - 4);
+
+      // Center line
+      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, waveY);
+      ctx.lineTo(w_css, waveY);
+      ctx.stroke();
+
+      ctx.beginPath();
+      var sliceWidth = w_css / bufferLength;
+      for (var i = 0; i < bufferLength; i++) {
+        var v = (timeData[i] / 128.0) - 1.0;
+        var y = waveY + v * waveH;
+        if (i === 0) ctx.moveTo(0, y);
+        else ctx.lineTo(i * sliceWidth, y);
+      }
+      ctx.strokeStyle = waveColor;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    if (audioShowFreq) {
+      var freqData = new Uint8Array(bufferLength);
+      audioAnalyser.getByteFrequencyData(freqData);
+
+      var specY = h_css * 0.7;
+      var specH = h_css * 0.15;
+      var barCount = Math.min(bufferLength, Math.floor(w_css / 2));
+      var barW = w_css / barCount;
+      var barColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
+
+      // Spectrum label
+      var slabelColor = isLight ? 'rgba(200, 50, 50, 0.5)' : 'rgba(255, 100, 100, 0.4)';
+      ctx.fillStyle = slabelColor;
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('Frequency Spectrum', 15, specY - specH - 4);
+
+      // Frequency axis
+      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, specY);
+      ctx.lineTo(w_css, specY);
+      ctx.stroke();
+
+      for (var j = 0; j < barCount; j++) {
+        var val = freqData[j] / 255.0;
+        var bh = val * specH;
+        var alpha = 0.3 + val * 0.5;
+        ctx.fillStyle = barColor + ' ' + alpha + ')';
+        ctx.fillRect(j * barW, specY - bh, Math.max(barW - 1, 1), bh);
+      }
+
+      // Frequency labels
+      if (audioCtx) {
+        var nyquist = audioCtx.sampleRate / 2;
+        ctx.fillStyle = isLight ? 'rgba(100,100,100,0.5)' : 'rgba(180,180,180,0.4)';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        var freqMarks = [100, 500, 1000, 2000, 5000, 10000];
+        for (var fi = 0; fi < freqMarks.length; fi++) {
+          if (freqMarks[fi] > nyquist) break;
+          var fx = (freqMarks[fi] / nyquist) * w_css;
+          ctx.fillText(freqMarks[fi] >= 1000 ? (freqMarks[fi] / 1000) + 'k' : freqMarks[fi] + '', fx, specY + 14);
+          ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)';
+          ctx.beginPath();
+          ctx.moveTo(fx, specY);
+          ctx.lineTo(fx, specY - specH);
+          ctx.stroke();
+        }
+        ctx.fillText('Hz', w_css - 20, specY + 14);
+      }
+    }
+  }
+
   function draw() {
     var w_css = window.innerWidth;
     var h_css = window.innerHeight;
@@ -561,6 +809,11 @@ layout: default
       var sf = getSpatialFreq();
       var amp = getAmplitude() * ampMult;
       return waveFn(x * sf - phase) * amp;
+    }
+
+    // Draw audio visualization (behind waves if playing)
+    if (audioPlaying) {
+      drawAudioViz(w_css, h_css);
     }
 
     if (!wavesHidden) {
