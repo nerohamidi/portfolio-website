@@ -295,11 +295,61 @@ layout: default
     ctx.fill();
   }
 
-  // Draw a phase dot at given x position, with phase value mapped to vertical position
+  // Draw phase grid lines and labels (±π, ±π/2)
+  function drawPhaseGrid(phaseY, phaseHeight, margin, w_css, axisColor, textColor, fontSize) {
+    ctx.strokeStyle = axisColor;
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([4, 4]);
+
+    // ±π lines
+    ctx.beginPath();
+    ctx.moveTo(margin, phaseY - phaseHeight);
+    ctx.lineTo(w_css - margin, phaseY - phaseHeight);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(margin, phaseY + phaseHeight);
+    ctx.lineTo(w_css - margin, phaseY + phaseHeight);
+    ctx.stroke();
+
+    // ±π/2 lines
+    var halfH = phaseHeight / 2;
+    ctx.beginPath();
+    ctx.moveTo(margin, phaseY - halfH);
+    ctx.lineTo(w_css - margin, phaseY - halfH);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(margin, phaseY + halfH);
+    ctx.lineTo(w_css - margin, phaseY + halfH);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+
+    // Labels
+    ctx.fillStyle = textColor;
+    ctx.font = fontSize;
+    ctx.textAlign = 'right';
+    ctx.fillText('\u03c0', margin - 4, phaseY - phaseHeight + 4);
+    ctx.fillText('\u03c0/2', margin - 4, phaseY - halfH + 4);
+    ctx.fillText('0', margin - 4, phaseY + 4);
+    ctx.fillText('-\u03c0/2', margin - 4, phaseY + halfH + 4);
+    ctx.fillText('-\u03c0', margin - 4, phaseY + phaseHeight + 4);
+  }
+
+  // Draw a phase stem (line from axis + dot) at given x position
   function drawPhaseDot(posX, axisY, phase, maxPhaseHeight, color, labelFontSize, isMobile) {
     // Map phase from [-pi, pi] to [-maxPhaseHeight, maxPhaseHeight]
     var py = axisY - (phase / Math.PI) * maxPhaseHeight;
-    var r = isMobile ? 3 : 4;
+    var r = isMobile ? 3.5 : 5;
+
+    // Stem line from axis to dot
+    ctx.strokeStyle = color;
+    ctx.lineWidth = isMobile ? 1.5 : 2;
+    ctx.beginPath();
+    ctx.moveTo(posX, axisY);
+    ctx.lineTo(posX, py);
+    ctx.stroke();
+
+    // Dot
     ctx.beginPath();
     ctx.arc(posX, py, r, 0, 2 * Math.PI);
     ctx.fillStyle = color;
@@ -310,7 +360,8 @@ layout: default
     ctx.textAlign = 'center';
     ctx.fillStyle = color;
     var phaseLabel = formatPhase(phase);
-    ctx.fillText(phaseLabel, posX, py - r - 4);
+    var labelY = (phase >= 0) ? py - r - 5 : py + r + 13;
+    ctx.fillText(phaseLabel, posX, labelY);
   }
 
   // Format phase as fraction of pi
@@ -358,8 +409,8 @@ layout: default
     var fontSize = isMobile ? '9px monospace' : '11px monospace';
     var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
     var spikeHeight = isMobile ? 25 : 35;
-    var phaseHeight = isMobile ? 18 : 25;
-    var gap = isMobile ? 20 : 30;
+    var phaseHeight = isMobile ? 30 : 40;
+    var gap = isMobile ? 50 : 70;
 
     // Magnitude plot (upper)
     var magY = baseY - gap / 2;
@@ -390,31 +441,13 @@ layout: default
     // Phase plot (lower)
     var phaseY = baseY + gap / 2 + phaseHeight;
     drawFreqAxis(phaseY, w_css, axisColor, textColor, fontSize, '\u2220X(f)');
-
-    // Phase axis scale lines at ±π
-    ctx.strokeStyle = axisColor;
-    ctx.lineWidth = 0.5;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(info.margin, phaseY - phaseHeight);
-    ctx.lineTo(w_css - info.margin, phaseY - phaseHeight);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(info.margin, phaseY + phaseHeight);
-    ctx.lineTo(w_css - info.margin, phaseY + phaseHeight);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // ±π labels
-    ctx.fillStyle = textColor;
-    ctx.font = fontSize;
-    ctx.textAlign = 'right';
-    ctx.fillText('\u03c0', info.margin - 4, phaseY - phaseHeight + 4);
-    ctx.fillText('-\u03c0', info.margin - 4, phaseY + phaseHeight + 4);
+    drawPhaseGrid(phaseY, phaseHeight, info.margin, w_css, axisColor, textColor, fontSize);
 
     // Title
+    ctx.fillStyle = textColor;
+    ctx.font = isMobile ? '9px monospace' : '11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 6);
+    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 10);
 
     var posPhase = getWavePhase(waveType, 1);
     var negPhaseVal = getNegPhase(posPhase);
@@ -431,8 +464,8 @@ layout: default
     var fontSize = isMobile ? '9px monospace' : '11px monospace';
     var labelFontSize = isMobile ? '10px monospace' : '12px monospace';
     var spikeHeight = isMobile ? 25 : 35;
-    var phaseHeight = isMobile ? 18 : 25;
-    var gap = isMobile ? 20 : 30;
+    var phaseHeight = isMobile ? 30 : 40;
+    var gap = isMobile ? 50 : 70;
 
     var sliderEls = [slider1, slider2, slider3];
     var ampSliderEls = [ampSlider1, ampSlider2, ampSlider3];
@@ -453,29 +486,12 @@ layout: default
     // Phase plot (lower)
     var phaseY = baseY + gap / 2 + phaseHeight;
     drawFreqAxis(phaseY, w_css, axisColor, textColor, fontSize, '\u2220X(f)');
-
-    // Phase axis scale lines at ±π
-    ctx.strokeStyle = axisColor;
-    ctx.lineWidth = 0.5;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(info.margin, phaseY - phaseHeight);
-    ctx.lineTo(w_css - info.margin, phaseY - phaseHeight);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(info.margin, phaseY + phaseHeight);
-    ctx.lineTo(w_css - info.margin, phaseY + phaseHeight);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    drawPhaseGrid(phaseY, phaseHeight, info.margin, w_css, axisColor, textColor, fontSize);
 
     ctx.fillStyle = textColor;
-    ctx.font = fontSize;
-    ctx.textAlign = 'right';
-    ctx.fillText('\u03c0', info.margin - 4, phaseY - phaseHeight + 4);
-    ctx.fillText('-\u03c0', info.margin - 4, phaseY + phaseHeight + 4);
-
+    ctx.font = isMobile ? '9px monospace' : '11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 6);
+    ctx.fillText('Phase', info.margin, phaseY - phaseHeight - 10);
 
     // Draw spikes and phase dots for each wave
     for (var i = 0; i < 3; i++) {
