@@ -4,6 +4,10 @@ title: Projects
 permalink: /projects/
 ---
 
+Most of these projects are on my GitHub, but for some of them I was not able to publish them due to rules from the class. Feel free to email me to learn more about any of my projects.
+
+---
+
 ## LiDAR & Multi-Sensor SLAM for Differential-Drive Robot
 *Python · C++ · Sensors · DSP*
 
