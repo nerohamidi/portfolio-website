@@ -43,22 +43,64 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
   <button type="button" class="project-filter-btn" data-filter="dsp">DSP</button>
 </div>
 
-<div class="course-grid">
-  <div class="course-item" data-categories="hw"><span class="course-code">ECE 165</span><span class="course-title">Digital Circuit Design</span></div>
-  <div class="course-item" data-categories="hw"><span class="course-code">Compe 572</span><span class="course-title">VLSI Circuit Design</span></div>
-  <div class="course-item" data-categories="hw"><span class="course-code">Compe 470</span><span class="course-title">Digital Circuits</span></div>
-  <div class="course-item" data-categories="hw"><span class="course-code">EE 430</span><span class="course-title">Analysis &amp; Design of Electronic Circuits</span></div>
-  <div class="course-item" data-categories="dsp hw"><span class="course-code">EE 458</span><span class="course-title">Analog &amp; Pulse Communication Systems</span></div>
-  <div class="course-item" data-categories="sw hw"><span class="course-code">EE 375</span><span class="course-title">Embedded Systems Programming</span></div>
-  <div class="course-item" data-categories="dsp"><span class="course-code">EE 410</span><span class="course-title">Signals &amp; Systems</span></div>
-  <div class="course-item" data-categories="dsp"><span class="course-code">ECE 251A</span><span class="course-title">Digital Signal Processing I</span></div>
-  <div class="course-item" data-categories="ml"><span class="course-code">EE 300</span><span class="course-title">EE Statistics</span></div>
-  <div class="course-item" data-categories="ml"><span class="course-code">ECE 269</span><span class="course-title">Graduate Linear Algebra</span></div>
-  <div class="course-item" data-categories="ml"><span class="course-code">CS 549</span><span class="course-title">Machine Learning</span></div>
-  <div class="course-item" data-categories="ml"><span class="course-code">ECE 228</span><span class="course-title">ML for Physical Applications</span></div>
-  <div class="course-item" data-categories="ml dsp sw"><span class="course-code">ECE 276A</span><span class="course-title">Sensing &amp; Estimation in Robotics</span></div>
-  <div class="course-item" data-categories="ml sw"><span class="course-code">ECE 208</span><span class="course-title">Computational Evolutionary Biology</span></div>
-</div>
+<ul class="course-grid">
+  <li class="course-item" data-categories="hw">
+    <span class="course-code">ECE 165</span>
+    <span class="course-title">Digital Circuit Design</span>
+  </li>
+  <li class="course-item" data-categories="hw">
+    <span class="course-code">Compe 572</span>
+    <span class="course-title">VLSI Circuit Design</span>
+  </li>
+  <li class="course-item" data-categories="hw">
+    <span class="course-code">Compe 470</span>
+    <span class="course-title">Digital Circuits</span>
+  </li>
+  <li class="course-item" data-categories="hw">
+    <span class="course-code">EE 430</span>
+    <span class="course-title">Analysis &amp; Design of Electronic Circuits</span>
+  </li>
+  <li class="course-item" data-categories="dsp hw">
+    <span class="course-code">EE 458</span>
+    <span class="course-title">Analog &amp; Pulse Communication Systems</span>
+  </li>
+  <li class="course-item" data-categories="sw hw">
+    <span class="course-code">EE 375</span>
+    <span class="course-title">Embedded Systems Programming</span>
+  </li>
+  <li class="course-item" data-categories="dsp">
+    <span class="course-code">EE 410</span>
+    <span class="course-title">Signals &amp; Systems</span>
+  </li>
+  <li class="course-item" data-categories="dsp">
+    <span class="course-code">ECE 251A</span>
+    <span class="course-title">Digital Signal Processing I</span>
+  </li>
+  <li class="course-item" data-categories="ml">
+    <span class="course-code">EE 300</span>
+    <span class="course-title">EE Statistics</span>
+  </li>
+  <li class="course-item" data-categories="ml">
+    <span class="course-code">ECE 269</span>
+    <span class="course-title">Graduate Linear Algebra</span>
+  </li>
+  <li class="course-item" data-categories="ml">
+    <span class="course-code">CS 549</span>
+    <span class="course-title">Machine Learning</span>
+  </li>
+  <li class="course-item" data-categories="ml">
+    <span class="course-code">ECE 228</span>
+    <span class="course-title">ML for Physical Applications</span>
+  </li>
+  <li class="course-item" data-categories="ml dsp sw">
+    <span class="course-code">ECE 276A</span>
+    <span class="course-title">Sensing &amp; Estimation in Robotics</span>
+  </li>
+  <li class="course-item" data-categories="ml sw">
+    <span class="course-code">ECE 208</span>
+    <span class="course-title">Computational Evolutionary Biology</span>
+  </li>
+</ul>
 
 <script>
 (function () {
