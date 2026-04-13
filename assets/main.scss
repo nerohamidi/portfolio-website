@@ -894,4 +894,76 @@ body.light-mode {
     th { background-color: #f6f6f6; }
     tr:nth-child(even) { background-color: #f7f7f7; }
   }
+
+  .project-filter-btn {
+    background-color: #f6f6f6;
+    color: #111;
+    border-color: #ccc;
+    &:hover { border-color: #666; }
+    &.is-active {
+      background-color: #2a7ae2;
+      border-color: #2a7ae2;
+      color: #fff;
+    }
+  }
+
+  .project-card {
+    background-color: #fafafa;
+    border-color: #e0e0e0;
+  }
+}
+
+// --- Projects page: filters & cards ---
+.project-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.25rem 0 1.75rem;
+}
+
+.project-filter-btn {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #555;
+  border-radius: 999px;
+  background-color: #1e1e1e;
+  color: #eaeaea;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover { border-color: #999; }
+
+  &.is-active {
+    background-color: #c08020;
+    border-color: #c08020;
+    color: #111;
+  }
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.project-card {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  background-color: rgba(255, 255, 255, 0.02);
+
+  h2 { margin-top: 0.25rem; }
+
+  .project-tags {
+    margin-top: -0.35rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.85;
+  }
+
+  ul {
+    margin-bottom: 0;
+    padding-left: 1.25rem;
+  }
+
+  li + li { margin-top: 0.35rem; }
 }
