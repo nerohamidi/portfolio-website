@@ -33,12 +33,48 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
 ---
 
-## IC Design & Circuits Coursework
+## Coursework
 
-**VLSI Circuit Design** (Compe 572) · **Digital Circuit Design** (ECE 165, current) · **Analysis & Design of Electronic Circuits** (EE 430) · **Digital Circuits** (Compe 470) · **Analog & Pulse Communication Systems** (EE 458)
+<div class="course-filters" role="group" aria-label="Course category filters">
+  <button type="button" class="project-filter-btn is-active" data-filter="all">All</button>
+  <button type="button" class="project-filter-btn" data-filter="sw">Software</button>
+  <button type="button" class="project-filter-btn" data-filter="ml">ML</button>
+  <button type="button" class="project-filter-btn" data-filter="hw">Hardware</button>
+  <button type="button" class="project-filter-btn" data-filter="dsp">DSP</button>
+</div>
 
----
+<div class="course-grid">
+  <div class="course-item" data-categories="hw"><span class="course-code">ECE 165</span><span class="course-title">Digital Circuit Design</span></div>
+  <div class="course-item" data-categories="hw"><span class="course-code">Compe 572</span><span class="course-title">VLSI Circuit Design</span></div>
+  <div class="course-item" data-categories="hw"><span class="course-code">Compe 470</span><span class="course-title">Digital Circuits</span></div>
+  <div class="course-item" data-categories="hw"><span class="course-code">EE 430</span><span class="course-title">Analysis &amp; Design of Electronic Circuits</span></div>
+  <div class="course-item" data-categories="dsp hw"><span class="course-code">EE 458</span><span class="course-title">Analog &amp; Pulse Communication Systems</span></div>
+  <div class="course-item" data-categories="sw hw"><span class="course-code">EE 375</span><span class="course-title">Embedded Systems Programming</span></div>
+  <div class="course-item" data-categories="dsp"><span class="course-code">EE 410</span><span class="course-title">Signals &amp; Systems</span></div>
+  <div class="course-item" data-categories="dsp"><span class="course-code">ECE 251A</span><span class="course-title">Digital Signal Processing I</span></div>
+  <div class="course-item" data-categories="ml"><span class="course-code">EE 300</span><span class="course-title">EE Statistics</span></div>
+  <div class="course-item" data-categories="ml"><span class="course-code">ECE 269</span><span class="course-title">Graduate Linear Algebra</span></div>
+  <div class="course-item" data-categories="ml"><span class="course-code">CS 549</span><span class="course-title">Machine Learning</span></div>
+  <div class="course-item" data-categories="ml"><span class="course-code">ECE 228</span><span class="course-title">ML for Physical Applications</span></div>
+  <div class="course-item" data-categories="ml dsp sw"><span class="course-code">ECE 276A</span><span class="course-title">Sensing &amp; Estimation in Robotics</span></div>
+  <div class="course-item" data-categories="ml sw"><span class="course-code">ECE 208</span><span class="course-title">Computational Evolutionary Biology</span></div>
+</div>
 
-## Other Coursework
-
-Embedded Systems Programming · Signals & Systems · EE Statistics · Machine Learning · Sensing & Estimation in Robotics · Graduate Linear Algebra · Digital Signal Processing I · ML for Physical Applications · Computational Evolutionary Biology (ECE 208)
+<script>
+(function () {
+  var buttons = document.querySelectorAll('.course-filters .project-filter-btn');
+  var items = document.querySelectorAll('.course-item');
+  buttons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var filter = btn.getAttribute('data-filter');
+      buttons.forEach(function (b) { b.classList.remove('is-active'); });
+      btn.classList.add('is-active');
+      items.forEach(function (item) {
+        var cats = (item.getAttribute('data-categories') || '').split(/\s+/);
+        var show = filter === 'all' || cats.indexOf(filter) !== -1;
+        item.style.display = show ? '' : 'none';
+      });
+    });
+  });
+})();
+</script>
