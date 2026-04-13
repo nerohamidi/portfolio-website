@@ -36,10 +36,10 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Diagnosed analog front-end deviations from SPICE simulation by systematically probing the signal chain with an oscilloscope; resolved the discrepancy by replacing electrolytic capacitors with ceramic to eliminate leakage current effects.</li>
       <li>Verified timing, voltage, and signal behavior using datasheets and lab instrumentation (oscilloscope, power supply, multimeter).</li>
     </ul>
-    <div class="project-media">
-      <object class="project-pdf" data="{{ '/assets/images/projects/audio_spectrum_image.pdf' | relative_url }}" type="application/pdf">
-        <a href="{{ '/assets/images/projects/audio_spectrum_image.pdf' | relative_url }}" target="_blank" rel="noopener">View schematic PDF</a>
-      </object>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/audio_spectrum_image.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/audio_spectrum_image.png' | relative_url }}" alt="Audio spectrum analyzer schematic" loading="lazy">
+      </a>
     </div>
   </div>
 </article>
