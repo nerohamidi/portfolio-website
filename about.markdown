@@ -71,12 +71,20 @@ I'm an ECE graduate student at UC San Diego specializing in Signal & Image Proce
     <span class="course-title">Digital Circuits</span>
   </li>
   <li class="course-item" data-categories="hw">
+    <span class="course-code">Compe 470L</span>
+    <span class="course-title">Digital Logic Library Lab</span>
+  </li>
+  <li class="course-item" data-categories="hw">
     <span class="course-code">EE 430</span>
     <span class="course-title">Analysis &amp; Design of Electronic Circuits</span>
   </li>
   <li class="course-item" data-categories="dsp hw">
     <span class="course-code">EE 458</span>
     <span class="course-title">Analog &amp; Pulse Communication Systems</span>
+  </li>
+  <li class="course-item" data-categories="dsp hw">
+    <span class="course-code">EE 458L</span>
+    <span class="course-title">Communications &amp; DSP Laboratory</span>
   </li>
   <li class="course-item" data-categories="sw hw">
     <span class="course-code">Compe 375</span>

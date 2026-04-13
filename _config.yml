@@ -24,7 +24,7 @@ description: >-
 baseurl: "/portfolio-website"
 url: "https://nerohamidi.github.io"
 github_username: nerohamidi
-version: "1.9.2"
+version: "1.9.3"
 
 # Build settings
 theme: minima
