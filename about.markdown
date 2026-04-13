@@ -79,7 +79,7 @@ I'm an ECE graduate student at UC San Diego specializing in Signal & Image Proce
     <span class="course-title">Analog &amp; Pulse Communication Systems</span>
   </li>
   <li class="course-item" data-categories="sw hw">
-    <span class="course-code">EE 375</span>
+    <span class="course-code">Compe 375</span>
     <span class="course-title">Embedded Systems Programming</span>
   </li>
   <li class="course-item" data-categories="sw">
