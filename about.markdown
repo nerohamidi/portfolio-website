@@ -12,22 +12,36 @@ I'm an ECE graduate student at UC San Diego specializing in Signal & Image Proce
 
 ## Education
 
-**University of California, San Diego** · M.S. in Electrical and Computer Engineering — Signal & Image Processing
-*Sep 2025 – Jun 2027*
+<div class="edu-list">
 
-**San Diego State University** · B.S. in Electrical Engineering, Minor in Computer Science
-*Aug 2022 – Jun 2025*
-William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
+<div class="edu-entry">
+  <div class="edu-school">University of California, San Diego</div>
+  <div class="edu-degree">M.S. in Electrical and Computer Engineering — Signal &amp; Image Processing</div>
+  <div class="edu-dates">Sep 2025 – Jun 2027</div>
+</div>
+
+<div class="edu-entry">
+  <div class="edu-school">San Diego State University</div>
+  <div class="edu-degree">B.S. in Electrical Engineering, Minor in Computer Science</div>
+  <div class="edu-dates">Aug 2022 – Jun 2025</div>
+  <div class="edu-awards">William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List</div>
+</div>
+
+</div>
 
 ---
 
 ## Skills
 
-**Programming & Systems:** C/C++, Python, Java, MIPS & x86 Assembly, Verilog, Git/GitHub
+**Programming & Systems:** C/C++, Python, Java, MIPS & x86 Assembly, Verilog, Git/GitHub, Visual Studio, Jupyter
 
-**Embedded & Hardware:** ARM MCU, Linux, DMA, ADC/DAC, Digital & Analog circuits, LTspice, ADS
+**Embedded & Hardware:** STM32 ARM MCU, FPGA (Basys 3), Embedded Linux, DMA, ADC/DAC, mixed-signal design, LTspice, ADS, Cadence, oscilloscope, signal generator, multimeter
 
-**Signal Processing & ML:** MATLAB, Simulink, DSP, Digital Image Processing, PyTorch, scikit-learn
+**Signal Processing:** MATLAB, Simulink, DSP, Digital Image Processing, FIR/IIR filter design, FFT, FM/PLL demodulation
+
+**Machine Learning & Data:** Python, PyTorch, scikit-learn, NumPy, Pandas, HuggingFace Transformers, SQL
+
+**Observability & Tooling:** Prometheus, Grafana, Git/GitHub, Linux CLI workflows
 
 **IC Design:** Verilog, LTspice, Cadence, VLSI design, analog & digital circuit design, circuit simulation, schematic design
 

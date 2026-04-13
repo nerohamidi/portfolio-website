@@ -1095,6 +1095,56 @@ body.light-mode {
   }
 }
 
+// --- Education ---
+.edu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.edu-entry {
+  padding: 0.9rem 1.1rem;
+  border: 1px solid #2e2e2e;
+  border-left: 3px solid #c08020;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.02);
+
+  .edu-school {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #ffd89a;
+  }
+
+  .edu-degree {
+    margin-top: 0.15rem;
+    font-size: 0.98rem;
+    line-height: 1.35;
+  }
+
+  .edu-dates {
+    margin-top: 0.25rem;
+    font-size: 0.88rem;
+    font-style: italic;
+    opacity: 0.8;
+  }
+
+  .edu-awards {
+    margin-top: 0.4rem;
+    font-size: 0.9rem;
+    opacity: 0.9;
+  }
+}
+
+body.light-mode .edu-entry {
+  background-color: #ffffff;
+  border-color: #e4e4e4;
+  border-left-color: #c08020;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+  .edu-school { color: #7a4a0a; }
+}
+
 // --- Courses: filters & grid ---
 .course-filters {
   display: flex;
