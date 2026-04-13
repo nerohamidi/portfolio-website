@@ -82,6 +82,18 @@ I'm an ECE graduate student at UC San Diego specializing in Signal & Image Proce
     <span class="course-code">EE 375</span>
     <span class="course-title">Embedded Systems Programming</span>
   </li>
+  <li class="course-item" data-categories="sw">
+    <span class="course-code">CS 210</span>
+    <span class="course-title">Data Structures</span>
+  </li>
+  <li class="course-item" data-categories="sw">
+    <span class="course-code">CS 420</span>
+    <span class="course-title">Advanced Programming Languages</span>
+  </li>
+  <li class="course-item" data-categories="sw">
+    <span class="course-code">CS 583</span>
+    <span class="course-title">3D Game Programming</span>
+  </li>
   <li class="course-item" data-categories="dsp">
     <span class="course-code">EE 410</span>
     <span class="course-title">Signals &amp; Systems</span>
