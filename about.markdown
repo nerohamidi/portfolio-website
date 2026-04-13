@@ -33,16 +33,6 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
 ---
 
-## Currently Taking
-
-| Course | Title |
-|--------|-------|
-| ECE 165 | Digital Circuit Design |
-| ECE 251A | Digital Signal Processing I |
-| ECE 228 | ML for Physical Applications |
-
----
-
 ## IC Design & Circuits Coursework
 
 **VLSI Circuit Design** (Compe 572) · **Digital Circuit Design** (ECE 165, current) · **Analysis & Design of Electronic Circuits** (EE 430) · **Digital Circuits** (Compe 470) · **Analog & Pulse Communication Systems** (EE 458)
@@ -51,4 +41,4 @@ William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List
 
 ## Other Coursework
 
-Embedded Systems Programming · Signals & Systems · EE Statistics · Machine Learning · Sensing & Estimation in Robotics · Graduate Linear Algebra · Digital Signal Processing I · ML for Physical Applications
+Embedded Systems Programming · Signals & Systems · EE Statistics · Machine Learning · Sensing & Estimation in Robotics · Graduate Linear Algebra · Digital Signal Processing I · ML for Physical Applications · Computational Evolutionary Biology (ECE 208)
