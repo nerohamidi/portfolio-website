@@ -36,6 +36,11 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Diagnosed analog front-end deviations from SPICE simulation by systematically probing the signal chain with an oscilloscope; resolved the discrepancy by replacing electrolytic capacitors with ceramic to eliminate leakage current effects.</li>
       <li>Verified timing, voltage, and signal behavior using datasheets and lab instrumentation (oscilloscope, power supply, multimeter).</li>
     </ul>
+    <div class="project-media">
+      <object class="project-pdf" data="{{ '/assets/images/projects/audio_spectrum_image.pdf' | relative_url }}" type="application/pdf">
+        <a href="{{ '/assets/images/projects/audio_spectrum_image.pdf' | relative_url }}" target="_blank" rel="noopener">View schematic PDF</a>
+      </object>
+    </div>
   </div>
 </article>
 
@@ -57,6 +62,11 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Designed Grafana dashboards and alerting rules to detect anomalies such as frame stalls and bandwidth drops during deployments.</li>
       <li>Deployed and validated the system across heterogeneous ARM platforms (Raspberry Pi 5, Arduino Uno R4/Q) using Git-based, command-line driven workflows, iterating on reliability through metric-driven debugging.</li>
     </ul>
+    <div class="project-media">
+      <div class="project-video">
+        <iframe src="https://drive.google.com/file/d/1CeahDCygqzYuBNiazsKlBZ-9BN5L3j2f/preview" allow="autoplay" allowfullscreen title="Camera metric pipeline demo"></iframe>
+      </div>
+    </div>
   </div>
 </article>
 
@@ -78,6 +88,14 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Registered consecutive scans using 2D Iterative Closest Point (ICP) with MSE-based convergence criteria to estimate relative motion.</li>
       <li>Fused wheel odometry with scan-matching constraints through nonlinear least-squares optimization (GTSAM) for improved state estimation and trajectory consistency.</li>
     </ul>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/SLAM_img1.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/SLAM_img1.png' | relative_url }}" alt="SLAM point cloud visualization" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/SLAM_img2.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/SLAM_img2.png' | relative_url }}" alt="SLAM trajectory estimate" loading="lazy">
+      </a>
+    </div>
   </div>
 </article>
 
@@ -99,6 +117,20 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Built PLL-based and zero-crossing FM demodulators using VCOs, comparators, and tunable LPFs.</li>
       <li>Implemented a digital quadrature FM demodulator in MATLAB using I/Q mixing, LPF, and an arctangent discriminator with a 32-tap FIR filter.</li>
     </ul>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/comm_img1.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/comm_img1.png' | relative_url }}" alt="Communication lab figure 1" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/comm_img2.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/comm_img2.png' | relative_url }}" alt="Communication lab figure 2" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/comm_img3.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/comm_img3.png' | relative_url }}" alt="Communication lab figure 3" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/comm_img4.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/comm_img4.png' | relative_url }}" alt="Communication lab figure 4" loading="lazy">
+      </a>
+    </div>
   </div>
 </article>
 
@@ -118,6 +150,11 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Designed a multi-mode digital clock in Verilog featuring BCD counters, a clock divider, a time-multiplexed 7-segment display driver, and alarm comparator logic.</li>
       <li>Synthesized and verified the full design on Basys 3 FPGA hardware, validating mode transitions and timing behavior on real silicon.</li>
     </ul>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/dig_clock_img.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/dig_clock_img.png' | relative_url }}" alt="Digital clock on Basys 3 FPGA" loading="lazy">
+      </a>
+    </div>
   </div>
 </article>
 
@@ -139,6 +176,14 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Analyzed results to identify that visually similar restoration techniques failed due to non-linear distortion geometry and missing atmospheric priors.</li>
       <li>Co-authored a 10-page technical report with quantitative tables, qualitative visual comparisons, and actionable recommendations; presented findings to faculty and peers.</li>
     </ul>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/OCR_img1.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/OCR_img1.png' | relative_url }}" alt="OCR robustness evaluation figure 1" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/OCR_img2.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/OCR_img2.png' | relative_url }}" alt="OCR robustness evaluation figure 2" loading="lazy">
+      </a>
+    </div>
   </div>
 </article>
 
@@ -161,9 +206,22 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
       <li>Trained and evaluated deep learning models in PyTorch: a CNN classifier on 60K MNIST samples, an LSTM sequence model for multi-class language prediction across 18 categories, and a CBOW word embedding model.</li>
       <li>Applied pre-trained transformer models (BERT) via HuggingFace for tokenization and feature extraction, gaining practical experience with modern NLP architectures.</li>
     </ul>
+    <div class="project-gallery">
+      <a class="project-thumb" href="{{ '/assets/images/projects/ML_proj_img1.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/ML_proj_img1.png' | relative_url }}" alt="ML project figure 1" loading="lazy">
+      </a>
+      <a class="project-thumb" href="{{ '/assets/images/projects/ML_proj_img2.png' | relative_url }}">
+        <img src="{{ '/assets/images/projects/ML_proj_img2.png' | relative_url }}" alt="ML project figure 2" loading="lazy">
+      </a>
+    </div>
   </div>
 </article>
 
+</div>
+
+<div class="project-lightbox" id="project-lightbox" hidden>
+  <button type="button" class="project-lightbox-close" aria-label="Close image">&times;</button>
+  <img class="project-lightbox-img" alt="">
 </div>
 
 <script>
@@ -181,6 +239,44 @@ Most of these projects are on my GitHub, but for some of them I was not able to 
         card.style.display = show ? '' : 'none';
       });
     });
+  });
+
+  var lightbox = document.getElementById('project-lightbox');
+  var lightboxImg = lightbox ? lightbox.querySelector('.project-lightbox-img') : null;
+  var lightboxClose = lightbox ? lightbox.querySelector('.project-lightbox-close') : null;
+
+  function openLightbox(src, alt) {
+    if (!lightbox || !lightboxImg) return;
+    lightboxImg.src = src;
+    lightboxImg.alt = alt || '';
+    lightbox.hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+  function closeLightbox() {
+    if (!lightbox || !lightboxImg) return;
+    lightbox.hidden = true;
+    lightboxImg.src = '';
+    document.body.style.overflow = '';
+  }
+
+  document.querySelectorAll('.project-thumb').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      var img = a.querySelector('img');
+      openLightbox(a.getAttribute('href'), img ? img.alt : '');
+    });
+  });
+
+  if (lightbox) {
+    lightbox.addEventListener('click', function (e) {
+      if (e.target === lightbox) closeLightbox();
+    });
+  }
+  if (lightboxClose) {
+    lightboxClose.addEventListener('click', closeLightbox);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeLightbox();
   });
 
   document.querySelectorAll('.project-toggle').forEach(function (btn) {
