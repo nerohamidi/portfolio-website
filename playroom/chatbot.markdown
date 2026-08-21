@@ -19,7 +19,7 @@ permalink: /playroom/chatbot/
 
 <script>
 (function () {
-  var API_URL = 'https://nero-chatbot-proxy.nero-chatbot.workers.dev';
+  var API_URL = 'https://nero-chatbot-proxy.nhamidi.workers.dev';
 
   // No system prompt here on purpose. The Worker owns it, so it never reaches the browser.
   // Each history entry is { role: 'user' | 'model', text: '...' }.
