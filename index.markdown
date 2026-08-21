@@ -5,7 +5,7 @@ title: Home
 
 # Nero Hamidi
 
-M.S. ECE student at UC San Diego, graduating December 2027, interested in the mathematical foundations of statistical signal processing and machine learning. Currently a software engineering intern (algorithms/data) at Qualcomm, a student researcher at UCSD, and the embedded software lead on Therva's patent-pending thermal device. I build real-time hardware/software systems, sensor data pipelines, and estimation/ML tools, and I write about what I learn along the way.
+M.S. ECE student at UC San Diego building real-time signal processing and machine learning systems, currently a software engineering intern at Qualcomm.
 
 San Diego, CA · U.S. Citizen
 
