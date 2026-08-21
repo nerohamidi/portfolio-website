@@ -10,8 +10,9 @@
         document.body.classList.add('light-mode');
       }
 
-      // Same for the condensed view, so the long copy never flashes in
-      if (localStorage.getItem('condensed') === '1') {
+      // Condensed is the default. Only an explicit opt-out ('0') shows the long copy,
+      // and this runs before the header so neither label flashes.
+      if (localStorage.getItem('condensed') !== '0') {
         document.body.classList.add('is-condensed');
       }
     </script>

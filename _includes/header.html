@@ -6,10 +6,10 @@
     <a class="site-title" rel="author" href="{{ "/" | relative_url }}">{{ site.title | escape }}</a>
 
     {%- if page.condense -%}
-      <button type="button" class="condense-toggle" id="condense-toggle" aria-pressed="false"
-              title="Show only the key details">
+      <button type="button" class="condense-toggle" id="condense-toggle" aria-pressed="true"
+              title="Switch between short and long descriptions">
         <span class="condense-switch" aria-hidden="true"></span>
-        <span class="condense-text">condense</span>
+        <span class="condense-text"><span class="full-only">long</span><span class="brief-only">short</span></span>
       </button>
     {%- endif -%}
 
