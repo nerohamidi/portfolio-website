@@ -52,7 +52,7 @@ Most of these projects are on my GitHub; a few stay private because of course ru
     <div class="project-head-text">
       <h2>ECG Denoising at Negative SNR: LMMSE vs. Transformer</h2>
       <p class="project-tags"><em>Python · PyTorch · NumPy/SciPy · Statistical Signal Processing</em></p>
-      <p class="project-summary">Heart-signal (ECG) recordings buried under noise louder than the signal itself. This project pits a classical statistical filter against a Transformer neural network to see how much of the heartbeat each can recover, and where the network's advantage really comes from.</p>
+      <p class="project-summary">Heart-signal (ECG) recordings buried under noise louder than the signal itself. This project pits a classical statistical filter against a Transformer neural network to see how much of the heartbeat each can recover, where the network's advantage comes from, and what it costs to compute.</p>
     </div>
     <button type="button" class="project-toggle" aria-expanded="false">
       <span class="project-toggle-label">Details</span>
@@ -64,6 +64,7 @@ Most of these projects are on my GitHub; a few stay private because of course ru
       <li>Tested both on standard MIT-BIH hospital recordings with noise added at −8.5 dB, meaning more noise energy than signal.</li>
       <li>The Transformer cut the error to under a tenth of the raw input (a 10.6 dB gain), 1.9 dB beyond the best causal classical filter.</li>
       <li>Also computed the ceiling for any linear filter. The network's remaining 24% margin comes from nonlinearity, not from seeing more context.</li>
+      <li>The classical filter's strength is cost: 128 multiply-accumulate operations per sample against 34 million for the Transformer, roughly 265,000 times less compute to land within 1.9 dB of it. It is closed form, needs no training, and its coefficients can be read directly.</li>
       <li>Swept filter memory from 8 to 128 samples; a silent training collapse at 128 traced back to the learning rate, confirmed with 5 controlled runs.</li>
       <li>Spotted that the given normalization left the classical baseline unable to fit a nonzero mean, and derived the affine correction, worth 2.5 dB.</li>
     </ul>

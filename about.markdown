@@ -2,11 +2,24 @@
 layout: page
 title: About
 permalink: /about/
+condense: true
 ---
+
+<div class="full-only" markdown="1">
 
 I'm an ECE graduate student at UC San Diego, graduating December 2027, interested in the mathematical foundations of statistical signal processing and machine learning. My work sits at the intersection of estimation theory, embedded systems, and ML. I like building things that process real-world signals under real-world constraints, and I care that every model I ship is one I can defend mathematically. I also work in digital IC design, applying circuit-level intuition from analog and digital coursework to implementing signal processing in silicon.
 
 Based in San Diego, CA. U.S. Citizen.
+
+</div>
+
+<div class="brief-only" markdown="1">
+
+ECE M.S. student at UC San Diego, graduating December 2027. Statistical signal processing, estimation theory, and machine learning, plus embedded systems and digital IC design.
+
+San Diego, CA · U.S. Citizen.
+
+</div>
 
 **[nero.hamidi@gmail.com](mailto:nero.hamidi@gmail.com)** · [LinkedIn](https://www.linkedin.com/in/nero-hamidi) · [GitHub](https://github.com/nerohamidi)
 
@@ -20,8 +33,11 @@ Based in San Diego, CA. U.S. Citizen.
   <div class="edu-school">Qualcomm</div>
   <div class="edu-degree">Software Engineering Intern — Algorithms / Data</div>
   <div class="edu-dates">Jun 2026 – Sep 2026</div>
-  <ul>
+  <ul class="full-only">
     <li>Algorithms and data work in Python on internal engineering tooling, shipped through a shared Linux codebase with CI. The specifics are not public.</li>
+  </ul>
+  <ul class="brief-only">
+    <li>Python algorithms and data work on internal engineering tooling.</li>
   </ul>
 </div>
 
@@ -29,10 +45,13 @@ Based in San Diego, CA. U.S. Citizen.
   <div class="edu-school">UC San Diego</div>
   <div class="edu-degree">Student Researcher</div>
   <div class="edu-dates">Jan 2026 – Present</div>
-  <ul>
+  <ul class="full-only">
     <li>Benchmarked a Transformer encoder in PyTorch against the closed-form LMMSE estimator for recovering signals buried in noise; cut error 10.6 dB and beat the best causal linear filter by 1.9 dB.</li>
     <li>Priced the accuracy against the compute it costs: 34M multiply-accumulates per sample against 128.</li>
     <li>Caught a silent training collapse to a constant-mean predictor and traced it to the learning-rate schedule over 5 runs.</li>
+  </ul>
+  <ul class="brief-only">
+    <li>Transformer encoder vs. closed-form LMMSE for signals buried in noise: 10.6 dB error cut, 1.9 dB over the best causal linear filter, at 34M MACs per sample against 128.</li>
   </ul>
 </div>
 
@@ -40,11 +59,14 @@ Based in San Diego, CA. U.S. Citizen.
   <div class="edu-school">Therva</div>
   <div class="edu-degree">Technical Intern</div>
   <div class="edu-dates">Sep 2025 – Present</div>
-  <ul>
+  <ul class="full-only">
     <li>Lead the embedded firmware for this early-stage startup's patent-pending thermal device, written in C++ on a dual-core ESP32. Therva won 2nd place ($25K) at the UCSD Startup Competition.</li>
     <li>Built its real-time closed-loop PID control with integrator anti-windup: a 500 ms update sets heater duty, applied as time-proportional relay switching over a 5 s window, with gains tuned from logged step responses.</li>
     <li>Wrote the drivers underneath it: 8× oversampled 12-bit ADC thermistor reads with low-pass filtering, debounced interrupt-driven encoder input, an I2C status display, and Wi-Fi setpoint control.</li>
     <li>Structured the firmware as a non-blocking timed loop, so sensing, encoder input, and the display refresh never stall the control update or the heater window.</li>
+  </ul>
+  <ul class="brief-only">
+    <li>Lead the embedded firmware for a patent-pending thermal device, in C++ on a dual-core ESP32: real-time closed-loop PID heater control and the ADC, encoder, I2C, and Wi-Fi drivers under it. 2nd place ($25K), UCSD Startup Competition.</li>
   </ul>
 </div>
 
@@ -75,7 +97,7 @@ Based in San Diego, CA. U.S. Citizen.
   <div class="edu-school">San Diego State University</div>
   <div class="edu-degree">B.S. in Electrical Engineering, Minor in Computer Science</div>
   <div class="edu-dates">2022 – 2025</div>
-  <div class="edu-awards">William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List</div>
+  <div class="edu-awards full-only">William E. Leonhard Jr. Scholarship · Tau Beta Pi Invitee · Dean's List</div>
 </div>
 
 </div>
@@ -83,6 +105,8 @@ Based in San Diego, CA. U.S. Citizen.
 ---
 
 ## Skills
+
+<div class="full-only" markdown="1">
 
 **Programming & Systems:** Python, C/C++ (C++17), Tcl, SQL, Java, JavaScript, Bash, MIPS & x86 Assembly, Verilog, Git/GitHub, Jupyter
 
@@ -96,11 +120,29 @@ Based in San Diego, CA. U.S. Citizen.
 
 **IC Design:** Verilog, Tcl, Cadence Virtuoso, Spectre, Innovus, LTspice, VLSI design, standard-cell layout, DRC/LVS, analog & digital circuit design, circuit simulation
 
+</div>
+
+<div class="brief-only" markdown="1">
+
+**Languages:** Python · C/C++ · Verilog · Tcl · MATLAB · SQL
+
+**Signals & ML:** Estimation theory (Kalman, LMMSE/Wiener), DSP, image processing, PyTorch, NumPy
+
+**Hardware:** ESP32, STM32, FPGA, Cadence Virtuoso/Spectre/Innovus, VLSI design, DRC/LVS
+
+</div>
+
 ---
 
 ## Coursework
 
-<div class="course-filters" role="group" aria-label="Course category filters">
+<div class="brief-only" markdown="1">
+
+Statistical Signal Processing · Digital Signal Processing · Digital Image Processing · Graduate Linear Algebra · Machine Learning · ML for Physical Applications · Sensing & Estimation in Robotics · VLSI Circuit Design · Digital Circuit Design
+
+</div>
+
+<div class="course-filters full-only" role="group" aria-label="Course category filters">
   <button type="button" class="project-filter-btn is-active" data-filter="all">All</button>
   <button type="button" class="project-filter-btn" data-filter="sw">Software</button>
   <button type="button" class="project-filter-btn" data-filter="ml">ML</button>
@@ -108,7 +150,7 @@ Based in San Diego, CA. U.S. Citizen.
   <button type="button" class="project-filter-btn" data-filter="dsp">DSP</button>
 </div>
 
-<ul class="course-grid">
+<ul class="course-grid full-only">
   <li class="course-item" data-categories="hw">
     <span class="course-code">ECE 165</span>
     <span class="course-title">Digital Circuit Design</span>

@@ -48,7 +48,7 @@ Adaptive Kalman Filtering for Market Microstructure Noise — Python, NumPy, Sci
 ECG Denoising at Negative SNR: LMMSE vs. Transformer — Python, PyTorch, NumPy/SciPy:
 - Benchmarked an order-P Wiener-FIR (LMMSE) estimator against a Transformer encoder on -8.5 dB MIT-BIH ECG recordings, sweeping context length P = 8–128; cut NMSE from 3.50 to 0.31, a 10.6 dB gain, 1.9 dB past the best closed-form causal filter.
 - Added a non-causal Wiener smoother as the ceiling for any linear estimator, showing the Transformer's 24% margin below it came from nonlinearity, not longer context.
-- Priced the accuracy against compute: 34M multiply-accumulates per sample against 128.
+- Priced the accuracy against compute: 34M multiply-accumulates per sample for the Transformer against 128 for the LMMSE, about 265,000x less compute for the classical filter to land within 1.9 dB. The LMMSE is closed form, needs no training, and its coefficients are interpretable, so the comparison reports accuracy and cost side by side rather than accuracy alone.
 - Traced a silent training collapse to learning-rate instability rather than context length, using 5 controlled runs, plus a normalization defect worth 2.5 dB to the analytical baseline.
 
 This portfolio site and its chatbot — JavaScript, Jekyll, Gemini API, Cloudflare Workers:

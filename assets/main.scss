@@ -725,6 +725,90 @@ body.light-mode .wave-controls {
   &:hover { border-color: #999; }
 }
 
+// --- Condense toggle ---
+// Rendered only on pages with `condense: true` in their front matter. Sits at
+// the top left beside the site title, mirroring the theme toggle on the right.
+.condense-toggle {
+  float: left;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 0 16px;
+  padding: 4px 10px 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #aaa;
+  background: none;
+  border: 1px solid #555;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+
+  &:hover { border-color: #999; color: #ddd; }
+
+  &:focus-visible {
+    outline: none;
+    border-color: #c08020;
+    box-shadow: 0 0 0 3px rgba(192, 128, 32, 0.35);
+  }
+
+  &.is-on {
+    border-color: #c08020;
+    color: #ffd89a;
+    background: rgba(192, 128, 32, 0.12);
+  }
+
+  @media screen and (max-width: 600px) {
+    margin: 16px 0 0 10px;
+    font-size: 11px;
+    padding: 4px 8px 4px 5px;
+  }
+}
+
+.condense-switch {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 12px;
+  border-radius: 999px;
+  background: #3a3a3a;
+  border: 1px solid #555;
+  transition: background 0.2s ease, border-color 0.2s ease;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #aaa;
+    transition: transform 0.2s ease, background 0.2s ease;
+  }
+}
+
+.condense-toggle.is-on .condense-switch {
+  background: rgba(192, 128, 32, 0.35);
+  border-color: #c08020;
+  &::after {
+    transform: translateX(10px);
+    background: #ffd89a;
+  }
+}
+
+// --- Condensed view ---
+// Every long passage is marked .full-only and paired with a .brief-only short
+// form; flipping the body class swaps which one is in the flow.
+.brief-only { display: none; }
+
+body.is-condensed {
+  .full-only { display: none; }
+  .brief-only { display: revert; }
+}
+
 // --- Dark mode (default) ---
 body {
   background-color: #1e1e1e;
@@ -817,6 +901,29 @@ body.light-mode {
     color: #333;
     border-color: #ccc;
     &:hover { border-color: #666; }
+  }
+
+  .condense-toggle {
+    color: #555;
+    border-color: #ccc;
+    &:hover { border-color: #666; color: #111; }
+    &.is-on {
+      border-color: #c07820;
+      color: #8a5510;
+      background: rgba(232, 154, 58, 0.14);
+    }
+  }
+
+  .condense-switch {
+    background: #e8e8e8;
+    border-color: #ccc;
+    &::after { background: #999; }
+  }
+
+  .condense-toggle.is-on .condense-switch {
+    background: rgba(232, 154, 58, 0.4);
+    border-color: #c07820;
+    &::after { background: #8a5510; }
   }
 
   a {

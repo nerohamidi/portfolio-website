@@ -5,6 +5,14 @@
     {%- assign page_paths = site.header_pages | default: default_paths -%}
     <a class="site-title" rel="author" href="{{ "/" | relative_url }}">{{ site.title | escape }}</a>
 
+    {%- if page.condense -%}
+      <button type="button" class="condense-toggle" id="condense-toggle" aria-pressed="false"
+              title="Show only the key details">
+        <span class="condense-switch" aria-hidden="true"></span>
+        <span class="condense-text">condense</span>
+      </button>
+    {%- endif -%}
+
     {%- if page_paths -%}
       <nav class="site-nav">
         <input type="checkbox" id="nav-trigger" class="nav-trigger" />

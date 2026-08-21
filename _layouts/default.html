@@ -9,6 +9,11 @@
       if (localStorage.getItem('theme') === 'light') {
         document.body.classList.add('light-mode');
       }
+
+      // Same for the condensed view, so the long copy never flashes in
+      if (localStorage.getItem('condensed') === '1') {
+        document.body.classList.add('is-condensed');
+      }
     </script>
 
     {%- include header.html -%}
@@ -42,6 +47,27 @@
         );
         updateIcon();
       });
+
+      // --- Condense toggle (pages with `condense: true` in front matter) ---
+      var condense = document.getElementById('condense-toggle');
+
+      if (condense) {
+        function syncCondense() {
+          var on = document.body.classList.contains('is-condensed');
+          condense.classList.toggle('is-on', on);
+          condense.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+
+        syncCondense();
+
+        condense.addEventListener('click', function() {
+          document.body.classList.toggle('is-condensed');
+          localStorage.setItem('condensed',
+            document.body.classList.contains('is-condensed') ? '1' : '0'
+          );
+          syncCondense();
+        });
+      }
 
     </script>
 
