@@ -5,7 +5,7 @@ title: Home
 
 # Nero Hamidi
 
-M.S. ECE student at UC San Diego building real-time signal processing and machine learning systems, currently a software engineering intern at Qualcomm.
+M.S. ECE student at UC San Diego working in digital IC design, embedded systems, signal processing, and machine learning, currently a software engineering intern at Qualcomm.
 
 San Diego, CA · U.S. Citizen
 
