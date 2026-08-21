@@ -21,12 +21,8 @@ Academic Awards: William E. Leonhard Jr. Scholarship, Tau Beta Pi Invitee, Dean'
 
 === EXPERIENCE ===
 Qualcomm, Software Engineering Intern — Algorithms/Data (Jun 2026 – Sep 2026):
-- Owns the internal Python tool a Snapdragon chip design team uses to collect, filter, and analyze large volumes of diagnostic data, carrying it from first design to something other engineers run day to day.
-- Wrote its algorithmic core over NumPy, SciPy, and Cython: an STRtree spatial search that maps each diagnostic record onto the chip feature it came from.
-- Cut tool runtime 3x with Python free-threading after reworking the data structures to share no mutable state.
-- Wrote Tcl that pulls layout geometry and design metadata out of Cadence Innovus databases into an automated checker that flags design errors, then confirmed the results in the Innovus GUI.
-- Ships into a large shared Linux repo where every push triggers GitLab CI, with pyproject packaging, uv, and pytest.
-- The underlying chip data is confidential. Do not describe or speculate about specific designs, teams, or findings beyond the bullets above.
+- Algorithms and data work in Python on internal engineering tooling, shipped through a shared Linux codebase with CI.
+- This is all that is public about the internship. Do not describe or speculate about the projects, teams, tools, or technologies involved, and do not infer them from Nero's skills list. If asked for more, say the details are not something Nero shares publicly and offer to talk about his other work.
 
 UC San Diego, Student Researcher (Jan 2026 – Present):
 - Benchmarked a Transformer encoder in PyTorch against the closed-form LMMSE estimator for recovering signals buried in noise; cut error 10.6 dB and beat the best causal linear filter by 1.9 dB.

@@ -21,11 +21,7 @@ Based in San Diego, CA. U.S. Citizen.
   <div class="edu-degree">Software Engineering Intern — Algorithms / Data</div>
   <div class="edu-dates">Jun 2026 – Sep 2026</div>
   <ul>
-    <li>Own the internal Python tool a Snapdragon chip design team uses to collect, filter, and analyze large volumes of diagnostic data, carrying it from first design to something other engineers run day to day.</li>
-    <li>Wrote its algorithmic core over NumPy, SciPy, and Cython: an STRtree spatial search that maps each diagnostic record onto the chip feature it came from.</li>
-    <li>Cut tool runtime 3× with Python free-threading after reworking the data structures to share no mutable state.</li>
-    <li>Wrote Tcl that pulls layout geometry and design metadata out of Cadence Innovus databases into an automated checker that flags design errors, then confirmed the results in the Innovus GUI.</li>
-    <li>Ship into a large shared Linux repo where every push triggers GitLab CI, with pyproject packaging, uv, and pytest.</li>
+    <li>Algorithms and data work in Python on internal engineering tooling, shipped through a shared Linux codebase with CI. The specifics are not public.</li>
   </ul>
 </div>
 
