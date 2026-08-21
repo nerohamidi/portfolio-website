@@ -1,0 +1,10 @@
+_site
+.sass-cache
+.jekyll-cache
+.jekyll-metadata
+vendor
+*.pdf
+.env
+resumes
+.DS_Store
+.wrangler
