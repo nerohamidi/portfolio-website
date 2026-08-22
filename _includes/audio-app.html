@@ -1,13 +1,21 @@
 <div class="aud">
 
+  <!-- Two ways in. Simple is a full-screen player with the four things most
+       people who open a shared link actually want; Pro is the whole desk. The
+       switch is the one control that shows in both. -->
+  <div class="aud-mode" id="aud-mode" role="group" aria-label="Interface mode">
+    <button class="aud-mode-btn" id="aud-mode-simple" type="button" aria-pressed="true">Simple</button>
+    <button class="aud-mode-btn" id="aud-mode-pro" type="button" aria-pressed="false">Pro</button>
+  </div>
+
   <header class="aud-head">
     <h1 class="aud-title">Signal Share</h1>
-    <p class="aud-sub">Load a track, stack effects on it, then send someone a link that opens on exactly what you built.</p>
+    <p class="aud-sub">Load a track, split it into stems, stack effects on each, then send someone a link that opens on exactly what you built.</p>
   </header>
 
   <ol class="aud-steps">
     <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
-    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Stack effects, watch the spectrum</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Split into stems, stack effects on each</span></li>
     <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">Whole playlist, your settings</span></li>
   </ol>
 
@@ -98,6 +106,27 @@
       </div>
     </div>
 
+    <!-- Simple mode's whole control surface, and hidden everywhere else: the
+         same three things the Pro panels do, with the numbers taken out. -->
+    <div class="aud-simple-bar" id="aud-simple-bar">
+      <div class="aud-simple-row">
+        <button class="aud-simple-chip" id="aud-simple-echo" type="button" aria-pressed="false">Echo</button>
+        <button class="aud-simple-chip" id="aud-simple-rev" type="button" aria-pressed="false">Reverb</button>
+      </div>
+      <div class="aud-simple-row aud-simple-pitch" id="aud-simple-pitch" role="group" aria-label="Pitch">
+        <span class="aud-simple-tag">pitch</span>
+        <button class="aud-simple-chip aud-simple-st" data-st="-12" type="button">&minus;12</button>
+        <button class="aud-simple-chip aud-simple-st" data-st="-5" type="button">&minus;5</button>
+        <button class="aud-simple-chip aud-simple-st is-on" data-st="0" type="button">0</button>
+        <button class="aud-simple-chip aud-simple-st" data-st="5" type="button">+5</button>
+        <button class="aud-simple-chip aud-simple-st" data-st="12" type="button">+12</button>
+      </div>
+      <div class="aud-simple-row aud-simple-foot">
+        <label class="aud-btn aud-btn-sm" for="aud-simple-file" tabindex="0">Track</label>
+        <input type="file" id="aud-simple-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
+      </div>
+    </div>
+
     <div class="aud-bg-bar">
       <label class="aud-check">
         <input type="checkbox" id="aud-bg-on" checked>
@@ -126,11 +155,40 @@
     </div>
   </section>
 
+  <!-- Stems -->
+  <section class="aud-panel hidden" id="aud-stems" aria-label="Stems">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Stems</h2>
+      <p class="aud-panel-hint">Two crossovers and a mid/side matrix &mdash; nothing learned, nothing guessed. All four up is the track again, level for level.</p>
+    </div>
+    <div class="aud-chips">
+      <button class="aud-chip" id="aud-split-on" type="button" aria-pressed="false">Split into stems</button>
+    </div>
+    <div class="aud-params hidden" id="aud-split-params">
+      <label class="aud-param">
+        <span class="aud-param-name">Low&ndash;mid</span>
+        <input type="range" id="aud-split-f1" min="0" max="1000" value="333" step="1">
+        <span class="aud-param-val" id="aud-split-f1-val">200 Hz</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Mid&ndash;high</span>
+        <input type="range" id="aud-split-f2" min="0" max="1000" value="826" step="1">
+        <span class="aud-param-val" id="aud-split-f2-val">6.0 kHz</span>
+      </label>
+    </div>
+    <ol class="aud-stem-list hidden" id="aud-stem-list"></ol>
+    <p class="aud-stem-foot hidden" id="aud-stem-foot">Every stem has its own filter, echo and reverb &mdash; press Edit to point the panel below at one.</p>
+  </section>
+
   <!-- Controls -->
   <section class="aud-panel hidden" id="aud-shape" aria-label="Effects">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Effects</h2>
       <p class="aud-panel-hint">They stack, in this order.</p>
+    </div>
+    <div class="aud-target hidden" id="aud-target">
+      <span class="aud-target-tag">Editing</span>
+      <div class="aud-chips aud-target-chips" id="aud-target-chips"></div>
     </div>
     <p class="aud-chain" id="aud-chain"></p>
 

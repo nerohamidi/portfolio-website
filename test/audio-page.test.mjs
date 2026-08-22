@@ -68,11 +68,23 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     },
     seekTo: seekTo,
     effects: function() {
-      return { echoOn: echoOn, revOn: revOn, mathOn: mathOn };
+      var r = rack();
+      return { echoOn: r.echoOn, revOn: r.revOn, mathOn: mathOn,
+        filterType: r.filterType, freqPos: r.freqPos, qPos: r.qPos, q: rackQ(r) };
     },
     graph: function() {
-      return { ctx: audioCtx, gain: gainNode, filter: filterNode, echo: echoNodes, rev: revNodes, analyser: analyser };
+      var n = rack().nodes || {};
+      return { ctx: audioCtx, gain: gainNode, filter: n.filter, echo: n.echo, rev: n.rev,
+        analyser: analyser, master: master.nodes, split: split.nodes };
     },
+    stems: function() { return stems; },
+    split: function() { return split; },
+    setTarget: setTarget,
+    setSplit: setSplit,
+    setMode: setMode,
+    mode: function() { return simpleMode; },
+    target: function() { return target; },
+    racks: function() { return { master: master, stems: stems.map(function(s) { return s.rack; }) }; },
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
   };
   sizeCanvas();
@@ -109,11 +121,18 @@ function boot(hash, fetchImpl, userAgent) {
   // Connections are recorded rather than thrown away: whether the stages are
   // wired in the right order, and whether a stage that was switched off is
   // really out of the path, is the whole question the stacking tests ask.
+  // `wires` keeps the output and input indices as well, which is the only way to
+  // tell a mid/side matrix from four gains wired to nothing in particular.
   const node = (kind) => ({
     kind,
     out: [],
-    connect(to) { this.out.push(to); return to; },
-    disconnect() { this.out.length = 0; },
+    wires: [],
+    connect(to, from, into) {
+      this.out.push(to);
+      this.wires.push({ to, from: from | 0, into: into | 0 });
+      return to;
+    },
+    disconnect() { this.out.length = 0; this.wires.length = 0; },
   });
   const buffer = (duration) => ({
     duration, sampleRate: 44100, numberOfChannels: 1,
@@ -135,6 +154,8 @@ function boot(hash, fetchImpl, userAgent) {
       },
     });
     this.createDelay = (max) => Object.assign(node('delay'), { maxDelayTime: max, delayTime: param(0) });
+    this.createChannelSplitter = (n) => Object.assign(node('splitter'), { numberOfOutputs: n });
+    this.createChannelMerger = (n) => Object.assign(node('merger'), { numberOfInputs: n });
     this.createConvolver = () => Object.assign(node('convolver'), { buffer: null, normalize: true });
     this.createBuffer = (channels, length, rate) => {
       const data = Array.from({ length: channels }, () => new Float32Array(length));
@@ -917,10 +938,10 @@ check('and it says so beside the toggle', w.document.getElementById('aud-tx-stat
 
 // --- 8. which picker did the asking -----------------------------------------
 
-function pickFiles(win, names) {
+function pickFiles(win, names, id = 'aud-file') {
   // jsdom will not let a test set input.files, so the change handler is given the
   // list the browser would have handed it.
-  const input = win.document.getElementById('aud-file');
+  const input = win.document.getElementById(id);
   const ev = new win.Event('change');
   Object.defineProperty(ev, 'target', {
     value: { files: names.map((n) => ({ name: n, type: 'audio/mpeg' })), value: '' },
@@ -989,7 +1010,10 @@ w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
 let g = w.__probe.graph();
 
-check('a filter alone is the only stage in the path', g.gain.out.length === 1 && g.gain.out[0] === g.filter && g.filter.out[0] === g.analyser);
+// The volume reaches the rack rather than the stage: a rack has an input and an
+// output that never move, which is what lets five of them exist at once.
+check('a filter alone is the only stage in the path', g.gain.out.length === 1 && g.gain.out[0] === g.master.input &&
+  g.master.input.out[0] === g.filter && g.filter.out[0] === g.master.output && g.master.output.out[0] === g.analyser);
 check('the chain strip names it', live(w) === 'Low Pass', live(w));
 check('echo and reverb start off', !w.__probe.effects().echoOn && !w.__probe.effects().revOn);
 check('their sliders stay folded away', w.document.getElementById('aud-echo-params').classList.contains('hidden') &&
@@ -998,15 +1022,17 @@ check('their sliders stay folded away', w.document.getElementById('aud-echo-para
 press(w, 'aud-echo-on');
 g = w.__probe.graph();
 check('echo switches on', w.__probe.effects().echoOn && !w.document.getElementById('aud-echo-params').classList.contains('hidden'));
-check('and lands after the filter, not instead of it', g.filter.out.length === 1 && g.filter.out[0] === g.echo.input && g.echo.output.out[0] === g.analyser);
+check('and lands after the filter, not instead of it', g.filter.out.length === 1 && g.filter.out[0] === g.echo.input && g.echo.output.out[0] === g.master.output);
 check('its delay feeds itself, which is what makes the repeats', g.echo.delay.out.indexOf(g.echo.fb) >= 0 && g.echo.fb.out.indexOf(g.echo.delay) >= 0);
 check('and it keeps a dry path alongside the wet one', g.echo.dry.gain.value === 0.65 && g.echo.wet.gain.value === 0.35);
 
 press(w, 'aud-rev-on');
 g = w.__probe.graph();
 check('reverb stacks on top of both', live(w) === 'Low Pass,Echo,Reverb', live(w));
-check('three stages run in order', g.gain.out[0] === g.filter && g.filter.out[0] === g.echo.input &&
-  g.echo.output.out[0] === g.rev.input && g.rev.output.out[0] === g.analyser && g.analyser.out[0] === g.ctx.destination);
+check('three stages run in order', g.gain.out[0] === g.master.input && g.master.input.out[0] === g.filter &&
+  g.filter.out[0] === g.echo.input && g.echo.output.out[0] === g.rev.input &&
+  g.rev.output.out[0] === g.master.output && g.master.output.out[0] === g.analyser &&
+  g.analyser.out[0] === g.ctx.destination);
 check('the pre-delay sits before the convolver', g.rev.pre.out[0] === g.rev.conv && g.rev.conv.out[0] === g.rev.wet);
 check('an impulse response was built to the size asked for', g.rev.conv.buffer &&
   g.rev.conv.buffer.length === Math.round(2.2 * 44100) && g.rev.conv.buffer.numberOfChannels === 2,
@@ -1032,7 +1058,7 @@ check('with the numbers the sender set', w.document.getElementById('aud-echo-tim
   w.document.getElementById('aud-echo-fb-val').textContent === '0.60' &&
   w.document.getElementById('aud-rev-mix-val').textContent === '45%',
   w.document.getElementById('aud-echo-time-val').textContent + ' / ' + w.document.getElementById('aud-echo-fb-val').textContent);
-check('and with no filter in front of them', live(w) === 'Echo,Reverb' && g.gain.out[0] === g.echo.input, live(w));
+check('and with no filter in front of them', live(w) === 'Echo,Reverb' && g.master.input.out[0] === g.echo.input, live(w));
 
 w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
@@ -1451,6 +1477,309 @@ setBg(w, true);
 w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
 await settle();
 check('and so is turning it back on', w.__probe.state().bgAllowed === true);
+
+// --- 12. the split -----------------------------------------------------------
+//
+// Four stems out of two crossovers and a mid/side matrix. What is asserted here
+// is the topology, because the topology is the whole claim: an allpass on the
+// low band so the four sum flat, and a matrix that is exact rather than nearly
+// so. jsdom does no audio, so nothing here can hear it -- but a matrix wired to
+// the wrong splitter output is a wiring fact, and wiring is recorded.
+
+const DEMO2 = '#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d';
+const stemsOf = (win) => win.__probe.stems();
+const rowsOf = (win) => Array.from(win.document.querySelectorAll('.aud-stem'));
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+
+check('the split starts off', w.__probe.split().on === false);
+check('and its faders are folded away', w.document.getElementById('aud-stem-list').classList.contains('hidden'));
+check('so there is nothing to point the effects panel at', w.document.getElementById('aud-target').classList.contains('hidden'));
+check('the whole track reaches the master rack', w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+
+press(w, 'aud-split-on');
+let sp = w.__probe.graph().split;
+g = w.__probe.graph();
+
+check('splitting reroutes the volume into the crossover tree', g.gain.out.length === 1 && g.gain.out[0] === sp.input);
+check('and the tree still ends at the master rack', sp.output.out[0] === g.master.input);
+check('four rows appear', rowsOf(w).length === 4);
+check('named for where they come from', rowsOf(w).map((r) => r.querySelector('.aud-stem-name').textContent).join(',') === 'Low,Centre,Sides,High');
+
+// Linkwitz-Riley is two Butterworth sections in series, and Web Audio wants that
+// Q as decibels rather than as 0.707.
+const BUTTER_DB = 20 * Math.log10(Math.SQRT1_2);
+const near = (a, b) => Math.abs(a - b) < 1e-6;
+check('each crossover half is two sections deep', sp.lo.a.out[0] === sp.lo.b && sp.hi.a.out[0] === sp.hi.b &&
+  sp.mid.a.out[0] === sp.mid.b && sp.top.a.out[0] === sp.top.b);
+check('every one of them Butterworth aligned, in the units the browser reads',
+  [sp.lo.a, sp.lo.b, sp.hi.a, sp.hi.b, sp.mid.a, sp.mid.b, sp.top.a, sp.top.b].every((f) => near(f.Q.value, BUTTER_DB)),
+  String(sp.lo.a.Q.value));
+check('and pointed at the two crossovers the sliders name',
+  [sp.lo.a, sp.hi.b].every((f) => Math.abs(f.frequency.value - 200) < 1) &&
+  [sp.mid.a, sp.top.b].every((f) => Math.abs(f.frequency.value - 6000) < 30),
+  sp.lo.a.frequency.value + ' / ' + sp.mid.a.frequency.value);
+
+check('the low band is taken off the first crossover', sp.input.out[0] === sp.lo.input && sp.lo.output.out[0] === sp.comp);
+check('and put through the allpass the other two sum to, or it would not add back up flat',
+  sp.comp.type === 'allpass' && near(sp.comp.Q.value, Math.SQRT1_2) && Math.abs(sp.comp.frequency.value - 6000) < 30,
+  sp.comp.type + ' Q' + sp.comp.Q.value);
+check('the second crossover hangs off the first', sp.hi.output.out.indexOf(sp.mid.input) >= 0 &&
+  sp.hi.output.out.indexOf(sp.top.input) >= 0);
+
+// The matrix. M is a sum of both channels into one node, S is the same with the
+// right inverted, and the two of them go back out as (M, M) and (S, -S).
+const merger = sp.heads[1];
+const sideMerger = sp.heads[2];
+check('the mid band is forced to two channels before it is taken apart',
+  sp.mid.output.out[0].channelCount === 2 && sp.mid.output.out[0].channelInterpretation === 'speakers');
+const splitter = sp.mid.output.out[0].out[0];
+check('and then split', splitter.kind === 'splitter' && splitter.numberOfOutputs === 2);
+
+const sumOf = (n) => splitter.wires.filter((x) => x.to === n).map((x) => x.from).sort().join('');
+const midNode = splitter.wires.map((x) => x.to).find((n) => sumOf(n) === '01');
+check('M takes both channels into one node', Boolean(midNode) && midNode.gain.value === 0.5);
+const inverted = splitter.wires.filter((x) => x.from === 1).map((x) => x.to).find((n) => n.gain && n.gain.value === -1);
+check('S takes the right one inverted', Boolean(inverted));
+const sideNode = inverted.out[0];
+check('into a node the left is also arriving at', splitter.wires.some((x) => x.from === 0 && x.to === sideNode) &&
+  sideNode.gain.value === 0.5);
+
+check('Centre goes back out as M against M',
+  midNode.wires.filter((x) => x.to === merger).map((x) => x.into).sort().join('') === '01');
+const negS = sideNode.out.find((n) => n.gain && n.gain.value === -1);
+check('Sides goes back out as S against minus S',
+  sideNode.wires.some((x) => x.to === sideMerger && x.into === 0) &&
+  Boolean(negS) && negS.wires.some((x) => x.to === sideMerger && x.into === 1));
+
+// Every stem has its own rack, and the rack sits between the split and the mix.
+let stemList = stemsOf(w);
+check('each stem gets its own fader and its own meter',
+  stemList.every((st) => st.gainNode && st.meter));
+check('each head feeds its stem rack, which feeds the fader, which feeds the mix',
+  stemList.every((st, i) => sp.heads[i].out[0] === st.rack.nodes.input &&
+    st.rack.nodes.output.out[0] === st.gainNode &&
+    st.gainNode.out[0] === st.meter && st.meter.out[0] === sp.output));
+check('and they all start at unity', stemList.every((st) => st.gainNode.gain.value === 1));
+
+// --- 12b. mute, solo and the fader ------------------------------------------
+
+const stemBtn = (win, i, label) =>
+  rowsOf(win)[i].querySelectorAll('.aud-stem-btn')[label];
+const MUTE = 0, SOLO = 1, EDIT = 2;
+
+stemBtn(w, 0, MUTE).click();
+check('muting a stem takes it out of the mix', stemList[0].gainNode.gain.value === 0);
+check('and says so on the row', rowsOf(w)[0].classList.contains('is-silent'));
+check('while the rest carry on', stemList[1].gainNode.gain.value === 1);
+stemBtn(w, 0, MUTE).click();
+check('unmuting puts it back', stemList[0].gainNode.gain.value === 1);
+
+stemBtn(w, 1, SOLO).click();
+check('a solo silences everything that is not soloed',
+  stemList.map((st) => st.gainNode.gain.value).join(',') === '0,1,0,0',
+  stemList.map((st) => st.gainNode.gain.value).join(','));
+stemBtn(w, 2, SOLO).click();
+check('and a second solo joins the first rather than replacing it',
+  stemList.map((st) => st.gainNode.gain.value).join(',') === '0,1,1,0');
+stemBtn(w, 1, SOLO).click();
+stemBtn(w, 2, SOLO).click();
+check('clearing them all brings the mix back', stemList.every((st) => st.gainNode.gain.value === 1));
+
+const fader = (win, i) => rowsOf(win)[i].querySelector('.aud-stem-gain');
+const setRange = (node, value) => {
+  node.value = String(value);
+  node.dispatchEvent(new w.Event('input', { bubbles: true }));
+};
+setRange(fader(w, 3), -6);
+check('a fader is decibels, not a raw gain', Math.abs(stemList[3].gainNode.gain.value - Math.pow(10, -6 / 20)) < 1e-6,
+  String(stemList[3].gainNode.gain.value));
+check('and the row prints what it is set to', rowsOf(w)[3].querySelector('.aud-stem-db').textContent === '−6.0 dB',
+  rowsOf(w)[3].querySelector('.aud-stem-db').textContent);
+setRange(fader(w, 3), -40);
+check('the bottom of the travel is off rather than very quiet', stemList[3].gainNode.gain.value === 0 &&
+  rowsOf(w)[3].querySelector('.aud-stem-db').textContent === 'off');
+setRange(fader(w, 3), 0);
+
+// --- 12c. the effects panel points somewhere ---------------------------------
+
+const targetChips = (win) => Array.from(win.document.querySelectorAll('#aud-target-chips .aud-chip'));
+
+check('the panel offers the master and all four stems', targetChips(w).map((c) => c.textContent).join(',') === 'Master,Low,Centre,Sides,High');
+check('and starts on the master', w.__probe.target() === -1 && targetChips(w)[0].classList.contains('is-on'));
+
+targetChips(w)[2].click();
+check('picking a stem moves the panel to it', w.__probe.target() === 1);
+check('and the row it belongs to lights up', rowsOf(w)[1].classList.contains('is-target'));
+check('the chain strip says whose rack it is drawing',
+  Array.from(w.document.querySelectorAll('.aud-chain-node.is-fixed')).map((n) => n.textContent).join(',') === 'Centre,Mix',
+  Array.from(w.document.querySelectorAll('.aud-chain-node.is-fixed')).map((n) => n.textContent).join(','));
+
+press(w, 'aud-echo-on');
+check('the echo lands on that stem', stemList[1].rack.echoOn === true);
+check('and not on the master', w.__probe.racks().master.echoOn === false);
+check('the stem it is on says it is carrying something', rowsOf(w)[1].classList.contains('has-fx'));
+g = w.__probe.graph();
+check('and it is wired inside that stem, between the split and the fader',
+  sp.heads[1].out[0] === stemList[1].rack.nodes.input &&
+  stemList[1].rack.nodes.input.out[0] === stemList[1].rack.nodes.echo.input &&
+  stemList[1].rack.nodes.echo.output.out[0] === stemList[1].rack.nodes.output);
+
+w.document.getElementById('aud-filters').querySelector('[data-filter="highpass"]').click();
+check('so does a filter', stemList[1].rack.filterType === 'highpass' && w.__probe.racks().master.filterType === null);
+check('and it runs before the echo on that stem',
+  stemList[1].rack.nodes.input.out[0] === stemList[1].rack.nodes.filter &&
+  stemList[1].rack.nodes.filter.out[0] === stemList[1].rack.nodes.echo.input);
+
+targetChips(w)[0].click();
+check('going back to the master shows the master again', w.__probe.target() === -1 &&
+  w.document.getElementById('aud-echo-on').classList.contains('is-on') === false);
+check('while the stem keeps what it was given', stemList[1].rack.echoOn === true &&
+  stemList[1].rack.filterType === 'highpass');
+
+// The Edit button on a row is the same door from the other side.
+stemBtn(w, 3, EDIT).click();
+check('the row edit button points the panel too', w.__probe.target() === 3);
+
+// --- 12d. a link carries the split ------------------------------------------
+
+targetChips(w)[0].click();
+setRange(fader(w, 0), -3);
+stemBtn(w, 2, MUTE).click();
+hash = w.__probe.encodeState();
+
+check('the link carries the crossovers', /(^|&)sp=\d+,\d+(&|$)/.test(hash), hash);
+check('and the fader that was moved', /(^|&)s0=-3,0,0(&|$)/.test(hash), hash);
+check('and the mute', /(^|&)s2=0,1,0(&|$)/.test(hash), hash);
+check('and the stem that is carrying effects', /(^|&)s1flt=hp,/.test(hash) && /(^|&)s1ec=/.test(hash), hash);
+check('but writes nothing for a stem that is doing nothing', !/(^|&)s3(flt|ec|rv)?=/.test(hash), hash);
+check('and stays a v3 link, so a page that predates the stems still opens it',
+  /(^|&)v=3(&|$)/.test(hash), hash);
+
+const shared = boot('#' + hash, () => res({ chunks: [] }));
+await settle();
+const back = stemsOf(shared);
+check('opening it splits the track again', shared.__probe.split().on === true);
+check('with the faders where they were', back[0].db === -3 && back[2].muted === true);
+check('and the stem effects on the stem they were on',
+  back[1].rack.echoOn === true && back[1].rack.filterType === 'highpass' &&
+  back[3].rack.echoOn === false);
+check('the master is still clean', shared.__probe.racks().master.echoOn === false &&
+  shared.__probe.racks().master.filterType === null);
+check('and the graph is wired for it', shared.__probe.graph().gain.out[0] === shared.__probe.graph().split.input);
+
+// A link from before any of this leaves the track whole.
+w = boot('#v=3&flt=lp,500,1&ec=320,0.35,0.35&viz=1,1&vol=0.7&t=d', () => res({ chunks: [] }));
+await settle();
+check('an older link opens unsplit', w.__probe.split().on === false);
+check('with its effects on the master, where they were', w.__probe.racks().master.echoOn === true &&
+  w.__probe.racks().master.filterType === 'lowpass');
+check('and the volume reaching that rack directly', w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+
+// Turning the split off puts the track back together and lets go of the stems.
+press(w, 'aud-split-on');
+targetChips(w)[2].click();
+check('a stem can be edited while the split is on', w.__probe.target() === 1);
+press(w, 'aud-split-on');
+check('turning it off sends the panel back to the master', w.__probe.target() === -1);
+check('and the volume back to the master rack', w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+check('with the stems left as they were, for when it comes back',
+  stemsOf(w).every((st) => st.rack.nodes !== null));
+check('and nothing of them in the link', !/(^|&)sp=/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+// --- 13. simple and pro ------------------------------------------------------
+//
+// One set of controls, not two: the canvas, the transport and the scrubber in
+// simple mode are the ones pro mode uses, which is why the switch never
+// interrupts anything.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+
+check('a first visit lands in simple mode', w.__probe.mode() === true &&
+  w.document.body.classList.contains('aud-simple'));
+check('with the switch showing where it is', w.document.getElementById('aud-mode-simple').classList.contains('is-on') &&
+  !w.document.getElementById('aud-mode-pro').classList.contains('is-on'));
+
+press(w, 'aud-simple-echo');
+check('the echo switch there reaches the master rack', w.__probe.racks().master.echoOn === true);
+check('and lights up', w.document.getElementById('aud-simple-echo').classList.contains('is-on'));
+check('and it is a real stage in the graph, not a label',
+  w.__probe.graph().master.input.out[0] === w.__probe.graph().master.echo.input);
+press(w, 'aud-simple-rev');
+check('so does the reverb', w.__probe.racks().master.revOn === true);
+check('and it stacks behind the echo, in the order the pro panel says',
+  w.__probe.graph().master.echo.output.out[0] === w.__probe.graph().master.rev.input);
+
+const stChip = (win, st) => win.document.querySelector('.aud-simple-st[data-st="' + st + '"]');
+stChip(w, -12).click();
+check('a pitch mode moves the pitch', w.__probe.graph().ctx && w.document.getElementById('aud-pitch').value === '-12');
+check('and the chip that was pressed is the one lit',
+  stChip(w, -12).classList.contains('is-on') && !stChip(w, 0).classList.contains('is-on'));
+check('the rate readout follows it', w.document.getElementById('aud-pitch-rate').textContent.indexOf('0.50') === 0,
+  w.document.getElementById('aud-pitch-rate').textContent);
+stChip(w, 0).click();
+check('and zero puts it back', w.document.getElementById('aud-pitch').value === '0' &&
+  stChip(w, 0).classList.contains('is-on'));
+
+hash = w.__probe.encodeState();
+check('what was built in simple mode is a plain link', /(^|&)ec=/.test(hash) && /(^|&)rv=/.test(hash), hash);
+check('and the mode itself stays out of it', !/(^|&)(mode|ui)=/.test(hash), hash);
+
+press(w, 'aud-mode-pro');
+check('switching to pro takes the class off the body', w.__probe.mode() === false &&
+  !w.document.body.classList.contains('aud-simple'));
+check('and the pro panel is already on what simple mode built',
+  w.document.getElementById('aud-echo-on').classList.contains('is-on') &&
+  w.document.getElementById('aud-rev-on').classList.contains('is-on'));
+check('nothing was rebuilt to get there', w.__probe.graph().master.echo.output.out[0] === w.__probe.graph().master.rev.input);
+
+// The pro panel is the other half of the same switch.
+press(w, 'aud-echo-on');
+check('turning it off in pro turns it off in simple too', w.__probe.racks().master.echoOn === false &&
+  !w.document.getElementById('aud-simple-echo').classList.contains('is-on'));
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+check('the choice outlives the page', w.__probe.mode() === false);
+press(w, 'aud-mode-simple');
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+check('and so does switching back', w.__probe.mode() === true);
+
+// Simple mode has no playlist on screen, so its one file button swaps the track
+// rather than quietly growing a list nobody can see.
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'second.mp3' }),
+], 0);
+w.document.querySelector('label[for="aud-simple-file"]').click();
+pickFiles(w, ['other.mp3'], 'aud-simple-file');
+await settle();
+st = w.__probe.state();
+check('the simple track button swaps rather than appending out of sight',
+  st.queue.length === 2 && st.queue[0].name === 'other.mp3', st.queue.map((q) => q.name).join(','));
+
+// With nothing loaded there is nothing to swap, so it loads instead.
+w = boot('', () => res({ chunks: [] }));
+await settle();
+w.document.querySelector('label[for="aud-simple-file"]').click();
+pickFiles(w, ['first.mp3'], 'aud-simple-file');
+await settle();
+st = w.__probe.state();
+check('and on an empty page it just loads the track', st.queue.length === 1 && st.current === 0,
+  st.queue.map((q) => q.name).join(','));
+
+// A shared link decides nothing about which mode it opens in: that is the
+// listener's, the same way the background switch is.
+w = boot('#v=3&flt=off,500,1&rv=2.2,20,0.3&viz=1,1&vol=0.7&t=d', () => res({ chunks: [] }));
+await settle();
+check('a shared link opens in whichever mode this browser was left in', w.__probe.mode() === true);
+check('with its effects showing on the simple switches',
+  w.document.getElementById('aud-simple-rev').classList.contains('is-on'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

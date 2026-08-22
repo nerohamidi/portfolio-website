@@ -30,6 +30,70 @@
   function filterFreqLabel(type) { return FILTER_IS_BAND[type] ? 'Centre' : 'Cutoff'; }
   function filterQLabel(type) { return FILTER_IS_BAND[type] ? 'Q' : 'Resonance'; }
 
+  // --- the split ------------------------------------------------------------
+  //
+  // Four stems, cut by two crossovers and a mid/side matrix. Nothing here is
+  // learned or guessed: it is the split a mixing desk makes, and the parts are
+  // named for where they come from rather than for what is usually in them.
+  //
+  //   x --+-- LR4 low  @f1 --- AP2 @f2 --------------------------- Low
+  //       |
+  //       +-- LR4 high @f1 --+-- LR4 low  @f2 --+-- (L+R)/2 ------ Centre
+  //                          |                  +-- (L-R)/2 ------ Sides
+  //                          +-- LR4 high @f2 ------------------- High
+  //
+  // A Linkwitz-Riley half is two Butterworth sections in series, and the pair of
+  // them sums to a second-order allpass rather than to a dip at the crossover:
+  //
+  //   LP + HP = 1/(s^2+sqrt2 s+1)^2 + s^4/(s^2+sqrt2 s+1)^2
+  //           = (s^4+1)/(s^2+sqrt2 s+1)^2
+  //           = (s^2-sqrt2 s+1)/(s^2+sqrt2 s+1)
+  //
+  // Cascading two crossovers leaves the low band one of those allpasses behind
+  // the other two, so it is passed through the same one the mid and high pair
+  // sums to. All four then add back up to A(z)^2 x[n]: the track at 0.000 dB
+  // across the whole audible range -- measured, not asserted -- with two
+  // allpasses' worth of phase on it.
+  //
+  // Which is worth being exact about, because it is the difference between two
+  // claims. Every frequency comes back at the level it went in at, so all four
+  // up is the track to the ear. It is not the track sample for sample, and no
+  // arrangement of Linkwitz-Riley filters would be; the allpass only buys the
+  // last 0.011 dB of the magnitude, and the phase is the price of steep slopes.
+  //
+  // The matrix, by contrast, is exact rather than nearly so: Centre carries M in
+  // both channels and Sides carries S against -S, and (M+S, M-S) is (L, R) to
+  // the last bit -- it is four gains, and nothing in it has a phase to turn.
+  // A mono track arrives with L and R identical, so its Sides stem is silence --
+  // the truth about a mono track, not a failure to split it.
+  var STEMS = [
+    { code: 'lo', name: 'Low',    what: 'bass and kick' },
+    { code: 'ct', name: 'Centre', what: 'lead vocal, snare, anything panned up the middle' },
+    { code: 'sd', name: 'Sides',  what: 'guitars, keys, room, anything spread wide' },
+    { code: 'hi', name: 'High',   what: 'cymbals, air, sibilance' }
+  ];
+  var SPLIT_F1 = 200;
+  var SPLIT_F2 = 6000;
+  // Web Audio reads a low or high pass's Q as decibels of resonance rather than
+  // as a quality factor, so the Butterworth alignment the crossover is built out
+  // of has to be asked for as -3.01 dB and not as 0.707. The allpass that puts
+  // the bands back in step is the other convention, and takes the ratio.
+  var BUTTER_Q_DB = 20 * Math.log(Math.SQRT1_2) / Math.LN10;
+  var BUTTER_Q = Math.SQRT1_2;
+  // Crossovers cannot cross. Thirty slider steps is about a third of an octave,
+  // which is the narrowest a mid band can be and still hold anything.
+  var SPLIT_MIN_GAP = 30;
+  var STEM_DB_MIN = -40;   // and at the bottom of the travel, off rather than quiet
+  var STEM_DB_MAX = 6;
+  var METER_FLOOR_DB = 60; // what the full width of a stem meter spans
+
+  // Simple mode is the front door. Someone who opens a shared link wants the
+  // play button, not a filter bank, so that is what they get until they ask for
+  // the rest -- and the answer is remembered per browser, the way the background
+  // switch is, because it is about who is looking rather than about the sound.
+  var MODE_STORE = 'aud-mode';
+  var SIMPLE_PITCHES = [-12, -5, 0, 5, 12];
+
   // The delay line is allocated once at its longest, and the slider moves a
   // read pointer inside it. A DelayNode cannot grow after it is made.
   // A shade over what the sliders can ask for: delayTime is clamped to the
@@ -91,7 +155,12 @@
     'aud-key', 'aud-danger', 'aud-del-btn', 'aud-del-note', 'aud-del-pass',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
-    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip'
+    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip',
+    'aud-mode', 'aud-mode-simple', 'aud-mode-pro',
+    'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
+    'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
+    'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
+    'aud-target', 'aud-target-chips'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -102,26 +171,68 @@
 
   var audioCtx = null;
   var gainNode = null;
-  var filterNode = null;
   var analyser = null;
-  var filterType = null;
-  // Every effect is its own stage with its own on switch, and the stages chain
+
+  // --- racks -----------------------------------------------------------------
+  //
+  // A rack is a filter, an echo and a reverb in series with their own switches
+  // and their own numbers. Every effect is its own stage and the stages chain
   // rather than replace one another. All of them are linear and time invariant,
-  // so the whole chain is one filter whose transfer function is the product of
-  // theirs; the math panel says so, and it is why the fixed order costs nothing.
-  var echoOn = false;
-  var revOn = false;
-  var echoNodes = null;    // built on first use, then kept and rewired
-  var revNodes = null;
-  var irKey = '';          // the size and rate the current impulse response was built for
-  var irTimer = null;
+  // so a rack is one filter whose transfer function is the product of theirs;
+  // the math panel says so, and it is why the fixed order costs nothing.
+  //
+  // There used to be exactly one rack and the sliders were its state. There is
+  // now one per stem as well as the master, so the state moved in here and the
+  // sliders became a view onto whichever rack is selected. What they hold is
+  // unchanged -- slider positions for the filter, real units for the rest --
+  // which is what keeps a link written before any of this still meaning one
+  // thing.
+  function newRack(id, label) {
+    return {
+      id: id,
+      label: label,
+      filterType: null,
+      freqPos: 500,
+      qPos: 45,
+      echoOn: false, echoMs: 320, echoFb: 0.35, echoMix: 0.35,
+      revOn: false, revSec: 2.2, revPreMs: 20, revMix: 0.3,
+      touched: 0,      // last time one of its filter controls moved
+      nodes: null,     // input, output, filter, echo, rev -- built on first use
+      irKey: '',       // the size and rate its impulse response was built for
+      irTimer: null
+    };
+  }
+
+  var master = newRack('m', 'Master');
+
+  var stems = STEMS.map(function(spec, i) {
+    return {
+      code: spec.code, name: spec.name, what: spec.what,
+      db: 0, muted: false, soloed: false,
+      rack: newRack('s' + i, spec.name),
+      gainNode: null, meter: null, meterBuf: null, level: 0,
+      row: null   // its <li>, built once and then only updated
+    };
+  });
+
+  // Which rack the effects panel is pointed at: -1 for the master, otherwise an
+  // index into `stems`. Never carried in a link -- it is where someone happens
+  // to be looking, not part of the sound.
+  var target = -1;
+
+  var split = { on: false, f1Pos: 0, f2Pos: 0, nodes: null };
+
+  var simpleMode = false;
   var mathOn = false;
   var showWave = true;
   var showFreq = true;
-  var filterTouched = 0;   // last time a filter control moved, for the curve's emphasis
   var semitones = 0;
   var lastDetect = 0;
+  var lastMeter = 0;
   var detectBuf = null;
+
+  function rackAt(t) { return t < 0 ? master : stems[t].rack; }
+  function rack() { return rackAt(target); }
 
   // Playback runs off a decoded AudioBuffer rather than an <audio> element.
   // Routing an element through createMediaElementSource leaves pause and
@@ -211,6 +322,11 @@
     return Math.exp(F_LOG_MIN + (val / 1000) * F_LOG_SPAN);
   }
 
+  function freqToSlider(hz) {
+    var pos = ((Math.log(hz) - F_LOG_MIN) / F_LOG_SPAN) * 1000;
+    return Math.max(0, Math.min(1000, Math.round(pos)));
+  }
+
   function freqToX(hz, w) {
     if (!(hz > 0)) return 0;
     return ((Math.log(hz) - F_LOG_MIN) / F_LOG_SPAN) * w;
@@ -269,9 +385,9 @@
     return Math.max(0, Math.min(1000, Math.round(pos)));
   }
 
-  // What the filter is actually running on, wherever the slider is sitting.
-  function filterQ() {
-    return qSliderToValue(filterType || 'lowpass', parseFloat(el['aud-filter-q'].value));
+  // What a rack's filter is actually running on, wherever its slider is sitting.
+  function rackQ(r) {
+    return qSliderToValue(r.filterType || 'lowpass', r.qPos);
   }
 
   // The value under the second slider, in the units that slider actually carries.
@@ -310,12 +426,12 @@
   // --- the effect stages -----------------------------------------------------
   //
   // Each stage is a little subgraph with one input node and one output node, so
-  // the chain builder does not have to know what is inside it. The wiring within
+  // the rack builder does not have to know what is inside it. The wiring within
   // a stage is made once and left alone; only the connections between stages are
   // torn down and remade when something is switched on or off.
 
-  function echoStage() {
-    if (echoNodes || !audioCtx) return echoNodes;
+  function echoStage(r) {
+    if (r.nodes.echo || !audioCtx) return r.nodes.echo;
     var input = audioCtx.createGain();
     var out = audioCtx.createGain();
     var dry = audioCtx.createGain();
@@ -333,9 +449,9 @@
     delay.connect(wet);
     wet.connect(out);
 
-    echoNodes = { input: input, output: out, dry: dry, wet: wet, delay: delay, fb: fb };
-    applyEcho();
-    return echoNodes;
+    r.nodes.echo = { input: input, output: out, dry: dry, wet: wet, delay: delay, fb: fb };
+    applyEcho(r);
+    return r.nodes.echo;
   }
 
   // Noise that dies away exponentially. A real room's impulse response has early
@@ -359,8 +475,8 @@
     return ir;
   }
 
-  function reverbStage() {
-    if (revNodes || !audioCtx) return revNodes;
+  function reverbStage(r) {
+    if (r.nodes.rev || !audioCtx) return r.nodes.rev;
     var input = audioCtx.createGain();
     var out = audioCtx.createGain();
     var dry = audioCtx.createGain();
@@ -378,83 +494,279 @@
     conv.connect(wet);
     wet.connect(out);
 
-    revNodes = { input: input, output: out, dry: dry, wet: wet, pre: pre, conv: conv };
-    refreshIr(true);
-    applyReverb();
-    return revNodes;
+    r.nodes.rev = { input: input, output: out, dry: dry, wet: wet, pre: pre, conv: conv };
+    refreshIr(r, true);
+    applyReverb(r);
+    return r.nodes.rev;
   }
 
-  function echoTime() { return parseFloat(el['aud-echo-time'].value) / 1000; }
-  function echoFeedback() { return parseFloat(el['aud-echo-fb'].value); }
-  function echoMix() { return parseFloat(el['aud-echo-mix'].value); }
-  function revDecay() { return parseFloat(el['aud-rev-decay'].value); }
-  function revPre() { return parseFloat(el['aud-rev-pre'].value) / 1000; }
-  function revMix() { return parseFloat(el['aud-rev-mix'].value); }
-
-  function applyEcho() {
-    if (!echoNodes) return;
-    echoNodes.delay.delayTime.value = echoTime();
-    echoNodes.fb.gain.value = echoFeedback();
+  function applyEcho(r) {
+    var n = r.nodes && r.nodes.echo;
+    if (!n) return;
+    n.delay.delayTime.value = r.echoMs / 1000;
+    n.fb.gain.value = r.echoFb;
     // A straight crossfade, so the two paths always sum to unity gain and the
     // track does not get louder as the effect is dialled in.
-    echoNodes.wet.gain.value = echoMix();
-    echoNodes.dry.gain.value = 1 - echoMix();
+    n.wet.gain.value = r.echoMix;
+    n.dry.gain.value = 1 - r.echoMix;
   }
 
-  function applyReverb() {
-    if (!revNodes) return;
-    revNodes.pre.delayTime.value = revPre();
-    revNodes.wet.gain.value = revMix();
-    revNodes.dry.gain.value = 1 - revMix();
+  function applyReverb(r) {
+    var n = r.nodes && r.nodes.rev;
+    if (!n) return;
+    n.pre.delayTime.value = r.revPreMs / 1000;
+    n.wet.gain.value = r.revMix;
+    n.dry.gain.value = 1 - r.revMix;
   }
 
   // Rebuilt only when the size actually changed, and never more than once every
-  // IR_REBUILD_MS while a slider is moving.
-  function refreshIr(now) {
-    if (!revNodes || !audioCtx) return;
-    var want = revDecay().toFixed(1) + '@' + audioCtx.sampleRate;
-    if (want === irKey) return;
-    if (irTimer) { clearTimeout(irTimer); irTimer = null; }
-    if (!now) { irTimer = setTimeout(function() { irTimer = null; refreshIr(true); }, IR_REBUILD_MS); return; }
-    irKey = want;
-    try { revNodes.conv.buffer = impulseResponse(revDecay()); } catch (e) {}
+  // IR_REBUILD_MS while a slider is moving. Five racks can each be carrying a
+  // different room, so the response and its timer belong to the rack.
+  function refreshIr(r, now) {
+    var n = r.nodes && r.nodes.rev;
+    if (!n || !audioCtx) return;
+    var want = r.revSec.toFixed(1) + '@' + audioCtx.sampleRate;
+    if (want === r.irKey) return;
+    if (r.irTimer) { clearTimeout(r.irTimer); r.irTimer = null; }
+    if (!now) {
+      r.irTimer = setTimeout(function() { r.irTimer = null; refreshIr(r, true); }, IR_REBUILD_MS);
+      return;
+    }
+    r.irKey = want;
+    try { n.conv.buffer = impulseResponse(r.revSec); } catch (e) {}
   }
 
-  function rebuildChain() {
-    // The chain strip and the math are drawn from the switches, not from the
-    // graph, so they are still right on a page where nothing has been loaded yet.
-    if (!audioCtx) { renderChain(); renderMath(); return; }
+  // --- a rack --------------------------------------------------------------
+  //
+  // An input and an output that never move, and whatever stages are switched on
+  // strung between them. Rewiring is confined to the inside, so a rack already
+  // carrying audio keeps its connections on either side and nothing upstream
+  // has to know a switch was pressed.
 
-    var stages = [];
-    if (filterType) {
-      if (!filterNode) filterNode = audioCtx.createBiquadFilter();
-      filterNode.type = filterType.replace('-wide', '').replace('-narrow', '');
-      filterNode.frequency.value = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
-      filterNode.Q.value = filterQ();
-      stages.push({ input: filterNode, output: filterNode });
+  function rackNodes(r) {
+    if (!r.nodes) {
+      r.nodes = {
+        input: audioCtx.createGain(),
+        output: audioCtx.createGain(),
+        filter: null, echo: null, rev: null
+      };
     }
-    if (echoOn) stages.push(echoStage());
-    if (revOn) stages.push(reverbStage());
+    return r.nodes;
+  }
+
+  function wireRack(r) {
+    var n = rackNodes(r);
+    var stages = [];
+
+    if (r.filterType) {
+      if (!n.filter) n.filter = audioCtx.createBiquadFilter();
+      n.filter.type = r.filterType.replace('-wide', '').replace('-narrow', '');
+      n.filter.frequency.value = filterSliderToFreq(r.freqPos);
+      n.filter.Q.value = rackQ(r);
+      stages.push({ input: n.filter, output: n.filter });
+    }
+    if (r.echoOn) stages.push(echoStage(r));
+    if (r.revOn) stages.push(reverbStage(r));
 
     // Everything that could be feeding the next stage, whether or not it is in
-    // the chain this time round. A node left connected from a previous shape
-    // would keep pouring into the analyser after its switch was turned off.
-    [gainNode, filterNode, echoNodes && echoNodes.output, revNodes && revNodes.output, analyser]
+    // the rack this time round. A node left connected from a previous shape
+    // would keep pouring into the output after its switch was turned off. The
+    // output itself is left alone: what it feeds is the caller's business.
+    [n.input, n.filter, n.echo && n.echo.output, n.rev && n.rev.output]
       .forEach(function(node) { if (node) { try { node.disconnect(); } catch (e) {} } });
 
-    var head = gainNode;
+    var head = n.input;
     stages.forEach(function(stage) {
       if (!stage) return;
       head.connect(stage.input);
       head = stage.output;
     });
+    head.connect(n.output);
+    return n;
+  }
+
+  // --- the split -------------------------------------------------------------
+
+  function splitF1() { return filterSliderToFreq(split.f1Pos); }
+  function splitF2() { return filterSliderToFreq(split.f2Pos); }
+
+  // One half of a Linkwitz-Riley crossover: two Butterworth sections in series.
+  function lrPair(type, hz) {
+    var a = audioCtx.createBiquadFilter();
+    var b = audioCtx.createBiquadFilter();
+    a.type = b.type = type;
+    a.Q.value = b.Q.value = BUTTER_Q_DB;
+    a.frequency.value = b.frequency.value = hz;
+    a.connect(b);
+    return { input: a, output: b, a: a, b: b };
+  }
+
+  function buildSplit() {
+    if (split.nodes || !audioCtx) return split.nodes;
+    var ctx = audioCtx;
+    var input = ctx.createGain();
+    var out = ctx.createGain();
+
+    var lo = lrPair('lowpass', splitF1());
+    var hi = lrPair('highpass', splitF1());
+    var mid = lrPair('lowpass', splitF2());
+    var top = lrPair('highpass', splitF2());
+
+    // The low band comes out of the tree a crossover behind the other two.
+    // Passing it through the allpass that the mid and high pair sums to puts all
+    // three back in step, which is what makes the four add up flat.
+    var comp = ctx.createBiquadFilter();
+    comp.type = 'allpass';
+    comp.Q.value = BUTTER_Q;
+    comp.frequency.value = splitF2();
+
+    input.connect(lo.input);
+    lo.output.connect(comp);
+    input.connect(hi.input);
+    hi.output.connect(mid.input);
+    hi.output.connect(top.input);
+
+    // --- the mid/side matrix ---
+    //
+    // Forced to two channels first. A splitter interprets its inputs as discrete
+    // channels, so a mono track arriving at one would be padded with a silent
+    // right rather than duplicated, and half of it would fall out into Sides.
+    var stereo = ctx.createGain();
+    stereo.channelCount = 2;
+    stereo.channelCountMode = 'explicit';
+    stereo.channelInterpretation = 'speakers';
+    mid.output.connect(stereo);
+
+    var sp = ctx.createChannelSplitter(2);
+    stereo.connect(sp);
+
+    // Two mono connections arriving at one gain node are summed there, and that
+    // sum is the matrix. The half is what makes M and S out of L and R.
+    var midSum = ctx.createGain(); midSum.gain.value = 0.5;
+    sp.connect(midSum, 0);
+    sp.connect(midSum, 1);
+
+    var negR = ctx.createGain(); negR.gain.value = -1;
+    sp.connect(negR, 1);
+    var sideSum = ctx.createGain(); sideSum.gain.value = 0.5;
+    sp.connect(sideSum, 0);
+    negR.connect(sideSum);
+
+    // Back out to two channels explicitly rather than leaning on the up-mixing
+    // rules: Centre is M against M and Sides is S against -S, so the two of them
+    // add to (M+S, M-S), which is (L, R).
+    var midOut = ctx.createChannelMerger(2);
+    midSum.connect(midOut, 0, 0);
+    midSum.connect(midOut, 0, 1);
+
+    var negS = ctx.createGain(); negS.gain.value = -1;
+    sideSum.connect(negS);
+    var sideOut = ctx.createChannelMerger(2);
+    sideSum.connect(sideOut, 0, 0);
+    negS.connect(sideOut, 0, 1);
+
+    split.nodes = {
+      input: input, output: out,
+      lo: lo, hi: hi, mid: mid, top: top, comp: comp,
+      // In the order the stems are declared, which is the order they are drawn
+      // in and the order a link writes them.
+      heads: [comp, midOut, sideOut, top.output]
+    };
+    return split.nodes;
+  }
+
+  function applySplitFreqs() {
+    var n = split.nodes;
+    if (!n) return;
+    var f1 = splitF1();
+    var f2 = splitF2();
+    [n.lo.a, n.lo.b, n.hi.a, n.hi.b].forEach(function(f) { f.frequency.value = f1; });
+    [n.mid.a, n.mid.b, n.top.a, n.top.b, n.comp].forEach(function(f) { f.frequency.value = f2; });
+  }
+
+  // Whether a stem is audible. A solo anywhere silences everything that is not
+  // soloed, a mute silences it regardless, and the bottom of the fader is off
+  // rather than very quiet.
+  function anySolo() {
+    for (var i = 0; i < stems.length; i++) { if (stems[i].soloed) return true; }
+    return false;
+  }
+
+  function stemGainValue(s) {
+    if (s.muted) return 0;
+    if (s.db <= STEM_DB_MIN) return 0;
+    if (anySolo() && !s.soloed) return 0;
+    return Math.pow(10, s.db / 20);
+  }
+
+  function applyStemGains() {
+    stems.forEach(function(s) {
+      if (s.gainNode) s.gainNode.gain.value = stemGainValue(s);
+    });
+  }
+
+  // --- the whole graph -------------------------------------------------------
+
+  function rebuildChain() {
+    // The chain strip and the math are drawn from the switches, not from the
+    // graph, so they are still right on a page where nothing has been loaded yet.
+    if (!audioCtx) { renderChain(); renderMath(); renderStems(); return; }
+
+    var m = wireRack(master);
+
+    // Everything that decides where the audio goes next, cleared before it is
+    // said again. The racks look after their own insides.
+    try { gainNode.disconnect(); } catch (e) {}
+    try { m.output.disconnect(); } catch (e) {}
+    try { analyser.disconnect(); } catch (e) {}
+
+    if (split.on) {
+      var sn = buildSplit();
+      applySplitFreqs();
+      try { sn.output.disconnect(); } catch (e) {}
+      gainNode.connect(sn.input);
+
+      stems.forEach(function(st, i) {
+        if (!st.gainNode) {
+          st.gainNode = audioCtx.createGain();
+          // Only ever read for a level bar, so it is the smallest window that
+          // still catches a transient rather than an analysis window.
+          st.meter = audioCtx.createAnalyser();
+          st.meter.fftSize = 256;
+          st.meterBuf = new Uint8Array(st.meter.fftSize);
+        }
+        var rn = wireRack(st.rack);
+        try { sn.heads[i].disconnect(); } catch (e) {}
+        try { rn.output.disconnect(); } catch (e) {}
+        try { st.gainNode.disconnect(); } catch (e) {}
+        try { st.meter.disconnect(); } catch (e) {}
+
+        sn.heads[i].connect(rn.input);
+        rn.output.connect(st.gainNode);
+        // The meter reads after the fader, so what it shows is what the stem is
+        // putting into the mix rather than what it caught.
+        st.gainNode.connect(st.meter);
+        st.meter.connect(sn.output);
+        st.gainNode.gain.value = stemGainValue(st);
+      });
+
+      sn.output.connect(m.input);
+    } else {
+      // The split network is left standing but unfed, so turning it back on
+      // costs no rebuild and every stem's rack is exactly where it was left.
+      if (split.nodes) { try { split.nodes.output.disconnect(); } catch (e) {} }
+      gainNode.connect(m.input);
+      stems.forEach(function(st) { st.level = 0; });
+    }
+
     // The analyser sits at the end, so the spectrum and the note readout report
     // what is actually leaving the page rather than what went into the effects.
-    head.connect(analyser);
+    m.output.connect(analyser);
     analyser.connect(audioCtx.destination);
 
     renderChain();
     renderMath();
+    renderStems();
   }
 
   // --- loading ---------------------------------------------------------------
@@ -467,6 +779,7 @@
     el['aud-shape'].classList.remove('hidden');
     el['aud-share'].classList.remove('hidden');
     el['aud-queue'].classList.remove('hidden');
+    el['aud-stems'].classList.remove('hidden');
     el['aud-duration'].textContent = '0:00';
     el['aud-current'].textContent = '0:00';
     el['aud-seek'].value = 0;
@@ -923,11 +1236,18 @@
     }
   }
 
-  function fillCurveDb() {
+  // The node doing the filtering for whichever rack the panel is pointed at, or
+  // null before that rack has ever been built.
+  function rackFilterNode(r) {
+    return (r.nodes && r.nodes.filter) || null;
+  }
+
+  function fillCurveDb(r) {
     var i;
-    if (filterNode && filterNode.getFrequencyResponse) {
+    var node = rackFilterNode(r);
+    if (node && node.getFrequencyResponse) {
       try {
-        filterNode.getFrequencyResponse(curveHz, curveMag, curvePhase);
+        node.getFrequencyResponse(curveHz, curveMag, curvePhase);
         for (i = 0; i < CURVE_N; i++) {
           curveDb[i] = curveMag[i] > 0
             ? 20 * Math.log(curveMag[i]) / Math.LN10
@@ -937,9 +1257,8 @@
       } catch (e) {}
     }
     var fs = sampleRate();
-    var type = filterType.replace('-wide', '').replace('-narrow', '');
-    var c = biquad(type, filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)),
-                   filterQ(), fs);
+    var type = r.filterType.replace('-wide', '').replace('-narrow', '');
+    var c = biquad(type, filterSliderToFreq(r.freqPos), rackQ(r), fs);
     for (i = 0; i < CURVE_N; i++) {
       var wn = 2 * Math.PI * curveHz[i] / fs;
       var c1 = Math.cos(wn), s1 = Math.sin(wn);
@@ -979,11 +1298,11 @@
     ctx2d.fillText(text, Math.min(Math.max(x, half), w - half), yPos);
   }
 
-  function drawFilterCurve(w, base, span) {
-    var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+  function drawFilterCurve(w, base, span, r) {
+    var f0 = filterSliderToFreq(r.freqPos);
     var top = Math.min(F_MAX, (sampleRate() / 2) * 0.999);
     buildCurveHz(f0, top);
-    fillCurveDb();
+    fillCurveDb(r);
 
     var yTop = base - span;
     function y(db) {
@@ -993,7 +1312,7 @@
 
     // The emphasis rides for a moment past the last move, so a drag reads bright
     // and then settles back behind the bars instead of snapping off mid-gesture.
-    var since = Date.now() - filterTouched;
+    var since = Date.now() - r.touched;
     var lift = since < 900 ? 1 : since < 1500 ? (1500 - since) / 600 : 0;
     var rgb = isLight ? '184,121,26' : '224,160,64';
     function amber(a) { return 'rgba(' + rgb + ',' + a.toFixed(3) + ')'; }
@@ -1047,7 +1366,7 @@
 
     // f0, and for a band type the two edges the centre sits between. The lines
     // start below the numbers rather than running through them.
-    var edges = FILTER_IS_BAND[filterType] ? bandEdges(w) : [];
+    var edges = FILTER_IS_BAND[r.filterType] ? bandEdges(w) : [];
     var markTop = yTop + (lift > 0 ? 13 : 0);
     ctx2d.save();
     ctx2d.setLineDash([2, 3]);
@@ -1080,6 +1399,8 @@
       if (edges.length === 2) {
         text += '\u2002' + formatFreqTick(edges[0]) + '\u2013' + formatFreqTick(edges[1]);
       }
+      // Whose curve this is, once there is more than one filter it could be.
+      if (target >= 0) text = stems[target].name + '\u2002' + text;
       curveLabel(text, fx, yTop + 1, w, amber(0.5 + lift * 0.5));
     }
     ctx2d.textAlign = 'left';
@@ -1152,7 +1473,10 @@
       }
     }
 
-    if (filterType && w) drawFilterCurve(w, base, span);
+    // The curve belongs to the rack the panel is pointed at, which is the one
+    // the sliders under it are moving.
+    var shown = rack();
+    if (shown.filterType && w) drawFilterCurve(w, base, span, shown);
 
     // Autocorrelation is far too costly to run every frame, and a note readout that
     // updates faster than this is unreadable anyway.
@@ -1160,6 +1484,11 @@
     if (now - lastDetect > 120) {
       lastDetect = now;
       updateNote();
+    }
+
+    if (split.on && now - lastMeter > 60) {
+      lastMeter = now;
+      readMeters();
     }
 
     // Cheap every frame: the caption has to track the playhead exactly, and the
@@ -1182,6 +1511,7 @@
     el['aud-pitch-rate'].textContent = r.toFixed(2) + '\u00d7 speed';
     if (bufSource) bufSource.playbackRate.value = r;
     bgSync();
+    syncSimple();
     renderMath();
   }
 
@@ -1382,26 +1712,22 @@
   // only the words around them move. A share link written before this still reads
   // back the same, because what is encoded is the raw slider position.
   function syncFilterLabels() {
-    var type = filterType || 'lowpass';
+    var r = rack();
+    var type = r.filterType || 'lowpass';
     el['aud-filter-freq-name'].textContent = filterFreqLabel(type);
     el['aud-filter-q-name'].textContent = filterQLabel(type);
-    el['aud-filter-freq-val'].textContent =
-      formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
-    el['aud-filter-q-val'].textContent = formatFilterQ(type, filterQ());
+    el['aud-filter-freq-val'].textContent = formatFilterFreq(filterSliderToFreq(r.freqPos));
+    el['aud-filter-q-val'].textContent = formatFilterQ(type, rackQ(r));
   }
 
   function setFilter(type) {
-    var chips = el['aud-filters'].querySelectorAll('.aud-chip');
-    filterType = (filterType === type) ? null : type;
-    for (var i = 0; i < chips.length; i++) {
-      chips[i].classList.toggle('is-on', chips[i].getAttribute('data-filter') === filterType);
+    var r = rack();
+    r.filterType = (r.filterType === type) ? null : type;
+    if (r.filterType && FILTER_DEFAULT_Q[r.filterType] !== undefined) {
+      r.qPos = qValueToSlider(r.filterType, FILTER_DEFAULT_Q[r.filterType]);
     }
-    el['aud-params'].classList.toggle('hidden', !filterType);
-    if (filterType && FILTER_DEFAULT_Q[filterType] !== undefined) {
-      el['aud-filter-q'].value = qValueToSlider(filterType, FILTER_DEFAULT_Q[filterType]);
-    }
-    syncFilterLabels();
-    filterTouched = Date.now();
+    r.touched = Date.now();
+    syncRackUi();
     rebuildChain();
   }
 
@@ -1415,18 +1741,24 @@
   })();
 
   el['aud-filter-freq'].addEventListener('input', function() {
-    var hz = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+    var r = rack();
+    r.freqPos = parseFloat(el['aud-filter-freq'].value);
+    var hz = filterSliderToFreq(r.freqPos);
     el['aud-filter-freq-val'].textContent = formatFilterFreq(hz);
-    if (filterNode) filterNode.frequency.value = hz;
-    filterTouched = Date.now();
+    var node = rackFilterNode(r);
+    if (node) node.frequency.value = hz;
+    r.touched = Date.now();
     renderMath();
   });
 
   el['aud-filter-q'].addEventListener('input', function() {
-    var q = filterQ();
-    el['aud-filter-q-val'].textContent = formatFilterQ(filterType || 'lowpass', q);
-    if (filterNode) filterNode.Q.value = q;
-    filterTouched = Date.now();
+    var r = rack();
+    r.qPos = parseFloat(el['aud-filter-q'].value);
+    var q = rackQ(r);
+    el['aud-filter-q-val'].textContent = formatFilterQ(r.filterType || 'lowpass', q);
+    var node = rackFilterNode(r);
+    if (node) node.Q.value = q;
+    r.touched = Date.now();
     renderMath();
   });
 
@@ -1443,57 +1775,401 @@
   // --- echo and reverb controls ----------------------------------------------
 
   function setEcho(on) {
-    echoOn = on;
-    el['aud-echo-on'].classList.toggle('is-on', echoOn);
-    el['aud-echo-on'].setAttribute('aria-pressed', echoOn ? 'true' : 'false');
-    el['aud-echo-params'].classList.toggle('hidden', !echoOn);
+    rack().echoOn = !!on;
+    syncRackUi();
     rebuildChain();
   }
 
   function setReverb(on) {
-    revOn = on;
-    el['aud-rev-on'].classList.toggle('is-on', revOn);
-    el['aud-rev-on'].setAttribute('aria-pressed', revOn ? 'true' : 'false');
-    el['aud-rev-params'].classList.toggle('hidden', !revOn);
+    rack().revOn = !!on;
+    syncRackUi();
     rebuildChain();
   }
 
-  el['aud-echo-on'].addEventListener('click', function() { setEcho(!echoOn); });
-  el['aud-rev-on'].addEventListener('click', function() { setReverb(!revOn); });
+  el['aud-echo-on'].addEventListener('click', function() { setEcho(!rack().echoOn); });
+  el['aud-rev-on'].addEventListener('click', function() { setReverb(!rack().revOn); });
 
-  // Every effect slider does the same three things: relabel itself, push the
-  // value at the graph, and let the readouts catch up.
+  // Every effect slider does the same three things: write itself into the rack
+  // the panel is pointed at, relabel itself, and push the value at the graph.
   function wireParam(id, apply) {
     el[id].addEventListener('input', function() {
-      apply();
+      apply(rack(), parseFloat(el[id].value));
       renderMath();
     });
   }
 
-  wireParam('aud-echo-time', function() {
-    el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
-    applyEcho();
+  wireParam('aud-echo-time', function(r, v) {
+    r.echoMs = v;
+    el['aud-echo-time-val'].textContent = Math.round(v) + ' ms';
+    applyEcho(r);
   });
-  wireParam('aud-echo-fb', function() {
-    el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);
-    applyEcho();
+  wireParam('aud-echo-fb', function(r, v) {
+    r.echoFb = v;
+    el['aud-echo-fb-val'].textContent = v.toFixed(2);
+    applyEcho(r);
   });
-  wireParam('aud-echo-mix', function() {
-    el['aud-echo-mix-val'].textContent = Math.round(echoMix() * 100) + '%';
-    applyEcho();
+  wireParam('aud-echo-mix', function(r, v) {
+    r.echoMix = v;
+    el['aud-echo-mix-val'].textContent = Math.round(v * 100) + '%';
+    applyEcho(r);
+    syncSimple();
   });
-  wireParam('aud-rev-decay', function() {
-    el['aud-rev-decay-val'].textContent = revDecay().toFixed(1) + ' s';
-    refreshIr(false);
+  wireParam('aud-rev-decay', function(r, v) {
+    r.revSec = v;
+    el['aud-rev-decay-val'].textContent = v.toFixed(1) + ' s';
+    refreshIr(r, false);
   });
-  wireParam('aud-rev-pre', function() {
-    el['aud-rev-pre-val'].textContent = Math.round(revPre() * 1000) + ' ms';
-    applyReverb();
+  wireParam('aud-rev-pre', function(r, v) {
+    r.revPreMs = v;
+    el['aud-rev-pre-val'].textContent = Math.round(v) + ' ms';
+    applyReverb(r);
   });
-  wireParam('aud-rev-mix', function() {
-    el['aud-rev-mix-val'].textContent = Math.round(revMix() * 100) + '%';
-    applyReverb();
+  wireParam('aud-rev-mix', function(r, v) {
+    r.revMix = v;
+    el['aud-rev-mix-val'].textContent = Math.round(v * 100) + '%';
+    applyReverb(r);
   });
+
+  // --- pointing the panel somewhere else -------------------------------------
+  //
+  // The controls are a view onto one rack. Selecting another pushes its numbers
+  // into them and nothing about the sound changes: no event is dispatched from
+  // here, so no handler mistakes a redraw for someone moving a slider.
+
+  function syncRackUi() {
+    var r = rack();
+
+    el['aud-filter-freq'].value = r.freqPos;
+    el['aud-filter-q'].value = r.qPos;
+    var chips = el['aud-filters'].querySelectorAll('.aud-chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('is-on', chips[i].getAttribute('data-filter') === r.filterType);
+    }
+    el['aud-params'].classList.toggle('hidden', !r.filterType);
+    syncFilterLabels();
+
+    el['aud-echo-on'].classList.toggle('is-on', r.echoOn);
+    el['aud-echo-on'].setAttribute('aria-pressed', r.echoOn ? 'true' : 'false');
+    el['aud-echo-params'].classList.toggle('hidden', !r.echoOn);
+    el['aud-echo-time'].value = r.echoMs;
+    el['aud-echo-fb'].value = r.echoFb;
+    el['aud-echo-mix'].value = r.echoMix;
+    el['aud-echo-time-val'].textContent = Math.round(r.echoMs) + ' ms';
+    el['aud-echo-fb-val'].textContent = r.echoFb.toFixed(2);
+    el['aud-echo-mix-val'].textContent = Math.round(r.echoMix * 100) + '%';
+
+    el['aud-rev-on'].classList.toggle('is-on', r.revOn);
+    el['aud-rev-on'].setAttribute('aria-pressed', r.revOn ? 'true' : 'false');
+    el['aud-rev-params'].classList.toggle('hidden', !r.revOn);
+    el['aud-rev-decay'].value = r.revSec;
+    el['aud-rev-pre'].value = r.revPreMs;
+    el['aud-rev-mix'].value = r.revMix;
+    el['aud-rev-decay-val'].textContent = r.revSec.toFixed(1) + ' s';
+    el['aud-rev-pre-val'].textContent = Math.round(r.revPreMs) + ' ms';
+    el['aud-rev-mix-val'].textContent = Math.round(r.revMix * 100) + '%';
+
+    renderTargets();
+    renderChain();
+    renderMath();
+    syncSimple();
+  }
+
+  function setTarget(t) {
+    // A stem cannot be edited while the track is whole, so asking for one turns
+    // the split on rather than refusing.
+    if (t >= 0 && !split.on) setSplit(true);
+    target = t;
+    syncRackUi();
+    renderStems();
+  }
+
+  // Rebuilt rather than patched: it is five buttons, and which five depends on
+  // whether the track is split.
+  function renderTargets() {
+    var host = el['aud-target-chips'];
+    if (!host) return;
+    el['aud-target'].classList.toggle('hidden', !split.on);
+    host.textContent = '';
+
+    var picks = [{ t: -1, name: 'Master' }];
+    stems.forEach(function(st, i) { picks.push({ t: i, name: st.name }); });
+
+    picks.forEach(function(pick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'aud-chip aud-chip-sm' + (pick.t === target ? ' is-on' : '');
+      b.textContent = pick.name;
+      b.setAttribute('aria-pressed', pick.t === target ? 'true' : 'false');
+      b.addEventListener('click', function() { setTarget(pick.t); });
+      host.appendChild(b);
+    });
+  }
+
+  // --- the stem mixer --------------------------------------------------------
+  //
+  // Four rows, built once and then only updated: a name, a level bar, mute and
+  // solo, a fader, and the button that points the effects panel at that stem.
+
+  function setSplit(on) {
+    split.on = !!on;
+    el['aud-split-on'].classList.toggle('is-on', split.on);
+    el['aud-split-on'].setAttribute('aria-pressed', split.on ? 'true' : 'false');
+    el['aud-split-params'].classList.toggle('hidden', !split.on);
+    el['aud-stem-list'].classList.toggle('hidden', !split.on);
+    el['aud-stem-foot'].classList.toggle('hidden', !split.on);
+    // Nothing to point at any more, so the panel goes back to the master rather
+    // than editing a stem the mix no longer contains.
+    if (!split.on && target >= 0) target = -1;
+    syncRackUi();
+    rebuildChain();
+  }
+
+  function stemRow(st, i) {
+    var li = document.createElement('li');
+    li.className = 'aud-stem';
+
+    var head = document.createElement('div');
+    head.className = 'aud-stem-head';
+
+    var name = document.createElement('span');
+    name.className = 'aud-stem-name';
+    name.textContent = st.name;
+    var what = document.createElement('span');
+    what.className = 'aud-stem-what';
+    what.textContent = st.what;
+    var meter = document.createElement('span');
+    meter.className = 'aud-stem-meter';
+    var fill = document.createElement('i');
+    meter.appendChild(fill);
+
+    head.appendChild(name);
+    head.appendChild(what);
+    head.appendChild(meter);
+
+    var tools = document.createElement('div');
+    tools.className = 'aud-stem-tools';
+
+    var mute = document.createElement('button');
+    mute.type = 'button';
+    mute.className = 'aud-stem-btn';
+    mute.textContent = 'M';
+    mute.setAttribute('aria-label', 'Mute ' + st.name);
+    mute.addEventListener('click', function() {
+      st.muted = !st.muted;
+      applyStemGains();
+      renderStems();
+    });
+
+    var solo = document.createElement('button');
+    solo.type = 'button';
+    solo.className = 'aud-stem-btn';
+    solo.textContent = 'S';
+    solo.setAttribute('aria-label', 'Solo ' + st.name);
+    solo.addEventListener('click', function() {
+      st.soloed = !st.soloed;
+      applyStemGains();
+      renderStems();
+    });
+
+    var fader = document.createElement('input');
+    fader.type = 'range';
+    fader.className = 'aud-stem-gain';
+    fader.min = STEM_DB_MIN;
+    fader.max = STEM_DB_MAX;
+    fader.step = 0.5;
+    fader.value = st.db;
+    fader.setAttribute('aria-label', st.name + ' level');
+    fader.addEventListener('input', function() {
+      st.db = parseFloat(fader.value);
+      applyStemGains();
+      renderStems();
+    });
+
+    var db = document.createElement('span');
+    db.className = 'aud-stem-db';
+
+    var edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'aud-stem-btn aud-stem-edit';
+    edit.textContent = 'Edit';
+    edit.setAttribute('aria-label', 'Edit the ' + st.name + ' stem\u2019s effects');
+    edit.addEventListener('click', function() { setTarget(i); });
+
+    tools.appendChild(mute);
+    tools.appendChild(solo);
+    tools.appendChild(fader);
+    tools.appendChild(db);
+    tools.appendChild(edit);
+
+    li.appendChild(head);
+    li.appendChild(tools);
+    st.row = { li: li, fill: fill, mute: mute, solo: solo, fader: fader, db: db, edit: edit };
+    return li;
+  }
+
+  function buildStems() {
+    var list = el['aud-stem-list'];
+    if (!list) return;
+    list.textContent = '';
+    stems.forEach(function(st, i) { list.appendChild(stemRow(st, i)); });
+  }
+
+  // What a rack is doing, in as few characters as a row has for it.
+  function rackSummary(r) {
+    var bits = [];
+    if (r.filterType) bits.push(FILTER_LABELS[r.filterType]);
+    if (r.echoOn) bits.push('echo');
+    if (r.revOn) bits.push('reverb');
+    return bits.join(' · ');
+  }
+
+  // Everything on a row that only changes when something is pressed. The bars
+  // are not in here: they move fifteen times a second and the rest of this does
+  // not, so paintMeters is the only thing the draw loop calls.
+  function renderStems() {
+    stems.forEach(function(st, i) {
+      var row = st.row;
+      if (!row) return;
+      var fx = rackSummary(st.rack);
+      row.li.classList.toggle('is-target', split.on && target === i);
+      row.li.classList.toggle('is-silent', stemGainValue(st) === 0);
+      row.li.classList.toggle('has-fx', Boolean(fx));
+      row.mute.classList.toggle('is-on', st.muted);
+      row.mute.setAttribute('aria-pressed', st.muted ? 'true' : 'false');
+      row.solo.classList.toggle('is-on', st.soloed);
+      row.solo.setAttribute('aria-pressed', st.soloed ? 'true' : 'false');
+      row.fader.value = st.db;
+      // The bottom of the travel reads off rather than as −40 dB, which is what
+      // it is doing.
+      row.db.textContent = st.db <= STEM_DB_MIN ? 'off' : signed(st.db, 1) + ' dB';
+      row.edit.classList.toggle('is-on', split.on && target === i);
+      row.edit.title = fx || 'No effects on this stem yet';
+    });
+    paintMeters();
+  }
+
+  function paintMeters() {
+    stems.forEach(function(st) {
+      if (st.row) st.row.fill.style.width = Math.round(st.level * 100) + '%';
+    });
+  }
+
+  // A peak meter, read from the time domain because that is what a level is.
+  // It rises at once and falls slowly, or there is nothing on it to read.
+  function readMeters() {
+    stems.forEach(function(st) {
+      if (!st.meter || !st.meterBuf) { st.level = 0; return; }
+      st.meter.getByteTimeDomainData(st.meterBuf);
+      var peak = 0;
+      for (var i = 0; i < st.meterBuf.length; i++) {
+        var d = Math.abs(st.meterBuf[i] - 128);
+        if (d > peak) peak = d;
+      }
+      var amp = peak / 128;
+      // On a decibel scale: a linear one spends nine tenths of the bar on the
+      // top 20 dB and shows a quiet stem as nothing at all.
+      var db = amp > 0 ? 20 * Math.log(amp) / Math.LN10 : -Infinity;
+      var v = db <= -METER_FLOOR_DB ? 0 : Math.min(1, 1 + db / METER_FLOOR_DB);
+      st.level = v > st.level ? v : st.level * 0.82 + v * 0.18;
+    });
+    paintMeters();
+  }
+
+  el['aud-split-on'].addEventListener('click', function() { setSplit(!split.on); });
+
+  // The crossovers cannot cross, and the one that is not being dragged is the
+  // one that gives way.
+  function splitSlider(id, which) {
+    el[id].addEventListener('input', function() {
+      var v = parseFloat(el[id].value);
+      if (which === 1) {
+        split.f1Pos = Math.min(v, 1000 - SPLIT_MIN_GAP);
+        split.f2Pos = Math.max(split.f2Pos, split.f1Pos + SPLIT_MIN_GAP);
+      } else {
+        split.f2Pos = Math.max(v, SPLIT_MIN_GAP);
+        split.f1Pos = Math.min(split.f1Pos, split.f2Pos - SPLIT_MIN_GAP);
+      }
+      syncSplitLabels();
+      applySplitFreqs();
+      renderMath();
+    });
+  }
+  splitSlider('aud-split-f1', 1);
+  splitSlider('aud-split-f2', 2);
+
+  function syncSplitLabels() {
+    el['aud-split-f1'].value = split.f1Pos;
+    el['aud-split-f2'].value = split.f2Pos;
+    el['aud-split-f1-val'].textContent = formatFilterFreq(splitF1());
+    el['aud-split-f2-val'].textContent = formatFilterFreq(splitF2());
+  }
+
+  // --- simple mode -----------------------------------------------------------
+  //
+  // The same app with almost all of it put away: the transport, one switch each
+  // for echo and reverb, and five pitches. Everything it touches is the master
+  // rack, so a link made here and a link made in Pro mode are the same link.
+
+  function setMode(simple, remember) {
+    simpleMode = !!simple;
+    document.body.classList.toggle('aud-simple', simpleMode);
+    el['aud-mode-simple'].classList.toggle('is-on', simpleMode);
+    el['aud-mode-pro'].classList.toggle('is-on', !simpleMode);
+    el['aud-mode-simple'].setAttribute('aria-pressed', simpleMode ? 'true' : 'false');
+    el['aud-mode-pro'].setAttribute('aria-pressed', simpleMode ? 'false' : 'true');
+    if (remember) {
+      try { window.localStorage.setItem(MODE_STORE, simpleMode ? 's' : 'p'); } catch (e) {}
+    }
+    // The canvas is a different size in each mode and is sized from its box, so
+    // it has to be measured again after the class has landed.
+    sizeCanvas();
+    syncSimple();
+  }
+
+  // Simple mode's switches are a second view onto the master rack, so they
+  // follow it however it was changed -- a Pro chip, or a shared link.
+  function syncSimple() {
+    if (!el['aud-simple-echo']) return;
+    el['aud-simple-echo'].classList.toggle('is-on', master.echoOn);
+    el['aud-simple-echo'].setAttribute('aria-pressed', master.echoOn ? 'true' : 'false');
+    el['aud-simple-rev'].classList.toggle('is-on', master.revOn);
+    el['aud-simple-rev'].setAttribute('aria-pressed', master.revOn ? 'true' : 'false');
+
+    var chips = el['aud-simple-pitch'].querySelectorAll('.aud-simple-st');
+    for (var i = 0; i < chips.length; i++) {
+      var st = parseInt(chips[i].getAttribute('data-st'), 10);
+      chips[i].classList.toggle('is-on', st === semitones);
+      chips[i].setAttribute('aria-pressed', st === semitones ? 'true' : 'false');
+    }
+  }
+
+  el['aud-mode-simple'].addEventListener('click', function() { setMode(true, true); });
+  el['aud-mode-pro'].addEventListener('click', function() { setMode(false, true); });
+
+  // Switching a stage on from here writes into the master rack whether or not
+  // the Pro panel happens to be pointed at it.
+  function toggleMasterStage(field) {
+    master[field] = !master[field];
+    if (target < 0) syncRackUi();
+    else { syncSimple(); renderChain(); renderMath(); }
+    rebuildChain();
+  }
+
+  el['aud-simple-echo'].addEventListener('click', function() { toggleMasterStage('echoOn'); });
+  el['aud-simple-rev'].addEventListener('click', function() { toggleMasterStage('revOn'); });
+
+  (function wireSimplePitch() {
+    var chips = el['aud-simple-pitch'].querySelectorAll('.aud-simple-st');
+    for (var i = 0; i < chips.length; i++) {
+      (function(chip) {
+        chip.addEventListener('click', function() {
+          var st = parseInt(chip.getAttribute('data-st'), 10) || 0;
+          el['aud-pitch'].value = st;
+          setSemitones(st);
+        });
+      })(chips[i]);
+    }
+  })();
 
   // --- the chain strip -------------------------------------------------------
   //
@@ -1504,12 +2180,18 @@
   function renderChain() {
     var row = el['aud-chain'];
     if (!row) return;
+    var r = rack();
+    // What is feeding this rack and what it feeds. A stem's rack sits between
+    // the split and the mix; the master's sits between the mix and the speakers,
+    // and reads as the track itself while there is nothing to mix.
+    var head = target >= 0 ? stems[target].name : (split.on ? 'Mix' : 'Track');
+    var tail = target >= 0 ? 'Mix' : 'Out';
     var stages = [
-      { name: 'Track', on: true, fixed: true },
-      { name: filterType ? FILTER_LABELS[filterType] : 'Filter', on: Boolean(filterType) },
-      { name: 'Echo', on: echoOn },
-      { name: 'Reverb', on: revOn },
-      { name: 'Out', on: true, fixed: true }
+      { name: head, on: true, fixed: true },
+      { name: r.filterType ? FILTER_LABELS[r.filterType] : 'Filter', on: Boolean(r.filterType) },
+      { name: 'Echo', on: r.echoOn },
+      { name: 'Reverb', on: r.revOn },
+      { name: tail, on: true, fixed: true }
     ];
 
     row.textContent = '';
@@ -1580,13 +2262,14 @@
   }
 
   // Ground truth, straight out of the node that is actually filtering the audio.
-  function responseDb(hz) {
-    if (!filterNode || !filterNode.getFrequencyResponse) return null;
+  function responseDb(r, hz) {
+    var node = rackFilterNode(r);
+    if (!node || !node.getFrequencyResponse) return null;
     try {
       var f = new Float32Array([hz]);
       var mag = new Float32Array(1);
       var phase = new Float32Array(1);
-      filterNode.getFrequencyResponse(f, mag, phase);
+      node.getFrequencyResponse(f, mag, phase);
       if (!isFinite(mag[0]) || mag[0] <= 0) return null;
       return 20 * Math.log(mag[0]) / Math.LN10;
     } catch (e) { return null; }
@@ -1606,13 +2289,33 @@
   // the panel flicker through its whole entrance again on every frame of a drag.
   function mathLines() {
     var fs = sampleRate();
+    var r = rack();
     var lines = [];
     function add(key, text, tag) { lines.push({ key: key, text: text, tag: Boolean(tag) }); }
 
+    // The split first, because it is what decides which signal the rack below it
+    // is even looking at.
+    if (split.on) {
+      add('t-split', 'Split', true);
+      add('sp-lr', 'H<sub>LP</sub>(s) = 1/(s²+√2s+1)², H<sub>HP</sub>(s) = s⁴/(s²+√2s+1)²');
+      add('sp-sum', 'H<sub>LP</sub> + H<sub>HP</sub> = (s²−√2s+1)/(s²+√2s+1), so |H| = 1');
+      add('sp-f', 'f<sub>1</sub> = ' + grouped(splitF1()) + ' Hz, f<sub>2</sub> = ' +
+        grouped(splitF2()) + ' Hz, 24 dB/oct');
+      add('sp-ms', 'M = (L+R)/2, S = (L−R)/2');
+      add('sp-back', 'M+S = L, M−S = R, to the last bit');
+      add('sp-all', 'Σ stems = A(z)&middot;A(z)&middot;x[n], and |A| = 1');
+      add('sp-flat', 'so all four up is the track, flat, its phase turned');
+    }
+
     var on = [];
-    if (filterType) on.push('H<sub>flt</sub>(z)');
-    if (echoOn) on.push('H<sub>echo</sub>(z)');
-    if (revOn) on.push('H<sub>rev</sub>(z)');
+    if (r.filterType) on.push('H<sub>flt</sub>(z)');
+    if (r.echoOn) on.push('H<sub>echo</sub>(z)');
+    if (r.revOn) on.push('H<sub>rev</sub>(z)');
+
+    // Which rack the algebra below belongs to, once there is more than one it
+    // could be. Named rather than numbered, because that is how the panel above
+    // asked for it.
+    if (split.on) add('who', target >= 0 ? stems[target].name + ' stem' : 'Master rack', true);
 
     if (!on.length) {
       add('idle', 'y[n] = x[n]');
@@ -1625,14 +2328,14 @@
     add('chain', 'H(z) = ' + on.join(' &middot; '));
     add('fs', 'f<sub>s</sub> = ' + grouped(fs) + ' Hz');
 
-    if (filterType) {
-      var type = filterType.replace('-wide', '').replace('-narrow', '');
-      var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
-      var q = filterQ();
+    if (r.filterType) {
+      var type = r.filterType.replace('-wide', '').replace('-narrow', '');
+      var f0 = filterSliderToFreq(r.freqPos);
+      var q = rackQ(r);
       var c = biquad(type, f0, q, fs);
-      var atCut = responseDb(f0);
+      var atCut = responseDb(r, f0);
 
-      add('t-flt', FILTER_LABELS[filterType], true);
+      add('t-flt', FILTER_LABELS[r.filterType], true);
       add('flt-y', 'y[n] = b<sub>0</sub>x[n] + b<sub>1</sub>x[n−1] + b<sub>2</sub>x[n−2] − a<sub>1</sub>y[n−1] − a<sub>2</sub>y[n−2]');
       add('flt-w', 'ω<sub>0</sub> = 2πf<sub>0</sub>/f<sub>s</sub> = ' + c.w0.toFixed(5));
       add('flt-a', 'α = sin ω<sub>0</sub> / ' +
@@ -1642,10 +2345,10 @@
       if (atCut !== null) add('flt-h', '|H(f<sub>0</sub>)| = ' + signed(atCut, 1) + ' dB');
     }
 
-    if (echoOn) {
-      var tau = echoTime();
-      var g = echoFeedback();
-      var m = echoMix();
+    if (r.echoOn) {
+      var tau = r.echoMs / 1000;
+      var g = r.echoFb;
+      var m = r.echoMix;
       var repeats = echoRepeats(g);
 
       add('t-echo', 'Echo', true);
@@ -1659,10 +2362,10 @@
       add('echo-c', 'comb teeth every 1/τ = ' + (1 / tau).toFixed(2) + ' Hz');
     }
 
-    if (revOn) {
-      var t = revDecay();
-      var pre = revPre();
-      var rm = revMix();
+    if (r.revOn) {
+      var t = r.revSec;
+      var pre = r.revPreMs / 1000;
+      var rm = r.revMix;
       var n = t * fs;
 
       add('t-rev', 'Reverb', true);
@@ -1674,10 +2377,10 @@
     }
 
     if (semitones) {
-      var r = Math.pow(2, semitones / 12);
+      var rr = Math.pow(2, semitones / 12);
       add('t-pitch', 'Pitch', true);
-      add('pitch-r', 'r = 2<sup>n/12</sup> = ' + r.toFixed(4));
-      add('pitch-f', 'f → ' + r.toFixed(4) + 'f, and the clock with it');
+      add('pitch-r', 'r = 2<sup>n/12</sup> = ' + rr.toFixed(4));
+      add('pitch-f', 'f → ' + rr.toFixed(4) + 'f, and the clock with it');
     }
 
     return lines;
@@ -1909,7 +2612,7 @@
     txReset();
     loadToken++;
     el['aud-drop'].classList.remove('hidden');
-    ['aud-player', 'aud-shape', 'aud-share', 'aud-queue'].forEach(function(id) {
+    ['aud-player', 'aud-shape', 'aud-share', 'aud-queue', 'aud-stems'].forEach(function(id) {
       el[id].classList.add('hidden');
     });
     el['aud-shared-note'].classList.add('hidden');
@@ -2065,6 +2768,7 @@
   }
   wireFileInput(el['aud-file']);
   wireFileInput(el['aud-add']);
+  wireFileInput(el['aud-simple-file']);
 
   el['aud-demo'].addEventListener('click', function() {
     addTracks([newEntry({ ref: 'demo', name: 'symphony.mp3' })], true);
@@ -2076,19 +2780,28 @@
   });
 
   // Keyboard parity for the file labels, which are not real buttons, and the
-  // intent they carry. A label's own click runs before it forwards to the input.
+  // intent each one carries. A label's own click runs before it forwards to the
+  // input.
+  //
+  // Simple mode's is the odd one out. It says "Track", there is no playlist on
+  // screen to add to, and someone who presses it while something is playing
+  // means play this instead -- so it swaps rather than appends. With nothing
+  // loaded yet there is nothing to swap and it falls through to adding, and
+  // picking several files still builds a playlist that the step buttons can
+  // walk, which is the whole of a queue that mode has room for.
   [
-    ['label[for="aud-file"]', el['aud-file']],
-    ['label[for="aud-add"]', el['aud-add']]
-  ].forEach(function(pair) {
-    var label = document.querySelector(pair[0]);
+    ['label[for="aud-file"]', el['aud-file'], 'add'],
+    ['label[for="aud-add"]', el['aud-add'], 'add'],
+    ['label[for="aud-simple-file"]', el['aud-simple-file'], 'replace']
+  ].forEach(function(spec) {
+    var label = document.querySelector(spec[0]);
     if (!label) return;
-    label.addEventListener('click', function() { fileIntent = 'add'; });
+    label.addEventListener('click', function() { fileIntent = spec[2]; });
     label.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        fileIntent = 'add';
-        pair[1].click();
+        fileIntent = spec[2];
+        spec[1].click();
       }
     });
   });
@@ -2613,31 +3326,51 @@
   // v3 replaces v2's single `a=<ref>` with `t=`, the whole queue, and `i=`, which
   // track it opens on. v2 links are still read; see applyState.
   //
-  // Echo and reverb arrived after v3 and did not take the version with them. They
-  // are extra keys, written only when the effect is on, and a reader that has
-  // never heard of them ignores them and restores everything else. A bump would
-  // have made an older cached page throw the whole link away — and a playlist
-  // that opens without its reverb is a better failure than a playlist that does
-  // not open.
+  // Echo and reverb arrived after v3 and did not take the version with them, and
+  // the stems have not either. They are extra keys, written only when they are
+  // doing something, and a reader that has never heard of them ignores them and
+  // restores everything else. A bump would have made an older cached page throw
+  // the whole link away -- and a playlist that opens without its reverb, or with
+  // its four stems summed back into one track, is a better failure than a
+  // playlist that does not open.
+  //
+  // The master rack keeps the bare `flt`, `ec` and `rv` it has always had, which
+  // is what makes a link written before any of this mean exactly what it did.
+  // Each stem takes the same three keys behind an `s<k>` prefix, plus `s<k>` for
+  // its fader, and none of them is written for a stem that is doing nothing.
   function encodeState() {
     var parts = ['v=3'];
     function bit(b) { return b ? '1' : '0'; }
-    parts.push('flt=' + [
-      filterType ? FILTER_CODES[filterType] : 'off',
-      el['aud-filter-freq'].value,
-      // The Q itself, not where the slider is sitting. The two were the same
-      // number until the slider was remapped, and keeping the link on the value
-      // is what makes a link written either side of that still mean one thing.
-      String(+filterQ().toFixed(2))
-    ].join(','));
-    if (echoOn) {
-      parts.push('ec=' + [el['aud-echo-time'].value, el['aud-echo-fb'].value,
-        el['aud-echo-mix'].value].join(','));
+
+    function rackKeys(r, prefix, always) {
+      if (always || r.filterType) {
+        parts.push(prefix + 'flt=' + [
+          r.filterType ? FILTER_CODES[r.filterType] : 'off',
+          r.freqPos,
+          // The Q itself, not where the slider is sitting. The two were the same
+          // number until the slider was remapped, and keeping the link on the
+          // value is what makes a link written either side of that still mean
+          // one thing.
+          String(+rackQ(r).toFixed(2))
+        ].join(','));
+      }
+      if (r.echoOn) parts.push(prefix + 'ec=' + [r.echoMs, r.echoFb, r.echoMix].join(','));
+      if (r.revOn) parts.push(prefix + 'rv=' + [r.revSec, r.revPreMs, r.revMix].join(','));
     }
-    if (revOn) {
-      parts.push('rv=' + [el['aud-rev-decay'].value, el['aud-rev-pre'].value,
-        el['aud-rev-mix'].value].join(','));
+
+    rackKeys(master, '', true);
+
+    if (split.on) {
+      parts.push('sp=' + [split.f1Pos, split.f2Pos].join(','));
+      stems.forEach(function(st, i) {
+        var prefix = 's' + i;
+        if (st.db !== 0 || st.muted || st.soloed) {
+          parts.push(prefix + '=' + [String(+st.db.toFixed(1)), bit(st.muted), bit(st.soloed)].join(','));
+        }
+        rackKeys(st.rack, prefix, false);
+      });
     }
+
     parts.push('viz=' + [bit(showWave), bit(showFreq)].join(','));
     parts.push('vol=' + el['aud-volume'].value);
     if (semitones) parts.push('p=' + semitones);
@@ -2692,42 +3425,68 @@
     node.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  // A number a stranger put in a URL, held to the range the slider it is going
+  // to sit on actually has.
+  function inRange(text, lo, hi, fallback) {
+    var v = parseFloat(text);
+    if (!isFinite(v)) return fallback;
+    return v < lo ? lo : (v > hi ? hi : v);
+  }
+
+  // The three keys a rack is written as, read back into it. Absence is the off
+  // switch for echo and reverb, which is why neither is written when it is off.
+  function readRack(s, r, prefix) {
+    var flt = (s[prefix + 'flt'] || '').split(',');
+    if (s[prefix + 'flt'] && flt.length >= 3) {
+      var want = flt[0] === 'off' ? null : (FILTER_TYPES[flt[0]] || null);
+      r.filterType = want;
+      r.freqPos = inRange(flt[1], 0, 1000, r.freqPos);
+      // Back from the value the link carries to a position on the slider, under
+      // whichever chip is about to read it.
+      var q = parseFloat(flt[2]);
+      if (isFinite(q)) r.qPos = qValueToSlider(want || 'lowpass', q);
+    }
+
+    var ec = (s[prefix + 'ec'] || '').split(',');
+    if (s[prefix + 'ec'] && ec.length >= 3) {
+      r.echoMs = inRange(ec[0], 20, 1500, r.echoMs);
+      r.echoFb = inRange(ec[1], 0, 0.9, r.echoFb);
+      r.echoMix = inRange(ec[2], 0, 1, r.echoMix);
+      r.echoOn = true;
+    }
+
+    var rv = (s[prefix + 'rv'] || '').split(',');
+    if (s[prefix + 'rv'] && rv.length >= 3) {
+      r.revSec = inRange(rv[0], 0.2, 6, r.revSec);
+      r.revPreMs = inRange(rv[1], 0, 200, r.revPreMs);
+      r.revMix = inRange(rv[2], 0, 1, r.revMix);
+      r.revOn = true;
+    }
+  }
+
   function applyState(s) {
     if (s.v !== '2' && s.v !== '3') return;
 
-    var flt = (s.flt || '').split(',');
-    if (flt.length >= 3) {
-      var want = flt[0] === 'off' ? null : (FILTER_TYPES[flt[0]] || null);
-      // setFilter is a toggle, so asking it for the chip that is already on turns
-      // the filter off. Only the page's own hash has ever reached here, once, with
-      // nothing on -- but a state applied twice has to land where the link says
-      // both times, not alternate.
-      if (want && filterType !== want) setFilter(want);
-      else if (!want && filterType) setFilter(filterType);
-      // After the type: a chip with a default Q writes it on the way in.
-      setSlider(el['aud-filter-freq'], flt[1]);
-      // Back from the value the link carries to a position on this slider, under
-      // whichever chip is about to read it.
-      var q = parseFloat(flt[2]);
-      if (isFinite(q)) setSlider(el['aud-filter-q'], qValueToSlider(want || 'lowpass', q));
-    }
+    readRack(s, master, '');
 
-    // Present only when the sender had the effect on, so absence is the off
-    // switch and there is nothing to encode for it.
-    var ec = (s.ec || '').split(',');
-    if (s.ec && ec.length >= 3) {
-      setSlider(el['aud-echo-time'], ec[0]);
-      setSlider(el['aud-echo-fb'], ec[1]);
-      setSlider(el['aud-echo-mix'], ec[2]);
-      setEcho(true);
-    }
-
-    var rv = (s.rv || '').split(',');
-    if (s.rv && rv.length >= 3) {
-      setSlider(el['aud-rev-decay'], rv[0]);
-      setSlider(el['aud-rev-pre'], rv[1]);
-      setSlider(el['aud-rev-mix'], rv[2]);
-      setReverb(true);
+    // Only when the link says so: a reader arriving on a link from before the
+    // stems existed gets the whole track, which is what it was.
+    var sp = (s.sp || '').split(',');
+    if (s.sp && sp.length >= 2) {
+      split.f1Pos = inRange(sp[0], 0, 1000 - SPLIT_MIN_GAP, split.f1Pos);
+      split.f2Pos = inRange(sp[1], split.f1Pos + SPLIT_MIN_GAP, 1000, split.f2Pos);
+      stems.forEach(function(st, i) {
+        var prefix = 's' + i;
+        var mix = (s[prefix] || '').split(',');
+        if (s[prefix] && mix.length >= 3) {
+          st.db = inRange(mix[0], STEM_DB_MIN, STEM_DB_MAX, st.db);
+          st.muted = mix[1] === '1';
+          st.soloed = mix[2] === '1';
+        }
+        readRack(s, st.rack, prefix);
+      });
+      syncSplitLabels();
+      setSplit(true);
     }
 
     var viz = (s.viz || '').split(',');
@@ -2745,6 +3504,12 @@
         setSemitones(st);
       }
     }
+
+    // Whatever the racks and the split came out as, in the controls and in the
+    // graph. setSplit has already done both where the link carried one.
+    syncRackUi();
+    applyStemGains();
+    rebuildChain();
 
     if (s.t) restoreQueue(s.t, parseInt(s.i, 10) || 0, s.n);
     // A v2 link, from before a share could carry more than one track.
@@ -3144,20 +3909,31 @@
     // surprise, not audio that carries on.
     setBackground(saved !== '0', false);
   })();
-  syncFilterLabels();
-  el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
-  el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);
-  el['aud-echo-mix-val'].textContent = Math.round(echoMix() * 100) + '%';
-  el['aud-rev-decay-val'].textContent = revDecay().toFixed(1) + ' s';
-  el['aud-rev-pre-val'].textContent = Math.round(revPre() * 1000) + ' ms';
-  el['aud-rev-mix-val'].textContent = Math.round(revMix() * 100) + '%';
+  // The crossovers are stated in hertz and land on the slider, rather than the
+  // other way round: 200 and 6 k are where they belong, and where on the travel
+  // that happens to be is the log axis's business.
+  split.f1Pos = freqToSlider(SPLIT_F1);
+  split.f2Pos = freqToSlider(SPLIT_F2);
+  buildStems();
+  syncSplitLabels();
   // The math panel starts closed on every visit. It is not remembered, and it
   // is not carried in a link.
   mathOn = false;
   el['aud-math-on'].checked = false;
-  renderChain();
-  renderMath();
+  // One call puts every effect control on the master rack's numbers, which is
+  // also what draws the chain strip and the stem rows for the first time.
+  syncRackUi();
+  renderStems();
   playThrough = el['aud-q-through'].checked;
+
+  (function restoreMode() {
+    var saved = null;
+    try { saved = window.localStorage.getItem(MODE_STORE); } catch (e) {}
+    // Simple until someone asks for the desk. A first visit is far more often
+    // someone opening a link than someone building one, and the switch out of it
+    // is the one control that shows in both modes.
+    setMode(saved !== 'p', false);
+  })();
 
   try {
     var savedKey = window.sessionStorage.getItem(KEY_STORE);

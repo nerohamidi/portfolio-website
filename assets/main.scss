@@ -2906,3 +2906,456 @@ body.light-mode {
   .aud-math-line.is-tag { color: #999; }
   .aud-math-w.is-hot { color: #2a7ae2; }
 }
+
+// ---------------------------------------------------------------------------
+// Signal Share: stems, and the two ways in
+// ---------------------------------------------------------------------------
+
+// --- the mode switch ---
+//
+// The one control that shows in both modes, so neither is a room without a door.
+
+.aud-mode {
+  display: flex;
+  align-self: center;
+  gap: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.aud-mode-btn {
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: #888;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover { color: #ddd; }
+  &.is-on {
+    background: rgba(108, 182, 255, 0.16);
+    color: #6cb6ff;
+  }
+}
+
+// --- which rack the effects panel is pointed at ---
+
+.aud-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.aud-target-tag {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #777;
+}
+
+.aud-target-chips { flex: 1; }
+
+.aud-chip-sm {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+// --- the stem mixer ---
+
+.aud-stem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aud-stem {
+  border: 1px solid #333;
+  border-left: 3px solid #3a3a3a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s, opacity 0.15s;
+
+  // The one the effects panel is editing, so the two panels are visibly wired
+  // to each other.
+  &.is-target { border-left-color: #6cb6ff; background: rgba(108, 182, 255, 0.05); }
+  // Muted, soloed away, or faded to the bottom of its travel: all the same thing
+  // as far as the mix is concerned, and shown as one.
+  &.is-silent { opacity: 0.45; }
+  // Carrying effects of its own, which is otherwise invisible from this row.
+  &.has-fx { border-left-color: #e0a040; }
+  &.has-fx.is-target { border-left-color: #6cb6ff; }
+}
+
+.aud-stem-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.aud-stem-name {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 62px;
+  flex: none;
+}
+
+.aud-stem-what {
+  font-size: 11px;
+  color: #777;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+}
+
+// A peak meter on a 60 dB scale. Thin, because it is read out of the corner of
+// an eye while something else is being adjusted.
+.aud-stem-meter {
+  flex: none;
+  width: 64px;
+  height: 5px;
+  align-self: center;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+
+  i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #4a9, #6cb6ff);
+    transition: width 0.08s linear;
+  }
+}
+
+.aud-stem-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aud-stem-btn {
+  flex: none;
+  border: 1px solid #555;
+  border-radius: 7px;
+  background: none;
+  color: #aaa;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 8px;
+  min-width: 26px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  &:hover { border-color: #999; color: #fff; }
+  &.is-on { border-color: #6cb6ff; background: rgba(108, 182, 255, 0.16); color: #6cb6ff; }
+}
+
+.aud-stem-edit { padding: 6px 12px; }
+
+.aud-stem-gain {
+  flex: 1;
+  min-width: 0;
+  accent-color: #e0a040;
+  height: 18px;
+}
+
+.aud-stem-db {
+  flex: none;
+  width: 54px;
+  text-align: right;
+  font-family: monospace;
+  font-size: 11px;
+  color: #e0a040;
+}
+
+.aud-stem-foot {
+  margin: 0;
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+}
+
+@media screen and (max-width: 600px) {
+  .aud-stem-what { flex-basis: 100%; order: 3; }
+  .aud-stem-head { flex-wrap: wrap; }
+  .aud-stem-name { flex: 1; }
+}
+
+// --- simple mode's controls ---
+//
+// Present in the markup either way and only ever shown by the class below, so
+// switching modes moves nothing and rebuilds nothing.
+
+.aud-simple-bar { display: none; }
+
+.aud-simple-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.aud-simple-chip {
+  border: 1px solid #555;
+  border-radius: 999px;
+  background: none;
+  color: #bbb;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 22px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  &:hover { border-color: #999; color: #fff; }
+  &.is-on { background: rgba(108, 182, 255, 0.16); border-color: #6cb6ff; color: #6cb6ff; }
+}
+
+.aud-simple-st {
+  font-family: monospace;
+  min-width: 54px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.aud-simple-tag {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #666;
+  margin-right: 2px;
+}
+
+// ---------------------------------------------------------------------------
+// Simple mode
+//
+// The same DOM, with almost all of it put away and the player lifted out of the
+// page flow to fill the window. Nothing here is a second copy of anything: the
+// canvas, the transport and the scrubber are the ones Pro mode uses, which is
+// why switching between the two never interrupts what is playing.
+// ---------------------------------------------------------------------------
+
+body.aud-simple {
+  overflow: hidden;
+
+  .site-header,
+  .site-footer,
+  .aud-head,
+  .aud-steps,
+  .aud-panel,
+  .aud-tx-bar,
+  .aud-note-row,
+  .aud-caption,
+  .aud-bg-bar,
+  .aud-drop-fine { display: none !important; }
+
+  .page-content { padding: 0; }
+
+  .wrapper {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .aud {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    max-width: none;
+    margin: 0;
+    padding: 18px clamp(14px, 5vw, 56px) 24px;
+    gap: 14px;
+    justify-content: center;
+    background: #1e1e1e;
+    overflow-y: auto;
+  }
+
+  .aud-mode {
+    position: absolute;
+    top: 16px;
+    right: clamp(14px, 5vw, 56px);
+    z-index: 2;
+  }
+
+  // The empty state becomes the whole window rather than a box inside it.
+  .aud-drop {
+    border: none;
+    padding: 0;
+    margin: auto;
+  }
+  .aud-drop-icon { width: 96px; }
+  .aud-drop-lead { font-size: 20px; }
+
+  .aud-player {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: auto;
+    width: 100%;
+    max-width: 760px;
+    gap: 18px;
+  }
+
+  // The visualiser is the thing being looked at here, so it takes whatever the
+  // window has left over once the controls have had theirs.
+  .aud-canvas {
+    height: clamp(160px, 34vh, 340px);
+  }
+
+  .aud-track { justify-content: center; }
+
+  .aud-track-name {
+    font-size: 15px;
+    text-align: center;
+  }
+
+  // Nothing to change the track to until there is one; the file button in the
+  // simple bar does that job, and two of them side by side is one too many.
+  #aud-change { display: none; }
+
+  // The play button lands on the centre line of the window, and everything else
+  // is placed against it. Centring the row as a whole is not the same thing:
+  // with a volume on one side and nothing on the other, a centred row puts the
+  // button people are looking for off to the right of where they look.
+  //
+  // The offsets are the button's own half-width plus the gap, so they hold
+  // whatever the row happens to contain -- a single track hides the two step
+  // buttons, and nothing else has to know.
+  .aud-transport {
+    position: relative;
+    justify-content: center;
+    gap: 16px;
+    min-height: 68px;
+  }
+
+  .aud-transport > .aud-round:not(#aud-play),
+  .aud-vol {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  #aud-stop { right: 50%; margin-right: 50px; }
+  #aud-prev { right: 50%; margin-right: 110px; }
+  #aud-next { left: 50%; margin-left: 50px; }
+  .aud-vol { right: 0; margin-left: 0; }
+
+  // A single track hides the two step buttons, and stop takes the place beside
+  // play. A playlist shows them, and then it is prev and next that belong there
+  // -- one either side, the same distance out -- with stop moving outward. The
+  // browsers that do not know :has() keep the first arrangement, which is the
+  // right one for the commoner case.
+  .aud-transport:has(#aud-prev:not(.hidden)) {
+    #aud-stop { margin-right: 110px; }
+    #aud-prev { margin-right: 50px; }
+  }
+
+  .aud-round { width: 48px; height: 48px; }
+  .aud-round-lg { width: 68px; height: 68px; svg { width: 30px; height: 30px; } }
+  .aud-round-step { width: 44px; height: 44px; }
+
+  .aud-simple-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 4px;
+  }
+
+  // The sender's own words still come through: they are the point of the link,
+  // not chrome, and this is the mode most recipients will read them in.
+  .aud-note {
+    max-width: 520px;
+    margin: 0 auto;
+    font-size: 13px;
+  }
+
+  @media screen and (max-width: 600px) {
+    .aud { padding-top: 54px; }
+    .aud-canvas { height: clamp(130px, 26vh, 220px); }
+    .aud-simple-chip { padding: 9px 16px; font-size: 13px; }
+    .aud-simple-st { min-width: 46px; padding: 9px 8px; }
+
+    // The buttons are smaller here, so the offsets that hold them off the centre
+    // are too.
+    #aud-stop { margin-right: 44px; }
+    #aud-prev { margin-right: 96px; }
+    #aud-next { margin-left: 44px; }
+
+    .aud-transport:has(#aud-prev:not(.hidden)) {
+      #aud-stop { margin-right: 96px; }
+      #aud-prev { margin-right: 44px; }
+    }
+
+    // No room beside the buttons on a phone, so the volume goes back in the flow
+    // and takes a row of its own under them.
+    .aud-transport { flex-wrap: wrap; row-gap: 14px; }
+    .aud-vol {
+      position: static;
+      transform: none;
+      flex-basis: 100%;
+      justify-content: center;
+    }
+  }
+}
+
+body.light-mode.aud-simple .aud { background: #ffffff; }
+
+// --- light mode ---
+
+body.light-mode {
+  .aud-mode { border-color: #ddd; }
+  .aud-mode-btn {
+    color: #777;
+    &:hover { color: #111; }
+    &.is-on { background: rgba(42, 122, 226, 0.12); color: #2a7ae2; }
+  }
+
+  .aud-target-tag, .aud-stem-what, .aud-stem-foot { color: #777; }
+
+  .aud-stem {
+    border-color: #e4e4e4;
+    border-left-color: #ddd;
+    &.is-target { border-left-color: #2a7ae2; background: rgba(42, 122, 226, 0.05); }
+    &.has-fx { border-left-color: #c08020; }
+    &.has-fx.is-target { border-left-color: #2a7ae2; }
+  }
+
+  .aud-stem-meter {
+    background: rgba(0, 0, 0, 0.08);
+    i { background: linear-gradient(90deg, #2a9d6a, #2a7ae2); }
+  }
+
+  .aud-stem-btn {
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #888; color: #111; }
+    &.is-on { border-color: #2a7ae2; background: rgba(42, 122, 226, 0.12); color: #2a7ae2; }
+  }
+
+  .aud-stem-gain { accent-color: #c08020; }
+  .aud-stem-db { color: #b8791a; }
+
+  .aud-simple-chip {
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #888; color: #111; }
+    &.is-on { background: rgba(42, 122, 226, 0.12); border-color: #2a7ae2; color: #2a7ae2; }
+  }
+
+  .aud-simple-tag { color: #888; }
+}
