@@ -127,7 +127,7 @@ async function surveyBucket(env) {
 
 // The constants above are the fallback. Overriding them through wrangler vars means
 // the ceiling can be lowered without a code change or a redeploy of the logic.
-function envNum(value, fallback) {
+export function envNum(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
@@ -143,7 +143,7 @@ function quotaLimits(env) {
 // Shortening this is the most direct way to hold storage down, since it decides how
 // long every clip occupies the bucket. It must stay in step with the bucket's
 // lifecycle rule, which is what actually reclaims the space; see CLIPS.md.
-function ttlDays(env) {
+export function ttlDays(env) {
   return envNum(env.CLIP_TTL_DAYS, TTL_DAYS);
 }
 
@@ -247,10 +247,16 @@ export async function handleFetchClip(request, env, id, headers) {
   if (!env.CLIPS) return new Response('Clip storage is not configured.', { status: 503, headers });
   if (!ID_RE.test(id)) return new Response('Not found', { status: 404, headers });
 
-  const object = await env.CLIPS.get(`clips/${id}`, {
-    range: request.headers,
-    onlyIf: request.headers,
-  });
+  // A playlist asks for one HEAD per track just to label its rows, so a HEAD is
+  // served from metadata rather than by reading the object and throwing the bytes
+  // away.
+  const headOnly = request.method === 'HEAD';
+  const object = headOnly
+    ? await env.CLIPS.head(`clips/${id}`)
+    : await env.CLIPS.get(`clips/${id}`, {
+      range: request.headers,
+      onlyIf: request.headers,
+    });
 
   if (object === null) return new Response('Not found', { status: 404, headers });
 
@@ -267,6 +273,16 @@ export async function handleFetchClip(request, env, id, headers) {
   object.writeHttpMetadata(out);
   out.set('etag', object.httpEtag);
   out.set('accept-ranges', 'bytes');
+
+  // The name the clip was uploaded under. A playlist shows a row per track before
+  // any of them have played, and this is the only place that name is kept.
+  const stored = object.customMetadata && object.customMetadata.name;
+  if (stored) out.set('x-clip-name', encodeURIComponent(stored));
+
+  if (headOnly) {
+    out.set('content-length', String(object.size));
+    return new Response(null, { status: 200, headers: out });
+  }
 
   // A precondition matched, so R2 returned metadata with no body.
   if (!object.body) return new Response(null, { status: 304, headers: out });

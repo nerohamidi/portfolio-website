@@ -7,8 +7,8 @@
 
   <ol class="aud-steps">
     <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
-    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Filter it and watch the spectrum</span></li>
-    <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">It opens with your settings</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Filter it, watch the spectrum, read it back</span></li>
+    <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">Whole playlist, your settings</span></li>
   </ol>
 
   <div class="aud-note aud-note-shared hidden" id="aud-shared-note">
@@ -23,13 +23,13 @@
         <path d="M0,20 Q8,4 16,20 T32,20 T48,20 T64,20" fill="none" stroke="currentColor" stroke-width="2.5"/>
       </svg>
     </div>
-    <p class="aud-drop-lead">Drop an audio file here</p>
+    <p class="aud-drop-lead">Drop audio files here</p>
     <div class="aud-drop-actions">
-      <label class="aud-btn aud-btn-primary" for="aud-file" tabindex="0">Choose a file</label>
-      <input type="file" id="aud-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" hidden>
+      <label class="aud-btn aud-btn-primary" for="aud-file" tabindex="0">Choose files</label>
+      <input type="file" id="aud-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
       <button class="aud-btn" id="aud-demo" type="button">Try the demo</button>
     </div>
-    <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB &middot; nothing is uploaded until you make a link</p>
+    <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB each &middot; drop several to build a playlist &middot; nothing leaves your browser until you make a link or turn on the transcript</p>
   </div>
 
   <!-- Player -->
@@ -43,6 +43,10 @@
         <span class="aud-note-cents" id="aud-note-cents"></span>
       </span>
       <span class="aud-note-tip">clearest on a single instrument or voice</span>
+    </div>
+
+    <div class="aud-caption hidden" id="aud-caption">
+      <p class="aud-caption-line" id="aud-caption-line"></p>
     </div>
 
     <div class="aud-track">
@@ -60,14 +64,57 @@
       <button class="aud-round" id="aud-stop" type="button" aria-label="Stop">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
       </button>
+      <button class="aud-round aud-round-step hidden" id="aud-prev" type="button" aria-label="Previous track">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6h2v12H7zM19 6v12l-9-6z"/></svg>
+      </button>
       <button class="aud-round aud-round-lg" id="aud-play" type="button" aria-label="Play">
         <svg viewBox="0 0 24 24" aria-hidden="true" id="aud-play-icon"><path d="M8 5.5v13l11-6.5z"/></svg>
+      </button>
+      <button class="aud-round aud-round-step hidden" id="aud-next" type="button" aria-label="Next track">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6h2v12h-2zM5 6l9 6-9 6z"/></svg>
       </button>
       <div class="aud-vol">
         <svg viewBox="0 0 24 24" class="aud-vol-icon" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/></svg>
         <input type="range" id="aud-volume" class="aud-volume" min="0" max="1" value="0.7" step="0.01" aria-label="Volume">
         <span class="aud-vol-val" id="aud-vol-val">70%</span>
       </div>
+    </div>
+  </section>
+
+  <!-- Playlist -->
+  <section class="aud-panel aud-queue hidden" id="aud-queue" aria-label="Playlist">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Playlist</h2>
+      <p class="aud-panel-hint">Tracks play in order, and one share link carries the whole list. The filter, pitch and volume below apply to whichever track is playing.</p>
+    </div>
+    <ol class="aud-q-list" id="aud-q-list"></ol>
+    <div class="aud-q-foot">
+      <label class="aud-btn aud-btn-sm" for="aud-add" tabindex="0">Add tracks</label>
+      <input type="file" id="aud-add" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
+      <button class="aud-btn aud-btn-sm" id="aud-q-demo" type="button">Add the demo</button>
+      <label class="aud-check">
+        <input type="checkbox" id="aud-q-through" checked>
+        <span>Play through</span>
+      </label>
+      <span class="aud-q-count" id="aud-q-count"></span>
+    </div>
+  </section>
+
+  <!-- Transcript -->
+  <section class="aud-panel aud-tx hidden" id="aud-tx" aria-label="Transcript">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Transcript</h2>
+      <p class="aud-panel-hint">Whisper reads short windows just ahead of the playhead, so the words arrive as you hear them. It listens to the track itself, not to the filtered output, and only the part being transcribed leaves your browser.</p>
+    </div>
+    <div class="aud-tx-bar">
+      <button class="aud-btn aud-btn-primary" id="aud-tx-btn" type="button">Transcribe as it plays</button>
+      <span class="aud-tx-status" id="aud-tx-status"></span>
+    </div>
+    <ol class="aud-tx-lines hidden" id="aud-tx-lines"></ol>
+    <div class="aud-tx-foot hidden" id="aud-tx-foot">
+      <button class="aud-btn aud-btn-sm" id="aud-tx-copy" type="button">Copy text</button>
+      <button class="aud-btn aud-btn-sm" id="aud-tx-vtt" type="button">Download captions</button>
+      <span class="aud-tx-note" id="aud-tx-note"></span>
     </div>
   </section>
 
@@ -126,7 +173,7 @@
   <section class="aud-panel aud-share hidden" id="aud-share" aria-label="Share">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Share</h2>
-      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this track with your filter and volume already set. Your file is uploaded only when you press the button.</p>
+      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this playlist with your filter and volume already set. Your files are uploaded only when you press the button.</p>
     </div>
     <button class="aud-btn aud-btn-primary aud-btn-wide" id="aud-share-btn" type="button">Create share link</button>
     <div class="aud-share-out hidden" id="aud-share-out">

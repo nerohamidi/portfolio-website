@@ -2,6 +2,11 @@ name = "nero-chatbot-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
+# Whisper for Signal Share's live transcription. Workers AI always runs remotely,
+# including under `wrangler dev`.
+[ai]
+binding = "AI"
+
 # Audio clips uploaded from the signal playground. Keys are random and the bucket
 # stays private: the Worker is the only reader.
 [[r2_buckets]]
@@ -9,13 +14,27 @@ binding = "CLIPS"
 bucket_name = "nero-signal-clips"
 
 # Burst protection on the upload route. period must be 10 or 60, so this caps a
-# hammering client rather than enforcing a daily quota.
+# hammering client rather than enforcing a daily quota. It has to clear MAX_QUEUE
+# in the engine, which is 10: sharing a full playlist is one upload per track, and
+# a playlist that cannot go up inside one window could never be shared at all.
+# The per-uploader byte cap, not this, is what bounds what one person can store.
 [[ratelimits]]
 name = "CLIP_UPLOADS"
 namespace_id = "1001"
 
   [ratelimits.simple]
-  limit = 6
+  limit = 12
+  period = 60
+
+# Transcription is chunked, so one track is many calls and the clip limit above is
+# far too tight for it. A window is ~12s, so 30 a minute is about six audio minutes
+# per minute from one address; the daily budget below is the real ceiling.
+[[ratelimits]]
+name = "TRANSCRIBE_CALLS"
+namespace_id = "1002"
+
+  [ratelimits.simple]
+  limit = 30
   period = 60
 
 # Storage ceilings for the clip bucket. Lower these to tighten the cap without
@@ -28,3 +47,8 @@ CLIP_MAX_PER_UPLOADER_BYTES = "209715200"
 CLIP_MAX_OBJECTS = "4000"
 # Must match the bucket's lifecycle rule (--expire-days), which reclaims the space.
 CLIP_TTL_DAYS = "30"
+# Workers AI gives 10,000 Neurons a day free and whisper-large-v3-turbo costs 46.63
+# of them per audio minute, so the free allocation is ~214 audio minutes. 7200s of
+# audio a day sits under that with room for the counter's undercount; see CLIPS.md.
+TRANSCRIBE_MAX_DAILY_SECONDS = "7200"
+TRANSCRIBE_MAX_CHUNK_SECONDS = "30"

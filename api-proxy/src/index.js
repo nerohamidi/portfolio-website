@@ -1,5 +1,6 @@
 import { SYSTEM_PROMPT } from './context.js';
 import { handleUpload, handleFetchClip } from './clips.js';
+import { handleTranscribe, handleFetchTranscript } from './transcribe.js';
 
 const ALLOWED_ORIGINS = [
   'https://nerohamidi.github.io',
@@ -23,8 +24,8 @@ function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Clip-Name, Range',
-    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Clip-Name, X-Clip-Prev, X-Clip-Lang, Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, X-Clip-Name',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
@@ -115,6 +116,31 @@ export default {
         return json({ error: 'Forbidden' }, 403, headers);
       }
       return handleUpload(request, env, ctx, headers);
+    }
+
+    // Already-transcribed chunks of a shared clip. Open to any origin for the same
+    // reason the clip itself is: the recipient of a link opens it wherever they
+    // like, and this only ever returns what the clip's own audio already says.
+    const txMatch = url.pathname.match(/^\/transcript\/([^/]+)$/);
+    if (txMatch) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      return handleFetchTranscript(request, env, txMatch[1], {
+        ...headers,
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    // Origin-allowlisted, unlike the read above: this one spends Neurons.
+    if (url.pathname === '/transcribe') {
+      if (request.method !== 'POST') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      if (!allowed) {
+        return json({ error: 'Forbidden' }, 403, headers);
+      }
+      return handleTranscribe(request, env, ctx, headers);
     }
 
     if (request.method !== 'POST') {

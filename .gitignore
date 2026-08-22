@@ -8,3 +8,4 @@ vendor
 resumes
 .DS_Store
 .wrangler
+node_modules

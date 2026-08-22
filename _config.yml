@@ -24,7 +24,7 @@ description: >-
 baseurl: "/portfolio-website"
 url: "https://nerohamidi.github.io"
 github_username: nerohamidi
-version: "1.19.0"
+version: "1.20.0"
 
 # Navigation — only these pages appear in the header
 header_pages:
@@ -47,6 +47,10 @@ exclude:
   - .env
   - resumes
   - embedded_resume.pdf
+  - test
+  - node_modules
+  - package.json
+  - package-lock.json
 
 # Exclude from processing.
 # The following items will not be processed, by default.

@@ -14,6 +14,19 @@
   // The two notch presets only differ by the Q they arrive with.
   var FILTER_DEFAULT_Q = { 'notch-wide': 0.5, 'notch-narrow': 10 };
 
+  // A share uploads every local file in the queue, one request each, and the
+  // Worker rate-limits uploads per minute. Ten keeps a full playlist inside one
+  // window of that limit.
+  var MAX_QUEUE = 10;
+
+  // Transcription windows. Short enough that the first words land while the intro
+  // is still playing, long enough that Whisper has a sentence to work with.
+  var TX_TARGET_SEC = 12;
+  var TX_CUT_SEARCH = 1.2;   // how far either side of the target to hunt for a quiet cut
+  var TX_LEAD_SEC = 24;      // how far ahead of the playhead to stay
+  var TX_JUMP_SEC = 45;      // a seek longer than this gives up on the gap
+  var TX_RATE = 16000;       // what Whisper wants; also what keeps a window under a megabyte
+
   var el = {};
   [
     'aud-drop', 'aud-file', 'aud-demo', 'aud-player', 'aud-canvas', 'aud-name', 'aud-change',
@@ -24,7 +37,11 @@
     'aud-note-name', 'aud-note-hz', 'aud-note-cents',
     'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
     'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
-    'aud-shared-note', 'aud-shared-detail'
+    'aud-shared-note', 'aud-shared-detail',
+    'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
+    'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
+    'aud-tx', 'aud-tx-btn', 'aud-tx-status', 'aud-tx-lines', 'aud-tx-foot',
+    'aud-tx-copy', 'aud-tx-vtt', 'aud-tx-note'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -60,6 +77,18 @@
 
   var PLAY_PATH = 'M8 5.5v13l11-6.5z';
   var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
+
+  // The queue is the unit the page shares now. Each entry is one track:
+  //   ref   'demo', 'clip:<id>', or null while a file is still only local
+  //   file  the File, until a share uploads it and it gains a ref
+  //   name  what the row and the player show
+  //   tx    that track's transcript, kept so switching away and back is free
+  var queue = [];
+  var current = -1;
+  var playThrough = true;
+  var audioName = '';
+  // Both file inputs land in the same handler; this says which one opened it.
+  var fileIntent = 'add';
 
   function formatTime(s) {
     if (!isFinite(s) || s < 0) s = 0;
@@ -123,19 +152,24 @@
     el['aud-player'].classList.remove('hidden');
     el['aud-shape'].classList.remove('hidden');
     el['aud-share'].classList.remove('hidden');
+    el['aud-queue'].classList.remove('hidden');
+    el['aud-tx'].classList.remove('hidden');
     el['aud-duration'].textContent = '0:00';
     el['aud-current'].textContent = '0:00';
     el['aud-seek'].value = 0;
   }
 
   // `get` returns a promise for the raw bytes, so a local file and a shared clip
-  // take the same path from here on.
-  function loadBytes(get, name, label) {
+  // take the same path from here on. `autostart` is set when the track was not
+  // chosen by a click on the play button: the end of the previous one, or a click
+  // on a queue row while the queue was already playing.
+  function loadBytes(get, name, label, autostart) {
     var token = ++loadToken;
     stopSource();
     audioBuffer = null;
     offsetSec = 0;
     setPlaying(false);
+    txReset();
     resetTrackUi(name);
     el['aud-name'].textContent = name + '  (decoding\u2026)';
 
@@ -151,10 +185,13 @@
     }).then(function(buf) {
       if (token !== loadToken || !buf) return;
       audioBuffer = buf;
-      el['aud-name'].textContent = name;
+      audioName = (queue[current] && queue[current].name) || name;
+      el['aud-name'].textContent = audioName;
       el['aud-duration'].textContent = formatTime(buf.duration);
       el['aud-seek'].max = buf.duration;
       el['aud-seek'].step = 0.01;
+      txAdopt(buf.duration);
+      if (autostart) startAt(0);
     }).catch(function() {
       if (token !== loadToken) return;
       el['aud-name'].textContent = label === 'clip'
@@ -165,7 +202,7 @@
     });
   }
 
-  function loadFile(file) {
+  function loadFile(file, autostart) {
     loadBytes(function() {
       if (file.arrayBuffer) return file.arrayBuffer();
       return new Promise(function(resolve, reject) {
@@ -174,16 +211,24 @@
         fr.onerror = function() { reject(fr.error); };
         fr.readAsArrayBuffer(file);
       });
-    }, file.name, 'file');
+    }, file.name, 'file', autostart);
   }
 
-  function loadUrl(url, name, label) {
+  function loadUrl(url, name, label, autostart) {
+    var loading = queue[current];
     loadBytes(function() {
       return fetch(url).then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        // The clip's own name, which is the only place a shared track's title is
+        // kept. It arrives with the audio, so a row labelled from the hash gets
+        // corrected here.
+        var sent = r.headers.get('X-Clip-Name');
+        if (sent) {
+          try { renameEntry(loading, decodeURIComponent(sent)); } catch (e) {}
+        }
         return r.arrayBuffer();
       });
-    }, name, label);
+    }, name, label, autostart);
   }
 
   // --- transport core --------------------------------------------------------
@@ -222,6 +267,9 @@
       setPlaying(false);
       el['aud-seek'].value = 0;
       el['aud-current'].textContent = '0:00';
+      // The context is already running by now, so the next track can start
+      // without a fresh gesture.
+      if (playThrough && current >= 0 && current < queue.length - 1) playIndex(current + 1, true);
     };
     startedAt = audioCtx.currentTime;
     bufSource.start(0, offsetSec);
@@ -315,6 +363,11 @@
       lastDetect = now;
       updateNote();
     }
+
+    // Cheap every frame: the caption has to track the playhead exactly, and the
+    // pump usually decides in a couple of comparisons that it has nothing to do.
+    txFollow();
+    txPump();
 
     requestAnimationFrame(draw);
   }
@@ -463,12 +516,17 @@
     el['aud-current'].textContent = '0:00';
   });
 
-  el['aud-seek'].addEventListener('input', function() {
+  function seekTo(sec) {
     if (!audioBuffer) return;
-    var to = parseFloat(el['aud-seek'].value) || 0;
+    var to = Math.max(0, Math.min(sec, audioBuffer.duration));
+    el['aud-seek'].value = to;
     el['aud-current'].textContent = formatTime(to);
     if (playing) startAt(to);
     else offsetSec = to;
+  }
+
+  el['aud-seek'].addEventListener('input', function() {
+    seekTo(parseFloat(el['aud-seek'].value) || 0);
   });
 
   el['aud-volume'].addEventListener('input', function() {
@@ -476,8 +534,6 @@
     if (gainNode) gainNode.gain.value = v;
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
   });
-
-  el['aud-change'].addEventListener('click', function() { el['aud-file'].click(); });
 
   // --- filter ----------------------------------------------------------------
 
@@ -526,28 +582,289 @@
     el['aud-view-freq'].classList.toggle('is-on', showFreq);
   });
 
-  // --- picking a track -------------------------------------------------------
+  // --- the queue -------------------------------------------------------------
+  //
+  // One track used to be the whole app state. It is now one entry in a list, and
+  // the list is what a link carries. An entry is only shareable once it has a
+  // `ref`: local files get one when a share uploads them.
 
-  function takeFile(file) {
-    if (!file) return;
-    pendingFile = file;
-    audioRef = null;
-    resetShare();
-    loadFile(file);
+  function clipIdOf(entry) {
+    return entry && entry.ref && entry.ref.indexOf('clip:') === 0 ? entry.ref.slice(5) : null;
   }
 
-  el['aud-file'].addEventListener('change', function(e) { takeFile(e.target.files[0]); });
+  function srcOf(entry) {
+    if (!entry) return null;
+    if (entry.ref === 'demo') return DEMO_SRC;
+    var id = clipIdOf(entry);
+    return id ? CLIP_API + '/clip/' + id : null;
+  }
 
-  el['aud-demo'].addEventListener('click', function() {
-    pendingFile = null;
-    audioRef = 'demo';
+  function newEntry(fields) {
+    return {
+      ref: fields.ref || null,
+      name: fields.name || '',
+      file: fields.file || null,
+      tx: null
+    };
+  }
+
+  function playIndex(i, autostart) {
+    if (i < 0 || i >= queue.length) return;
+    current = i;
+    var entry = queue[i];
+    renderQueue();
+    if (entry.file) {
+      loadFile(entry.file, autostart);
+    } else {
+      var src = srcOf(entry);
+      if (!src) return;
+      loadUrl(src, entry.name || 'Shared track', entry.ref === 'demo' ? 'demo' : 'clip', autostart);
+    }
+  }
+
+  // The name a track is finally known by: from the file, from the clip's stored
+  // metadata, or from the upload's reply. Addressed by entry rather than by index,
+  // because the answer can arrive after the listener has moved on.
+  function renameEntry(entry, name) {
+    if (!entry || !name || entry.name === name) return;
+    entry.name = name;
+    if (entry === queue[current]) {
+      audioName = name;
+      if (audioBuffer) el['aud-name'].textContent = name;
+    }
+    renderQueue();
+  }
+
+  function addTracks(entries, playFirst) {
+    if (!entries.length) return;
+    var room = MAX_QUEUE - queue.length;
+    if (room <= 0) {
+      el['aud-share-status'].textContent = 'A playlist holds ' + MAX_QUEUE + ' tracks.';
+      return;
+    }
+    var dropped = entries.length - room;
+    var added = entries.slice(0, room);
+    var at = queue.length;
+    queue = queue.concat(added);
     resetShare();
-    loadUrl(DEMO_SRC, 'symphony.mp3', 'demo');
+    if (dropped > 0) {
+      el['aud-share-status'].textContent = 'A playlist holds ' + MAX_QUEUE +
+        ' tracks, so ' + dropped + ' did not fit.';
+    }
+    if (playFirst || current < 0) playIndex(at, playFirst && playing);
+    else renderQueue();
+  }
+
+  function removeAt(i) {
+    if (i < 0 || i >= queue.length) return;
+    var wasCurrent = i === current;
+    var wasPlaying = playing;
+    queue.splice(i, 1);
+    resetShare();
+
+    if (!queue.length) {
+      current = -1;
+      resetToEmpty();
+      return;
+    }
+    if (wasCurrent) {
+      // Whatever slid into this slot, or the new last track if the end went.
+      playIndex(Math.min(i, queue.length - 1), wasPlaying);
+      return;
+    }
+    if (i < current) current -= 1;
+    renderQueue();
+  }
+
+  function moveAt(i, delta) {
+    var to = i + delta;
+    if (i < 0 || i >= queue.length || to < 0 || to >= queue.length) return;
+    var held = queue[i];
+    queue[i] = queue[to];
+    queue[to] = held;
+    if (current === i) current = to;
+    else if (current === to) current = i;
+    resetShare();
+    renderQueue();
+  }
+
+  function resetToEmpty() {
+    stopSource();
+    audioBuffer = null;
+    offsetSec = 0;
+    setPlaying(false);
+    txReset();
+    loadToken++;
+    el['aud-drop'].classList.remove('hidden');
+    ['aud-player', 'aud-shape', 'aud-share', 'aud-queue', 'aud-tx'].forEach(function(id) {
+      el[id].classList.add('hidden');
+    });
+    el['aud-shared-note'].classList.add('hidden');
+    renderQueue();
+  }
+
+  function tagFor(entry) {
+    if (entry.ref === 'demo') return 'demo';
+    if (clipIdOf(entry)) return 'shared';
+    return 'on this device';
+  }
+
+  // Built with the DOM rather than a template string: a row carries a filename
+  // the visitor chose, and that is not text to hand to innerHTML.
+  function queueRow(entry, i) {
+    var li = document.createElement('li');
+    li.className = 'aud-q-item' + (i === current ? ' is-current' : '');
+
+    var pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'aud-q-pick';
+    pick.addEventListener('click', function() { playIndex(i, playing); });
+
+    var n = document.createElement('span');
+    n.className = 'aud-q-n';
+    n.textContent = String(i + 1);
+    var name = document.createElement('span');
+    name.className = 'aud-q-name';
+    name.textContent = entry.name || 'Untitled track';
+    var tag = document.createElement('span');
+    tag.className = 'aud-q-tag';
+    tag.textContent = tagFor(entry);
+    pick.appendChild(n);
+    pick.appendChild(name);
+    pick.appendChild(tag);
+
+    var tools = document.createElement('span');
+    tools.className = 'aud-q-tools';
+    [
+      { label: 'Move "' + (entry.name || 'track') + '" up', glyph: '↑', run: function() { moveAt(i, -1); }, off: i === 0 },
+      { label: 'Move "' + (entry.name || 'track') + '" down', glyph: '↓', run: function() { moveAt(i, 1); }, off: i === queue.length - 1 },
+      { label: 'Remove "' + (entry.name || 'track') + '"', glyph: '×', run: function() { removeAt(i); }, off: false }
+    ].forEach(function(spec) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'aud-q-btn';
+      b.textContent = spec.glyph;
+      b.setAttribute('aria-label', spec.label);
+      b.disabled = spec.off;
+      b.addEventListener('click', spec.run);
+      tools.appendChild(b);
+    });
+
+    li.appendChild(pick);
+    li.appendChild(tools);
+    return li;
+  }
+
+  function renderQueue() {
+    var list = el['aud-q-list'];
+    list.textContent = '';
+    queue.forEach(function(entry, i) { list.appendChild(queueRow(entry, i)); });
+
+    el['aud-q-count'].textContent = queue.length
+      ? queue.length + (queue.length === 1 ? ' track' : ' tracks') + ' of ' + MAX_QUEUE
+      : '';
+
+    var many = queue.length > 1;
+    el['aud-prev'].classList.toggle('hidden', !many);
+    el['aud-next'].classList.toggle('hidden', !many);
+    el['aud-prev'].disabled = current <= 0;
+    el['aud-next'].disabled = current < 0 || current >= queue.length - 1;
+  }
+
+  // A clip knows its own name, so a restored playlist can label every row before
+  // any of them is played. One HEAD per track, and the Worker answers those from
+  // metadata without reading the audio.
+  function labelClips() {
+    queue.forEach(function(entry, i) {
+      var id = clipIdOf(entry);
+      if (!id || entry.name) return;
+      entry.name = 'Shared track ' + (i + 1);
+      fetch(CLIP_API + '/clip/' + id, { method: 'HEAD' }).then(function(r) {
+        var sent = r.ok && r.headers.get('X-Clip-Name');
+        if (sent) renameEntry(entry, decodeURIComponent(sent));
+      }).catch(function() {});
+    });
+    renderQueue();
+  }
+
+  el['aud-prev'].addEventListener('click', function() {
+    if (current > 0) playIndex(current - 1, playing);
   });
 
-  // Keyboard parity for the file label, which is not a real button.
-  document.querySelector('label[for="aud-file"]').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el['aud-file'].click(); }
+  el['aud-next'].addEventListener('click', function() {
+    if (current >= 0 && current < queue.length - 1) playIndex(current + 1, playing);
+  });
+
+  el['aud-q-through'].addEventListener('change', function() {
+    playThrough = el['aud-q-through'].checked;
+  });
+
+  el['aud-q-demo'].addEventListener('click', function() {
+    addTracks([newEntry({ ref: 'demo', name: 'symphony.mp3' })], false);
+  });
+
+  // --- picking a track -------------------------------------------------------
+
+  function takeFiles(files) {
+    var picked = [];
+    for (var i = 0; i < files.length; i++) picked.push(files[i]);
+    // Consumed here, so a picker that was opened and then cancelled cannot leave
+    // "replace" armed for whatever opens it next.
+    var intent = fileIntent;
+    fileIntent = 'add';
+    if (!picked.length) return;
+
+    if (intent === 'replace' && current >= 0) {
+      // "Change track" swaps this row rather than growing the list.
+      queue[current] = newEntry({ file: picked[0], name: picked[0].name });
+      resetShare();
+      playIndex(current, playing);
+      if (picked.length > 1) {
+        addTracks(picked.slice(1).map(function(f) {
+          return newEntry({ file: f, name: f.name });
+        }), false);
+      }
+      return;
+    }
+
+    addTracks(picked.map(function(f) { return newEntry({ file: f, name: f.name }); }), current < 0);
+  }
+
+  function wireFileInput(input) {
+    input.addEventListener('change', function(e) {
+      takeFiles(e.target.files);
+      // Cleared so choosing the same file twice in a row still fires a change.
+      e.target.value = '';
+    });
+  }
+  wireFileInput(el['aud-file']);
+  wireFileInput(el['aud-add']);
+
+  el['aud-demo'].addEventListener('click', function() {
+    addTracks([newEntry({ ref: 'demo', name: 'symphony.mp3' })], true);
+  });
+
+  el['aud-change'].addEventListener('click', function() {
+    fileIntent = 'replace';
+    el['aud-file'].click();
+  });
+
+  // Keyboard parity for the file labels, which are not real buttons, and the
+  // intent they carry. A label's own click runs before it forwards to the input.
+  [
+    ['label[for="aud-file"]', el['aud-file']],
+    ['label[for="aud-add"]', el['aud-add']]
+  ].forEach(function(pair) {
+    var label = document.querySelector(pair[0]);
+    if (!label) return;
+    label.addEventListener('click', function() { fileIntent = 'add'; });
+    label.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileIntent = 'add';
+        pair[1].click();
+      }
+    });
   });
 
   ['dragenter', 'dragover'].forEach(function(ev) {
@@ -563,13 +880,515 @@
     });
   });
   el['aud-drop'].addEventListener('drop', function(e) {
-    if (e.dataTransfer && e.dataTransfer.files) takeFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer && e.dataTransfer.files) {
+      fileIntent = 'add';
+      takeFiles(e.dataTransfer.files);
+    }
+  });
+
+  // --- live transcription ----------------------------------------------------
+  //
+  // The Web Speech API only ever listens to a microphone, so a loaded file cannot
+  // be fed to it. Instead the track is cut into short windows, resampled to
+  // 16 kHz mono, and posted to the Worker, which runs Whisper. The pump stays a
+  // little ahead of the playhead, so a window is transcribed before it is heard
+  // and the words land in time with the audio rather than after it.
+  //
+  // Cuts land on the quietest moment near the target length. A window that ends
+  // mid-word costs that word twice: once truncated here, once truncated at the
+  // start of the next window.
+
+  var txOn = false;
+  var txBusy = false;
+  var txDone = false;
+  var txSegments = [];
+  var txNext = 0;        // where the next window starts, in track seconds
+  var txIndex = 0;       // window number, which is also its cache key
+  var txLang = '';
+  var txPrev = '';
+  var txDuration = 0;
+  var txSpans = [];
+  var txActive = -1;
+  var txActiveWord = -1;
+
+  function txStatus(text) {
+    el['aud-tx-status'].textContent = text || '';
+  }
+
+  function txButton() {
+    var b = el['aud-tx-btn'];
+    if (txDone) {
+      b.textContent = 'Transcribed';
+      b.disabled = true;
+      b.classList.remove('is-on');
+      return;
+    }
+    b.disabled = !audioBuffer;
+    b.textContent = txOn
+      ? 'Stop transcribing'
+      : (txSegments.length ? 'Keep transcribing' : 'Transcribe as it plays');
+    b.classList.toggle('is-on', txOn);
+  }
+
+  function txReset() {
+    txOn = false;
+    txBusy = false;
+    txDone = false;
+    txSegments = [];
+    txNext = 0;
+    txIndex = 0;
+    txLang = '';
+    txPrev = '';
+    txDuration = 0;
+    txSpans = [];
+    txActive = -1;
+    txActiveWord = -1;
+    el['aud-tx-lines'].textContent = '';
+    el['aud-tx-lines'].classList.add('hidden');
+    el['aud-tx-foot'].classList.add('hidden');
+    el['aud-tx-note'].textContent = '';
+    el['aud-caption'].classList.add('hidden');
+    el['aud-caption-line'].textContent = '';
+    txStatus('');
+    txButton();
+  }
+
+  // Kept on the entry, so leaving a track and coming back does not pay for it
+  // again.
+  function txSave() {
+    if (current < 0 || !queue[current]) return;
+    queue[current].tx = {
+      segments: txSegments, next: txNext, index: txIndex, lang: txLang, done: txDone
+    };
+  }
+
+  function txAdopt(duration) {
+    txDuration = duration;
+    txButton();
+
+    var entry = queue[current];
+    var saved = entry && entry.tx;
+    if (saved && saved.segments.length) {
+      txSegments = saved.segments;
+      txNext = saved.next;
+      txIndex = saved.index;
+      txLang = saved.lang;
+      txDone = saved.done;
+      txRenderAll();
+      txStatus(txDone ? 'Transcript complete.' : 'Picking up where this left off.');
+      txButton();
+      return;
+    }
+
+    var id = clipIdOf(entry);
+    if (id) txLoadCached(id, duration);
+  }
+
+  // Whatever the Worker already holds for this clip. Someone transcribed it once
+  // and everyone the link reaches reads it back without spending anything.
+  function txLoadCached(id, duration) {
+    var token = loadToken;
+    fetch(CLIP_API + '/transcript/' + id).then(function(r) {
+      return r.ok ? r.json() : null;
+    }).then(function(data) {
+      // Nothing to merge into: if the listener started transcribing while this
+      // was in flight, their own text is the one that is live.
+      if (!data || token !== loadToken || txSegments.length || txOn) return;
+      var chunks = data.chunks || [];
+      if (!chunks.length) return;
+
+      var end = 0;
+      chunks.forEach(function(c) {
+        (c.segments || []).forEach(function(seg) { txSegments.push(seg); });
+        if (c.end > end) end = c.end;
+        if (c.i >= txIndex) txIndex = c.i + 1;
+        if (c.language && !txLang) txLang = c.language;
+      });
+      txSegments.sort(function(a, b) { return a.s - b.s; });
+      txNext = end;
+      txDone = end >= duration - 0.5;
+      txSave();
+      txRenderAll();
+      txStatus(txDone ? 'Transcript came with the link.' : 'Part of this is already transcribed.');
+      txButton();
+    }).catch(function() {});
+  }
+
+  // --- cutting the window ---
+
+  // The quietest 20 ms in the search band around the target length. Silence is
+  // where a sentence is least likely to be split.
+  function txCut(start) {
+    var target = Math.min(start + TX_TARGET_SEC, txDuration);
+    if (txDuration - target < 2) return txDuration;
+
+    var sr = audioBuffer.sampleRate;
+    var data = audioBuffer.getChannelData(0);
+    var win = Math.max(64, Math.floor(sr * 0.02));
+    var from = Math.max(start + 1, target - TX_CUT_SEARCH);
+    var to = Math.min(txDuration - 0.05, target + TX_CUT_SEARCH);
+    var best = target;
+    var quietest = Infinity;
+
+    for (var t = from; t <= to; t += 0.02) {
+      var at = Math.floor(t * sr);
+      var energy = 0;
+      for (var i = at; i < at + win && i < data.length; i++) energy += data[i] * data[i];
+      if (energy < quietest) { quietest = energy; best = t; }
+    }
+    return best;
+  }
+
+  function txWav(samples, rate) {
+    var bytes = samples.length * 2;
+    var buf = new ArrayBuffer(44 + bytes);
+    var view = new DataView(buf);
+    function str(at, text) {
+      for (var i = 0; i < text.length; i++) view.setUint8(at + i, text.charCodeAt(i));
+    }
+    str(0, 'RIFF');
+    view.setUint32(4, 36 + bytes, true);
+    str(8, 'WAVE');
+    str(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);          // PCM
+    view.setUint16(22, 1, true);          // mono
+    view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true);   // byte rate
+    view.setUint16(32, 2, true);          // block align
+    view.setUint16(34, 16, true);         // bits
+    str(36, 'data');
+    view.setUint32(40, bytes, true);
+    var at = 44;
+    for (var i = 0; i < samples.length; i++) {
+      var v = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(at, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      at += 2;
+    }
+    return buf;
+  }
+
+  // Averaged over each decimation window rather than picked from it: a plain
+  // stride would fold everything above 8 kHz back down into the speech band.
+  // Only reached where an offline context at 16 kHz is refused.
+  function txDecimate(start, end) {
+    var sr = audioBuffer.sampleRate;
+    var left = audioBuffer.getChannelData(0);
+    var right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+    var step = sr / TX_RATE;
+    var n = Math.max(1, Math.floor((end - start) * TX_RATE));
+    var out = new Float32Array(n);
+    var base = start * sr;
+
+    for (var i = 0; i < n; i++) {
+      var from = Math.floor(base + i * step);
+      var to = Math.floor(base + (i + 1) * step);
+      if (to <= from) to = from + 1;
+      var sum = 0;
+      var count = 0;
+      for (var j = from; j < to && j < left.length; j++) {
+        sum += right ? (left[j] + right[j]) * 0.5 : left[j];
+        count++;
+      }
+      out[i] = count ? sum / count : 0;
+    }
+    return out;
+  }
+
+  // An offline context resamples properly and downmixes to mono on the way out,
+  // because its destination has one channel. Safari refused rates outside the
+  // hardware range for years, hence the fallback.
+  function txSlice(start, end) {
+    var Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var frames = Math.max(1, Math.round((end - start) * TX_RATE));
+
+    if (Offline) {
+      try {
+        var off = new Offline(1, frames, TX_RATE);
+        var src = off.createBufferSource();
+        src.buffer = audioBuffer;
+        src.connect(off.destination);
+        src.start(0, start, end - start);
+        return new Promise(function(resolve, reject) {
+          off.oncomplete = function(ev) {
+            resolve(txWav(ev.renderedBuffer.getChannelData(0), TX_RATE));
+          };
+          var ret = off.startRendering();
+          if (ret && ret.then) {
+            ret.then(function(buf) { resolve(txWav(buf.getChannelData(0), TX_RATE)); }, reject);
+          }
+          // Neither form reported back. Without this the pump would sit busy for
+          // the rest of the track.
+          setTimeout(function() { reject(new Error('The browser stalled on that window.')); }, 20000);
+        });
+      } catch (e) {
+        // Fall through to the hand-rolled path.
+      }
+    }
+    return Promise.resolve(txWav(txDecimate(start, end), TX_RATE));
+  }
+
+  function txPost(wav, start, index) {
+    var id = clipIdOf(queue[current]);
+    var url = CLIP_API + '/transcribe?i=' + index + '&start=' + start.toFixed(3) +
+      (id ? '&clip=' + id : '');
+    var headers = { 'Content-Type': 'audio/wav' };
+    // The tail of the last window, so a sentence carried across the cut is
+    // finished rather than restarted.
+    if (txPrev) headers['X-Clip-Prev'] = encodeURIComponent(txPrev);
+    // Detected once and held: per-window detection lets an instrumental passage
+    // flip the track into another language.
+    if (txLang) headers['X-Clip-Lang'] = encodeURIComponent(txLang);
+
+    return fetch(url, { method: 'POST', headers: headers, body: wav }).then(function(resp) {
+      return resp.json().catch(function() { return {}; }).then(function(data) {
+        if (!resp.ok) throw new Error(data.error || 'Transcription failed.');
+        return data;
+      });
+    });
+  }
+
+  function txPump() {
+    if (!txOn || txBusy || txDone || !audioBuffer) return;
+
+    if (txNext >= txDuration - 0.2) {
+      txDone = true;
+      txSave();
+      txStatus('Transcript complete.');
+      txButton();
+      return;
+    }
+
+    var pos = position();
+    // Someone jumped forward. Transcribing the minutes they skipped would spend
+    // the budget on audio nobody is going to hear, so the gap is left as a gap.
+    if (pos > txNext + TX_JUMP_SEC) {
+      txNext = pos;
+      txPrev = '';
+    }
+    // Already far enough ahead of the playhead.
+    if (txNext > pos + TX_LEAD_SEC) return;
+
+    var start = txNext;
+    var end = txCut(start);
+    if (end - start < 0.4) {
+      txDone = true;
+      txButton();
+      return;
+    }
+
+    txBusy = true;
+    var token = loadToken;
+    if (!txSegments.length) txStatus('Listening ahead…');
+
+    txSlice(start, end).then(function(wav) {
+      if (token !== loadToken) return null;
+      return txPost(wav, start, txIndex);
+    }).then(function(data) {
+      if (!data || token !== loadToken) return;
+      txIndex += 1;
+      txNext = end;
+      if (data.language) txLang = data.language;
+
+      var added = data.segments || [];
+      if (added.length) {
+        added.forEach(function(seg) { txSegments.push(seg); });
+        txPrev = (txPrev + ' ' + added[added.length - 1].t).slice(-220).trim();
+        txAppend(added);
+      }
+      txSave();
+      txStatus(txNext >= txDuration - 0.2 ? 'Transcript complete.' : 'Transcribing…');
+    }).catch(function(err) {
+      if (token !== loadToken) return;
+      txOn = false;
+      txStatus(err && err.message ? err.message : 'Transcription failed.');
+      txButton();
+    }).then(function() {
+      if (token === loadToken) txBusy = false;
+    });
+  }
+
+  // --- rendering ---
+
+  function txSegRow(seg) {
+    var li = document.createElement('li');
+    li.className = 'aud-tx-line';
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'aud-tx-seek';
+    b.addEventListener('click', function() { seekTo(seg.s); });
+
+    var at = document.createElement('span');
+    at.className = 'aud-tx-at';
+    at.textContent = formatTime(seg.s);
+    var text = document.createElement('span');
+    text.className = 'aud-tx-text';
+    text.textContent = seg.t;
+
+    b.appendChild(at);
+    b.appendChild(text);
+    li.appendChild(b);
+    return li;
+  }
+
+  function txShowBody() {
+    el['aud-tx-lines'].classList.remove('hidden');
+    el['aud-tx-foot'].classList.remove('hidden');
+    // Shown from here rather than per line: the caption keeps its height while it
+    // is empty, so the transport underneath does not jump between lines.
+    el['aud-caption'].classList.remove('hidden');
+  }
+
+  function txAppend(segs) {
+    var list = el['aud-tx-lines'];
+    segs.forEach(function(seg) { list.appendChild(txSegRow(seg)); });
+    txShowBody();
+  }
+
+  function txRenderAll() {
+    var list = el['aud-tx-lines'];
+    list.textContent = '';
+    txSegments.forEach(function(seg) { list.appendChild(txSegRow(seg)); });
+    txActive = -1;
+    txActiveWord = -1;
+    if (txSegments.length) txShowBody();
+  }
+
+  function txFind(pos) {
+    for (var i = 0; i < txSegments.length; i++) {
+      var seg = txSegments[i];
+      if (pos >= seg.s - 0.15 && pos <= seg.e + 0.35) return i;
+      if (seg.s > pos) break;
+    }
+    return -1;
+  }
+
+  function txCaption(i) {
+    var line = el['aud-caption-line'];
+    line.textContent = '';
+    txSpans = [];
+    txActiveWord = -1;
+
+    // Between lines: the row stays, holding its space, with nothing in it.
+    if (i < 0) return;
+
+    var seg = txSegments[i];
+    if (!seg.w || !seg.w.length) {
+      line.textContent = seg.t;
+      return;
+    }
+    seg.w.forEach(function(word, k) {
+      var span = document.createElement('span');
+      span.className = 'aud-cap-w';
+      // Whisper hands back tokens with their own leading space, but not always.
+      span.textContent = (k && word.t.charAt(0) !== ' ' ? ' ' : '') + word.t;
+      line.appendChild(span);
+      txSpans.push({ node: span, s: word.s, e: word.e });
+    });
+  }
+
+  function txMarkRow(i) {
+    var rows = el['aud-tx-lines'].children;
+    for (var k = 0; k < rows.length; k++) {
+      rows[k].classList.toggle('is-on', k === i);
+    }
+    if (i < 0 || !rows[i]) return;
+    // The list scrolls inside itself. scrollIntoView would drag the whole page
+    // along with it.
+    var list = el['aud-tx-lines'];
+    var row = rows[i];
+    list.scrollTop = Math.max(0, row.offsetTop - list.clientHeight / 2 + row.offsetHeight / 2);
+  }
+
+  function txMarkWord(pos) {
+    if (!txSpans.length) return;
+    var at = -1;
+    for (var i = 0; i < txSpans.length; i++) {
+      if (pos >= txSpans[i].s - 0.05) at = i;
+      else break;
+    }
+    if (at === txActiveWord) return;
+    if (txActiveWord >= 0 && txSpans[txActiveWord]) {
+      txSpans[txActiveWord].node.classList.remove('is-now');
+    }
+    if (at >= 0) txSpans[at].node.classList.add('is-now');
+    txActiveWord = at;
+  }
+
+  function txFollow() {
+    if (!txSegments.length) return;
+    var pos = position();
+    var i = txFind(pos);
+    if (i !== txActive) {
+      txActive = i;
+      txCaption(i);
+      txMarkRow(i);
+    }
+    if (i >= 0) txMarkWord(pos);
+  }
+
+  el['aud-tx-btn'].addEventListener('click', function() {
+    if (!audioBuffer) return;
+    txOn = !txOn;
+    if (txOn) {
+      // From the playhead, not from the top: the point is to read what is about
+      // to be heard.
+      if (!txSegments.length && !txNext) txNext = Math.max(0, position() - 0.5);
+      el['aud-tx-lines'].classList.remove('hidden');
+      txStatus('Listening ahead…');
+    } else {
+      txStatus('Stopped. The text so far is kept.');
+    }
+    txButton();
+  });
+
+  function txPlainText() {
+    return txSegments.map(function(seg) { return seg.t; }).join('\n');
+  }
+
+  el['aud-tx-copy'].addEventListener('click', function() {
+    var text = txPlainText();
+    function done() { el['aud-tx-note'].textContent = 'Copied.'; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function() {
+        el['aud-tx-note'].textContent = 'Could not copy.';
+      });
+    } else {
+      el['aud-tx-note'].textContent = 'Could not copy.';
+    }
+  });
+
+  function vttTime(sec) {
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' +
+      (s < 10 ? '0' : '') + s.toFixed(3);
+  }
+
+  el['aud-tx-vtt'].addEventListener('click', function() {
+    if (!txSegments.length) return;
+    var body = 'WEBVTT\n\n' + txSegments.map(function(seg, i) {
+      return (i + 1) + '\n' + vttTime(seg.s) + ' --> ' + vttTime(seg.e) + '\n' + seg.t + '\n';
+    }).join('\n');
+
+    var url = URL.createObjectURL(new Blob([body], { type: 'text/vtt' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = (audioName || 'transcript').replace(/\.[^.]+$/, '') + '.vtt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    el['aud-tx-note'].textContent = 'Saved as WebVTT.';
   });
 
   // --- share -----------------------------------------------------------------
 
+  // v3 replaces v2's single `a=<ref>` with `t=`, the whole queue, and `i=`, which
+  // track it opens on. v2 links are still read; see applyState.
   function encodeState() {
-    var parts = ['v=2'];
+    var parts = ['v=3'];
     function bit(b) { return b ? '1' : '0'; }
     parts.push('flt=' + [
       filterType ? FILTER_CODES[filterType] : 'off',
@@ -579,9 +1398,23 @@
     parts.push('viz=' + [bit(showWave), bit(showFreq)].join(','));
     parts.push('vol=' + el['aud-volume'].value);
     if (semitones) parts.push('p=' + semitones);
-    if (audioRef) {
-      parts.push('a=' + audioRef);
-      if (audioName) parts.push('n=' + encodeURIComponent(audioName));
+
+    var refs = [];
+    var at = -1;
+    for (var i = 0; i < queue.length; i++) {
+      // No ref means the file never left this browser, so there is nothing a link
+      // could point at.
+      if (!queue[i].ref) continue;
+      if (i === current) at = refs.length;
+      refs.push(queue[i].ref === 'demo' ? 'd' : queue[i].ref.slice(5));
+    }
+    if (refs.length) {
+      parts.push('t=' + refs.join(','));
+      if (at > 0) parts.push('i=' + at);
+      // The rest of the names come back from the clips themselves. This one is
+      // carried so the note at the top of a shared page can be specific before
+      // any audio has been fetched.
+      if (audioName && at >= 0) parts.push('n=' + encodeURIComponent(audioName));
     }
     return parts.join('&');
   }
@@ -604,7 +1437,7 @@
   }
 
   function applyState(s) {
-    if (s.v !== '2') return;
+    if (s.v !== '2' && s.v !== '3') return;
 
     var flt = (s.flt || '').split(',');
     if (flt.length >= 3) {
@@ -631,29 +1464,32 @@
       }
     }
 
-    if (s.a) restoreTrack(s.a, s.n);
+    if (s.t) restoreQueue(s.t, parseInt(s.i, 10) || 0, s.n);
+    // A v2 link, from before a share could carry more than one track.
+    else if (s.a) restoreQueue(s.a === 'demo' ? 'd' : s.a.replace(/^clip:/, ''), 0, s.n);
   }
 
-  function restoreTrack(ref, name) {
-    var src;
-    if (ref === 'demo') {
-      src = DEMO_SRC;
-      name = name || 'symphony.mp3';
-    } else if (ref.indexOf('clip:') === 0 && CLIP_ID_RE.test(ref.slice(5))) {
-      src = CLIP_API + '/clip/' + ref.slice(5);
-      name = name || 'shared clip';
-    } else {
-      return;
-    }
+  function restoreQueue(list, index, name) {
+    var entries = [];
+    String(list).split(',').slice(0, MAX_QUEUE).forEach(function(token) {
+      if (token === 'd') entries.push(newEntry({ ref: 'demo', name: 'symphony.mp3' }));
+      else if (CLIP_ID_RE.test(token)) entries.push(newEntry({ ref: 'clip:' + token }));
+    });
+    if (!entries.length) return;
+    if (!(index >= 0 && index < entries.length)) index = 0;
+    if (name && !entries[index].name) entries[index].name = name;
 
-    audioRef = ref;
+    queue = entries;
     el['aud-shared-note'].classList.remove('hidden');
-    el['aud-shared-detail'].textContent = 'Press play to hear "' + name + '" with their settings.';
+    el['aud-shared-detail'].textContent = entries.length > 1
+      ? 'Press play for their ' + entries.length + ' track playlist, with their filter settings.'
+      : 'Press play to hear "' + (entries[index].name || 'their track') + '" with their settings.';
 
     // Fetched and decoded straight away. Decoding needs an AudioContext but not a
     // resumed one, so nothing here depends on a gesture; only starting playback
     // does, and the play button supplies that.
-    loadUrl(src, name, ref === 'demo' ? 'demo' : 'clip');
+    playIndex(index, false);
+    labelClips();
   }
 
   function uploadClip(file) {
@@ -686,27 +1522,55 @@
     history.replaceState(null, '', '#' + hash);
   }
 
-  el['aud-share-btn'].addEventListener('click', function() {
-    if (!pendingFile) {
+  var clipTtlDays = 30;
+
+  // One at a time. The upload route is rate limited per minute, and a browser
+  // firing ten parallel uploads is exactly the shape that limit exists to stop.
+  function uploadRest(pending, at) {
+    if (at >= pending.length) {
+      el['aud-share-btn'].disabled = false;
+      renderQueue();
       showLink();
-      el['aud-share-status'].textContent = audioRef === 'demo'
-        ? 'Anyone who opens this hears the demo with your settings.'
-        : 'Link copied to the box below.';
+      el['aud-share-status'].textContent = 'Ready. This link works for ' + clipTtlDays + ' days.';
       return;
     }
-    el['aud-share-btn'].disabled = true;
-    el['aud-share-status'].textContent = 'Uploading your track...';
-    uploadClip(pendingFile).then(function(data) {
-      audioRef = 'clip:' + data.id;
-      audioName = data.name || audioName;
-      pendingFile = null;
-      showLink();
-      el['aud-share-status'].textContent = 'Ready. This link works for ' + data.expiresInDays + ' days.';
+
+    el['aud-share-status'].textContent = pending.length > 1
+      ? 'Uploading ' + (at + 1) + ' of ' + pending.length + '\u2026'
+      : 'Uploading your track\u2026';
+
+    uploadClip(pending[at].file).then(function(data) {
+      pending[at].ref = 'clip:' + data.id;
+      pending[at].file = null;
+      if (data.expiresInDays) clipTtlDays = data.expiresInDays;
+      if (data.name) renameEntry(pending[at], data.name);
+      renderQueue();
+      uploadRest(pending, at + 1);
     }).catch(function(err) {
-      el['aud-share-status'].textContent = err.message || 'Upload failed.';
-    }).then(function() {
       el['aud-share-btn'].disabled = false;
+      renderQueue();
+      // Whatever went up already keeps its ref, so a retry only sends the rest.
+      el['aud-share-status'].textContent = (err.message || 'Upload failed.') +
+        (at ? ' The ' + at + ' before it are already uploaded.' : '');
     });
+  }
+
+  el['aud-share-btn'].addEventListener('click', function() {
+    var pending = queue.filter(function(entry) { return entry.file && !entry.ref; });
+
+    if (!pending.length) {
+      if (!queue.length) return;
+      showLink();
+      el['aud-share-status'].textContent = queue.length > 1
+        ? 'Anyone who opens this gets all ' + queue.length + ' tracks with your settings.'
+        : (queue[0].ref === 'demo'
+          ? 'Anyone who opens this hears the demo with your settings.'
+          : 'Link copied to the box below.');
+      return;
+    }
+
+    el['aud-share-btn'].disabled = true;
+    uploadRest(pending, 0);
   });
 
   el['aud-share-copy'].addEventListener('click', function() {
@@ -725,6 +1589,9 @@
   el['aud-vol-val'].textContent = Math.round(parseFloat(el['aud-volume'].value) * 100) + '%';
   el['aud-filter-freq-val'].textContent =
     formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
+  playThrough = el['aud-q-through'].checked;
+  renderQueue();
+  txButton();
 
   if (location.hash.length > 1) {
     // A hand-edited hash should never take the page down with it.
