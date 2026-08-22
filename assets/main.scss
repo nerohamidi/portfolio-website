@@ -2365,11 +2365,18 @@ body.light-mode {
 }
 
 .aud-cap-w {
-  transition: color 0.1s;
+  // Every word holds its place from the moment the line is built and only fades
+  // in when it is said, so nothing already on screen moves as the next arrives.
+  opacity: 0;
+  transition: opacity 0.16s ease-out, color 0.1s, text-shadow 0.16s;
 
+  &.is-in { opacity: 1; }
+
+  // Colour and a glow rather than a heavier weight: bold is wider, and on a
+  // centred line that would shift every word already read.
   &.is-now {
     color: #6cb6ff;
-    font-weight: 600;
+    text-shadow: 0 0 14px rgba(108, 182, 255, 0.45);
   }
 }
 
@@ -2578,7 +2585,7 @@ body.light-mode {
 
   .aud-caption { border-top-color: #e4e4e4; }
   .aud-caption-line { color: #666; }
-  .aud-cap-w.is-now { color: #2a7ae2; }
+  .aud-cap-w.is-now { color: #2a7ae2; text-shadow: 0 0 14px rgba(42, 122, 226, 0.3); }
 
   .aud-q-item {
     border-color: #e0e0e0;

@@ -1263,6 +1263,29 @@
     return -1;
   }
 
+  // Some windows come back as a block of text with no word timings on it. Spacing
+  // the words out by their length is not the real cadence, but it keeps the line
+  // arriving a word at a time rather than landing all at once.
+  function txSpreadWords(seg) {
+    var parts = seg.t.split(/\s+/).filter(function(p) { return p; });
+    if (!parts.length) return [];
+
+    var total = 0;
+    parts.forEach(function(p) { total += p.length + 1; });
+    var span = Math.max(0.2, seg.e - seg.s);
+    var at = 0;
+
+    return parts.map(function(p) {
+      var s = seg.s + (at / total) * span;
+      at += p.length + 1;
+      return { t: p, s: s, e: seg.s + (at / total) * span };
+    });
+  }
+
+  // The whole line is laid out the moment its segment starts, and every word is
+  // invisible until the playhead reaches it. Holding back the ink rather than the
+  // element means the line wraps once, so the words already spoken stay put as the
+  // next one appears instead of being re-centred under it.
   function txCaption(i) {
     var line = el['aud-caption-line'];
     line.textContent = '';
@@ -1273,11 +1296,8 @@
     if (i < 0) return;
 
     var seg = txSegments[i];
-    if (!seg.w || !seg.w.length) {
-      line.textContent = seg.t;
-      return;
-    }
-    seg.w.forEach(function(word, k) {
+    var words = seg.w && seg.w.length ? seg.w : txSpreadWords(seg);
+    words.forEach(function(word, k) {
       var span = document.createElement('span');
       span.className = 'aud-cap-w';
       // Whisper hands back tokens with their own leading space, but not always.
@@ -1300,6 +1320,8 @@
     list.scrollTop = Math.max(0, row.offsetTop - list.clientHeight / 2 + row.offsetHeight / 2);
   }
 
+  // How much of the line has been heard: every word up to the playhead is showing,
+  // and the one being said now is lit.
   function txMarkWord(pos) {
     if (!txSpans.length) return;
     var at = -1;
@@ -1308,10 +1330,13 @@
       else break;
     }
     if (at === txActiveWord) return;
-    if (txActiveWord >= 0 && txSpans[txActiveWord]) {
-      txSpans[txActiveWord].node.classList.remove('is-now');
+
+    // Rewritten across the line rather than just the two words that changed, so a
+    // seek backwards takes the later words away again.
+    for (var k = 0; k < txSpans.length; k++) {
+      txSpans[k].node.classList.toggle('is-in', k <= at);
+      txSpans[k].node.classList.toggle('is-now', k === at);
     }
-    if (at >= 0) txSpans[at].node.classList.add('is-now');
     txActiveWord = at;
   }
 

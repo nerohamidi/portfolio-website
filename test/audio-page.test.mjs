@@ -225,6 +225,36 @@ check('the caption is split into word spans', w.document.querySelectorAll('.aud-
 check('the word under the playhead is marked', w.document.querySelectorAll('.aud-cap-w.is-now').length === 1);
 check('the matching transcript row is marked', w.document.querySelectorAll('.aud-tx-line.is-on').length === 1);
 
+// The line is laid out in full the moment it starts, but only the words already
+// heard are inked. Anything else and the caption would run ahead of the audio.
+const capWords = () => [...w.document.querySelectorAll('.aud-cap-w')];
+const shown = () => capWords().filter((s) => s.classList.contains('is-in')).map((s) => s.textContent).join('').trim();
+const lit = () => (capWords().find((s) => s.classList.contains('is-now')) || { textContent: '' }).textContent.trim();
+const seek = (sec) => {
+  const bar = w.document.getElementById('aud-seek');
+  bar.value = String(sec);
+  bar.dispatchEvent(new w.Event('input'));
+  w.__probe.txFollow();
+};
+
+check('only the first word is showing at the top of the line', shown() === 'the', JSON.stringify(shown()));
+check('but the whole line is already laid out', w.document.getElementById('aud-caption-line').textContent.replace(/\s+/g, ' ').trim() === 'the first line');
+seek(1.5);
+check('the second word arrives on its own timing', shown() === 'the first', JSON.stringify(shown()));
+check('and it is the one lit', lit() === 'first', JSON.stringify(lit()));
+seek(2.5);
+check('the third word follows', shown() === 'the first line', JSON.stringify(shown()));
+seek(1.5);
+check('seeking back takes the later words away again', shown() === 'the first', JSON.stringify(shown()));
+
+// The second cached line came back with no word timings on it. It is spread over
+// its own span rather than landing as one block.
+seek(13);
+check('a line with no word timings is still split into words', capWords().length === 3, String(capWords().length));
+check('and it opens on its first word alone', shown() === 'the', JSON.stringify(shown()));
+seek(14.9);
+check('by its end the whole line is showing', shown() === 'the second line', JSON.stringify(shown()));
+
 // Clicking a transcript row seeks.
 w.document.querySelectorAll('.aud-tx-seek')[1].click();
 check('clicking a line seeks to it', Number(w.document.getElementById('aud-seek').value) === 13, w.document.getElementById('aud-seek').value);
