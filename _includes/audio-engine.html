@@ -209,9 +209,54 @@
     return Math.round(hz) + '';
   }
 
+  // The second slider is a position, not a number to be used as it stands.
+  //
+  // For the low and high pass it runs linearly over decibels of resonance, which
+  // is already a logarithmic unit and needs no help. For the band types it runs
+  // logarithmically over Q, because Q is a width there and width is heard in
+  // octaves: a band at Q 10 and one at Q 20 are both a single frequency to the
+  // ear, while 0.5 to 1 is a whole octave of difference. Linear in Q spent half
+  // the travel on the first pair and a fifth of it on the second.
+  var Q_DB_MIN = 0.1;
+  var Q_DB_MAX = 20;
+  var Q_BAND_MIN = 0.2;
+  var Q_BAND_MAX = 20;
+  var Q_BAND_LOG_MIN = Math.log(Q_BAND_MIN);
+  var Q_BAND_LOG_SPAN = Math.log(Q_BAND_MAX) - Q_BAND_LOG_MIN;
+
+  function qSliderToValue(type, pos) {
+    if (!FILTER_IS_BAND[type]) return qSnap(type, Q_DB_MIN + (pos / 1000) * (Q_DB_MAX - Q_DB_MIN));
+    return qSnap(type, Math.exp(Q_BAND_LOG_MIN + (pos / 1000) * Q_BAND_LOG_SPAN));
+  }
+
+  // Snapped to the precision the readout prints, which makes three things one
+  // number: what the slider says, what the filter runs on, and what the link
+  // carries. A thousand positions over a hundredfold range land between the
+  // tenths otherwise, and a link would come back as a slightly different filter
+  // from the one that was shared.
+  function qSnap(type, v) {
+    if (!FILTER_IS_BAND[type]) return Math.round(v * 10) / 10;
+    return v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10;
+  }
+
+  function qValueToSlider(type, v) {
+    if (!(v > 0)) return 0;
+    var pos = FILTER_IS_BAND[type]
+      ? ((Math.log(v) - Q_BAND_LOG_MIN) / Q_BAND_LOG_SPAN) * 1000
+      : ((v - Q_DB_MIN) / (Q_DB_MAX - Q_DB_MIN)) * 1000;
+    return Math.max(0, Math.min(1000, Math.round(pos)));
+  }
+
+  // What the filter is actually running on, wherever the slider is sitting.
+  function filterQ() {
+    return qSliderToValue(filterType || 'lowpass', parseFloat(el['aud-filter-q'].value));
+  }
+
   // The value under the second slider, in the units that slider actually carries.
+  // Two decimals below 1, where a tenth is a fifth of the number.
   function formatFilterQ(type, q) {
-    return FILTER_IS_BAND[type] ? q.toFixed(1) : q.toFixed(1) + ' dB';
+    if (!FILTER_IS_BAND[type]) return q.toFixed(1) + ' dB';
+    return q < 1 ? q.toFixed(2) : q.toFixed(1);
   }
 
   // --- audio graph -----------------------------------------------------------
@@ -354,7 +399,7 @@
       if (!filterNode) filterNode = audioCtx.createBiquadFilter();
       filterNode.type = filterType.replace('-wide', '').replace('-narrow', '');
       filterNode.frequency.value = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
-      filterNode.Q.value = parseFloat(el['aud-filter-q'].value);
+      filterNode.Q.value = filterQ();
       stages.push({ input: filterNode, output: filterNode });
     }
     if (echoOn) stages.push(echoStage());
@@ -781,7 +826,7 @@
     var fs = sampleRate();
     var type = filterType.replace('-wide', '').replace('-narrow', '');
     var c = biquad(type, filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)),
-                   parseFloat(el['aud-filter-q'].value), fs);
+                   filterQ(), fs);
     for (i = 0; i < CURVE_N; i++) {
       var wn = 2 * Math.PI * curveHz[i] / fs;
       var c1 = Math.cos(wn), s1 = Math.sin(wn);
@@ -1194,8 +1239,7 @@
     el['aud-filter-q-name'].textContent = filterQLabel(type);
     el['aud-filter-freq-val'].textContent =
       formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
-    el['aud-filter-q-val'].textContent =
-      formatFilterQ(type, parseFloat(el['aud-filter-q'].value));
+    el['aud-filter-q-val'].textContent = formatFilterQ(type, filterQ());
   }
 
   function setFilter(type) {
@@ -1206,7 +1250,7 @@
     }
     el['aud-params'].classList.toggle('hidden', !filterType);
     if (filterType && FILTER_DEFAULT_Q[filterType] !== undefined) {
-      el['aud-filter-q'].value = FILTER_DEFAULT_Q[filterType];
+      el['aud-filter-q'].value = qValueToSlider(filterType, FILTER_DEFAULT_Q[filterType]);
     }
     syncFilterLabels();
     filterTouched = Date.now();
@@ -1231,7 +1275,7 @@
   });
 
   el['aud-filter-q'].addEventListener('input', function() {
-    var q = parseFloat(el['aud-filter-q'].value);
+    var q = filterQ();
     el['aud-filter-q-val'].textContent = formatFilterQ(filterType || 'lowpass', q);
     if (filterNode) filterNode.Q.value = q;
     filterTouched = Date.now();
@@ -1436,7 +1480,7 @@
     if (filterType) {
       var type = filterType.replace('-wide', '').replace('-narrow', '');
       var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
-      var q = parseFloat(el['aud-filter-q'].value);
+      var q = filterQ();
       var c = biquad(type, f0, q, fs);
       var atCut = responseDb(f0);
 
@@ -2431,7 +2475,10 @@
     parts.push('flt=' + [
       filterType ? FILTER_CODES[filterType] : 'off',
       el['aud-filter-freq'].value,
-      el['aud-filter-q'].value
+      // The Q itself, not where the slider is sitting. The two were the same
+      // number until the slider was remapped, and keeping the link on the value
+      // is what makes a link written either side of that still mean one thing.
+      String(+filterQ().toFixed(2))
     ].join(','));
     if (echoOn) {
       parts.push('ec=' + [el['aud-echo-time'].value, el['aud-echo-fb'].value,
@@ -2501,10 +2548,18 @@
     var flt = (s.flt || '').split(',');
     if (flt.length >= 3) {
       var want = flt[0] === 'off' ? null : (FILTER_TYPES[flt[0]] || null);
-      if (want) setFilter(want);
+      // setFilter is a toggle, so asking it for the chip that is already on turns
+      // the filter off. Only the page's own hash has ever reached here, once, with
+      // nothing on -- but a state applied twice has to land where the link says
+      // both times, not alternate.
+      if (want && filterType !== want) setFilter(want);
+      else if (!want && filterType) setFilter(filterType);
       // After the type: a chip with a default Q writes it on the way in.
       setSlider(el['aud-filter-freq'], flt[1]);
-      setSlider(el['aud-filter-q'], flt[2]);
+      // Back from the value the link carries to a position on this slider, under
+      // whichever chip is about to read it.
+      var q = parseFloat(flt[2]);
+      if (isFinite(q)) setSlider(el['aud-filter-q'], qValueToSlider(want || 'lowpass', q));
     }
 
     // Present only when the sender had the effect on, so absence is the off

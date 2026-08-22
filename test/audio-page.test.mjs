@@ -1013,6 +1013,13 @@ const qname = () => w.document.getElementById('aud-filter-q-name').textContent;
 const fval = () => w.document.getElementById('aud-filter-freq-val').textContent;
 const qval = () => w.document.getElementById('aud-filter-q-val').textContent;
 const chip = (win, type) => win.document.querySelector(`[data-filter="${type}"]`).click();
+const qpos = () => w.document.getElementById('aud-filter-q').value;
+const nodeQ = () => w.__probe.graph().filter.Q.value;
+const setQ = (pos) => {
+  const n = w.document.getElementById('aud-filter-q');
+  n.value = String(pos);
+  n.dispatchEvent(new w.Event('input', { bubbles: true }));
+};
 
 check('a low pass has a cut-off', fname() === 'Cutoff', fname());
 check('and its second slider is resonance, in the decibels the node reads', qname() === 'Resonance' && qval() === '1.0 dB', qname() + ' ' + qval());
@@ -1021,7 +1028,7 @@ check('the frequency is the one the slider is sitting on', fval() === '632 Hz', 
 chip(w, 'highpass');
 check('a high pass is named the same way', fname() === 'Cutoff' && qname() === 'Resonance', fname() + ' / ' + qname());
 
-check('and a chip without an arrival Q leaves the slider where it was', w.document.getElementById('aud-filter-q').value === '1', w.document.getElementById('aud-filter-q').value);
+check('and a chip without an arrival Q leaves the slider where it was', qpos() === '45' && qval() === '1.0 dB', qpos() + ' ' + qval());
 
 chip(w, 'bandpass');
 check('a band pass has a centre, not a cut-off', fname() === 'Centre', fname());
@@ -1029,13 +1036,13 @@ check('and a plain Q, with no decibels on it', qname() === 'Q' && qval() === '2.
 
 chip(w, 'notch-wide');
 check('band stop reads as a centre too', fname() === 'Centre' && qname() === 'Q', fname() + ' / ' + qname());
-check('and arrives on its own wide Q', qval() === '0.5', qval());
+check('and arrives on its own wide Q', qval() === '0.50', qval());
 
 chip(w, 'notch-narrow');
 check('the notch is the narrow one', qval() === '10.0', qval());
 
 chip(w, 'lowpass');
-check('coming back to a low pass puts the decibels back on', qname() === 'Resonance' && qval() === '10.0 dB', qval());
+check('coming back to a low pass reads the same position as decibels', qname() === 'Resonance' && qval() === '17.0 dB', qval());
 
 chip(w, 'lowpass');
 check('switching the filter off leaves the words alone rather than blanking them', fname() === 'Cutoff' && qname() === 'Resonance', fname() + ' / ' + qname());
@@ -1057,22 +1064,104 @@ check('and goes back out unchanged', /(^|&)flt=bp,500,1(&|$)/.test(w.__probe.enc
 
 w = boot(`#v=3&flt=lp,500,20&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
-check('a low pass sitting at the top of the slider', w.document.getElementById('aud-filter-q').value === '20' && qval() === '20.0 dB', qval());
+check('a low pass sitting at the top of the slider', qpos() === '1000' && qval() === '20.0 dB', qpos() + ' ' + qval());
 
 chip(w, 'bandpass');
-check('band pass does not inherit it', w.document.getElementById('aud-filter-q').value === '2', w.document.getElementById('aud-filter-q').value);
-check('and the node is filtering on the new one', w.__probe.graph().filter.Q.value === 2, String(w.__probe.graph().filter.Q.value));
+check('band pass does not inherit it', qval() === '2.0', qval());
+check('and the node is filtering on the new one', Math.abs(nodeQ() - 2) < 1e-9, String(nodeQ()));
 check('so the band is wide enough to hear through', w.__probe.graph().filter.frequency.value / 2 > 300,
   String(w.__probe.graph().filter.frequency.value / 2));
 
 chip(w, 'notch-narrow');
 chip(w, 'bandpass');
-check('and it arrives the same way from a notch', w.document.getElementById('aud-filter-q').value === '2', w.document.getElementById('aud-filter-q').value);
+check('and it arrives the same way from a notch', qval() === '2.0', qval());
 
 // A low pass still takes whatever it is handed: resonance in decibels is a filter
 // you can listen to anywhere on the slider, so there is nothing to rescue it from.
 chip(w, 'lowpass');
-check('a low pass keeps the Q it was handed', w.document.getElementById('aud-filter-q').value === '2' && qval() === '2.0 dB', qval());
+check('a low pass keeps the position it was handed', qpos() === '500' && qval() === '10.0 dB', qpos() + ' ' + qval());
+
+// --- 9d. how fast the second slider moves ------------------------------------
+//
+// Q is a width for the band types and width is heard in octaves, so a slider
+// linear in Q spent its top half on bands that all sound like one frequency:
+// halfway was Q 10, a band a seventh of an octave wide. It is logarithmic in Q
+// now, 0.2 to 20, so every quarter turn is about the same change to the ear.
+// The low and high pass are left linear, because decibels already are a log.
+
+w = boot(`#v=3&flt=bp,500,2&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+
+setQ(500);
+check('halfway along a band type is a band, not a spike', Math.abs(nodeQ() - 2) < 0.01, String(nodeQ()));
+
+const quarters = [0, 250, 500, 750, 1000].map((pos) => { setQ(pos); return nodeQ(); });
+check('the ends are the range', Math.abs(quarters[0] - 0.2) < 1e-6 && Math.abs(quarters[4] - 20) < 1e-6,
+  quarters[0] + ' .. ' + quarters[4]);
+const steps = quarters.slice(1).map((q, i) => q / quarters[i]);
+// Within the rounding: the value is snapped to the precision it is printed at,
+// so the ratios land a few tenths of a percent either side of the exact root.
+check('and every quarter turn is the same multiple of the one before',
+  steps.every((r) => Math.abs(r - Math.sqrt(10)) < 0.02), steps.map((r) => r.toFixed(3)).join(', '));
+
+// Which is the whole point: the widths those land on are evenly spaced too.
+const octaves = quarters.map((q) => {
+  const k = Math.sqrt(1 + 1 / (4 * q * q));
+  return Math.log2((k + 1 / (2 * q)) / (k - 1 / (2 * q)));
+});
+check('so no two stops on the slider are the same band', octaves.every((o, i) => i === 0 || octaves[i - 1] / o > 1.9),
+  octaves.map((o) => o.toFixed(2)).join(', '));
+
+// The low and high pass keep a linear slider, in decibels.
+chip(w, 'lowpass');
+setQ(500);
+check('halfway on a low pass is halfway up the decibels', qval() === '10.0 dB', qval());
+setQ(250);
+check('and a quarter of the way is a quarter of them', qval() === '5.1 dB', qval());
+
+// --- 9e. the link still means one thing --------------------------------------
+//
+// The third field of flt= has always been the Q itself, which happened to equal
+// the slider position until the slider was remapped. It is still the Q, so a
+// link written before that restores the filter it described rather than a
+// position on a slider that has moved underneath it.
+
+w = boot(`#v=3&flt=nt,500,10&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('a notch link from before the remap restores its Q', qval() === '10.0' && Math.abs(nodeQ() - 10) < 0.01, qval());
+check('from a position it never named', qpos() === '849', qpos());
+check('and goes back out as the same link', /(^|&)flt=nt,500,10(&|$)/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+w = boot(`#v=3&flt=bs,500,0.5&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('and a wide band stop survives the trip too', qval() === '0.50' && /(^|&)flt=bs,500,0.5(&|$)/.test(w.__probe.encodeState()),
+  qval() + ' ' + w.__probe.encodeState());
+
+// A resonance in decibels was never a Q and still is not.
+w = boot(`#v=3&flt=lp,500,6&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('a low pass link is decibels at both ends', qval() === '6.0 dB' && /(^|&)flt=lp,500,6(&|$)/.test(w.__probe.encodeState()),
+  qval() + ' ' + w.__probe.encodeState());
+
+// Dragging anywhere and writing the link back has to land on the same place.
+w = boot(`#v=3&flt=bp,500,2&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+const carriedQ = (link) => parseFloat((/flt=[^,]+,[^,]+,([^&]+)/.exec(link) || [])[1]);
+let drift = [], unstable = [];
+[0, 7, 123, 349, 500, 661, 850, 993, 1000].forEach((pos) => {
+  setQ(pos);
+  const link = w.__probe.encodeState();
+  const was = nodeQ();
+  if (Math.abs(carriedQ(link) - was) > 1e-9) drift.push(pos + ': link says ' + carriedQ(link) + ', node is ' + was);
+  w.__probe.applyState(w.__probe.decodeState('#' + link));
+  if (Math.abs(nodeQ() - was) > 1e-9) drift.push(pos + ': came back as ' + nodeQ());
+  // The position may settle a step or two away, so the link has to stop moving
+  // on the second pass rather than creeping every time it is reshared.
+  const again = w.__probe.encodeState();
+  if (again !== link) unstable.push(pos + ': ' + carriedQ(link) + ' -> ' + carriedQ(again));
+});
+check('a link carries exactly what the filter is running on', drift.length === 0, drift.join(' | '));
+check('and resharing it does not move it', unstable.length === 0, unstable.join(' | '));
 
 // --- 10. the math panel ------------------------------------------------------
 //
