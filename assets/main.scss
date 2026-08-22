@@ -2069,6 +2069,29 @@ body.light-mode {
   min-width: 34px;
 }
 
+// Under the transport rather than in a settings panel: it decides what the
+// buttons above it do the moment the page is put away, and it is the answer to
+// a question people only ask while something is playing.
+.aud-bg-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-top: 1px solid #333;
+  padding-top: 12px;
+}
+
+.aud-bg-tip {
+  margin-left: auto;
+  font-size: 11px;
+  color: #777;
+
+  @media screen and (max-width: 600px) {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+}
+
 // --- panels ---
 
 .aud-panel {
@@ -2716,6 +2739,9 @@ body.light-mode {
 
   .aud-tx-status { color: #666; }
   .aud-tx-tip { color: #888; }
+
+  .aud-bg-bar { border-top-color: #e4e4e4; }
+  .aud-bg-tip { color: #888; }
 }
 
 // ---------------------------------------------------------------------------

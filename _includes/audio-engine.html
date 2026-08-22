@@ -91,7 +91,7 @@
     'aud-key', 'aud-danger', 'aud-del-btn', 'aud-del-note', 'aud-del-pass',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
-    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg'
+    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -137,23 +137,45 @@
   var playing = false;
   var loadToken = 0;        // guards against a slow load finishing after a newer one
 
-  // The same track, a second time, as bytes a media element can play.
+  // --- what happens when the page goes away ---------------------------------
   //
-  // iOS Safari moves an AudioContext to `interrupted` the moment Safari is
-  // backgrounded or the screen locks: the spec has a state for it, and there is
-  // no flag that turns it off. Web Audio therefore cannot play while the page is
-  // hidden, no matter how the graph is built. A plain <audio> element can,
-  // because it runs on the platform's own audio session.
+  // One switch the listener owns, and one fact about the platform. Between them
+  // they decide the whole of it:
   //
-  // So the track is handed over at the door. Going out, the buffer source stops
-  // and the element picks the track up at the same instant, unrouted, straight
-  // to the hardware. Coming back, the element pauses and Web Audio takes it
-  // again from wherever the element reached. The effects and the spectrum drop
-  // out while the page is hidden, which costs nothing anyone can see or hear:
-  // the context they live in is suspended either way, and the alternative is
-  // silence.
+  //   off                  playback pauses at the door and picks up where it
+  //                        left off on the way back in.
+  //   on, graph survives   nothing happens at all. A desktop browser keeps an
+  //                        AudioContext running in a hidden tab, so the source,
+  //                        the effects and the level carry on exactly as they
+  //                        were. This is the common case, and doing nothing to
+  //                        it is what makes it seamless.
+  //   on, graph does not   the track is handed to a bare media element.
+  //
+  // Only iOS needs that third case. Safari there moves an AudioContext to
+  // `interrupted` the moment it is backgrounded or the screen locks: the spec
+  // has a state for it and no flag turns it off, so Web Audio cannot play while
+  // the page is hidden no matter how the graph is built. A plain <audio> element
+  // can, because it runs on the platform's own audio session rather than ours.
+  //
+  // Handing over is not free. The element plays the track unrouted, so the
+  // effects and the spectrum drop out and the level jumps to whatever the track
+  // is without them — audible as a blip and then a louder track, which is
+  // exactly why it is now reserved for the one platform with no alternative.
+  var bgAllowed = true;     // "Continue in the background"
   var bgUrl = null;         // object URL for the current track, or null
   var bgActive = false;     // the element, not the graph, is the one playing
+  var bgPrimed = false;     // the element has played once from a real gesture
+  var pausedByHide = false; // we paused it at the door, so we resume it on return
+
+  // iPhone and iPad, including the iPad that calls itself a Mac. Every browser
+  // on iOS is WebKit underneath and inherits the interruption, so which one it
+  // is does not come into it. A guess, but only ever the opening one: a context
+  // that is interrupted out from under a hidden page corrects it below.
+  var handoffNeeded = (function() {
+    var ua = navigator.userAgent || '';
+    if (/iPad|iPhone|iPod/.test(ua)) return true;
+    return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+  })();
 
   var PLAY_PATH = 'M8 5.5v13l11-6.5z';
   var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
@@ -268,6 +290,15 @@
       gainNode.gain.value = parseFloat(el['aud-volume'].value);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
+      // A browser that takes the context away from a hidden page has just said
+      // it needs the handoff, whatever the user agent claimed. Recorded rather
+      // than acted on: by the time this fires the page is already gone, and the
+      // fix belongs to the next time it leaves.
+      audioCtx.onstatechange = function() {
+        if (document.hidden && playing && !bgActive && audioCtx.state !== 'running') {
+          handoffNeeded = true;
+        }
+      };
       rebuildChain();
     }
     // Creation is allowed without a gesture; resuming is not, so this is called
@@ -451,6 +482,8 @@
     bgRelease();
     audioBuffer = null;
     offsetSec = 0;
+    // Tearing the track down settles any debt the door left owing on it.
+    pausedByHide = false;
     setPlaying(false);
     txReset();
     resetTrackUi(name);
@@ -564,6 +597,37 @@
     } catch (e) { bgUrl = null; }
   }
 
+  // iOS will not let a media element begin playing unless that element has
+  // played once from a real gesture, and the handoff happens on a
+  // visibilitychange, which is not one. So the element is unlocked here instead,
+  // on the click that starts the graph: a muted play, and a pause the moment it
+  // is granted. Approval is per element and outlives the src, so once is enough.
+  function bgPrime() {
+    // Nothing to unlock where the element is never going to be asked to play:
+    // a desktop tab would be spinning up the platform's media stack, and
+    // decoding the blob a second time, for a handoff that will not happen.
+    if (bgPrimed || !bgAllowed || !handoffNeeded || !bgUrl) return;
+    var node = el['aud-bg'];
+    bgPrimed = true;
+    var undo = function() {
+      // Unless the page left in the meantime and the element is now the one
+      // playing the track for real.
+      if (!bgActive) {
+        try { node.pause(); node.currentTime = 0; } catch (e) {}
+      }
+      node.muted = false;
+    };
+    try {
+      node.muted = true;
+      var p = node.play();
+      if (p && p.then) p.then(undo, function() { node.muted = false; bgPrimed = false; });
+      else undo();
+    } catch (e) {
+      node.muted = false;
+      bgPrimed = false;
+    }
+  }
+
   function bgSync() {
     var node = el['aud-bg'];
     try {
@@ -580,6 +644,9 @@
     if (!bgUrl) return false;
     var node = el['aud-bg'];
     bgActive = true;
+    // An unlocking play from a moment ago may still be muted and waiting on its
+    // promise; this is the real one.
+    node.muted = false;
     bgSync();
 
     // A refused play leaves the page claiming to be playing something that is
@@ -613,10 +680,11 @@
     return at;
   }
 
-  // The one entry point the rest of the transport calls: Web Audio while the
-  // page is on screen, the element while it is not.
+  // The one entry point the rest of the transport calls. The element only ever
+  // gets the track on a hidden page that has asked to keep playing and cannot do
+  // it on the graph; every other case is Web Audio, effects and all.
   function startPlayback(sec) {
-    if (document.hidden && bgUrl) { bgStart(sec); return; }
+    if (document.hidden && bgAllowed && handoffNeeded && bgUrl) { bgStart(sec); return; }
     startAt(sec);
   }
 
@@ -668,6 +736,7 @@
     try {
       if (navigator.mediaSession) navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
     } catch (e) {}
+    nowPlayingPosition();
     el['aud-play-icon'].setAttribute('d', on ? PAUSE_PATH : PLAY_PATH);
     el['aud-play'].setAttribute('aria-label', on ? 'Pause' : 'Play');
     el['aud-play'].classList.toggle('is-on', on);
@@ -707,6 +776,34 @@
       ? function() { playIndex(current + 1, playing); } : null);
   }
 
+  // Where the lock screen's own scrubber sits, and how fast it should be
+  // running. The OS carries it forward on its own between these, so it is only
+  // worth saying when the position jumps: a start, a seek, a stop.
+  function nowPlayingPosition() {
+    var ms = navigator.mediaSession;
+    if (!ms || !ms.setPositionState || !audioBuffer) return;
+    try {
+      ms.setPositionState({
+        duration: audioBuffer.duration,
+        playbackRate: rate(),
+        position: Math.max(0, Math.min(position(), audioBuffer.duration))
+      });
+    } catch (e) {}
+  }
+
+  // The element can be stopped by things that are not this page: the lock
+  // screen, a phone call, another app taking the audio session. bgStop clears
+  // bgActive before it pauses, so what reaches here is only ever somebody else's
+  // decision, and the page had better agree with it rather than come back
+  // claiming to be playing a track that stopped ten minutes ago.
+  el['aud-bg'].addEventListener('pause', function() {
+    var node = el['aud-bg'];
+    if (!bgActive || node.ended) return;
+    bgActive = false;
+    offsetSec = node.currentTime || 0;
+    setPlaying(false);
+  });
+
   // The track ran out while the element had it. Play-through still applies, and
   // the next track will be handed straight back to the element, because
   // startPlayback asks where the page is rather than assuming.
@@ -718,15 +815,24 @@
     if (playThrough && current >= 0 && current < queue.length - 1) playIndex(current + 1, true);
   });
 
-  // The door. Going out: the graph stops and the element picks the track up at
-  // the same instant. Coming back: the element stops and the graph takes it from
-  // wherever the element reached.
-  //
-  // Nothing here starts audio that was not already playing. Leaving a paused
-  // page leaves it paused.
+  // The door. Three ways through it, one per line of the policy above, and one
+  // rule that outranks all of them: nothing here starts audio that was not
+  // already playing. Leaving a paused page leaves it paused.
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) {
-      if (!playing || bgActive || !bgUrl) return;
+      if (!playing) return;
+
+      // Asked not to follow them out.
+      if (!bgAllowed) {
+        pausePlayback();
+        pausedByHide = true;
+        return;
+      }
+
+      // The graph plays on by itself here, so the kindest handoff is none: no
+      // gap, no unrouted track, no jump in level. Most browsers land on this.
+      if (!handoffNeeded || bgActive || !bgUrl) return;
+
       var at = position();
       stopSource();
       // setPlaying is left alone on purpose: the transport is changing hands,
@@ -737,6 +843,13 @@
         offsetSec = at;
         setPlaying(false);
       }
+      return;
+    }
+
+    // Back in. Whatever we stopped at the door, we start again.
+    if (pausedByHide) {
+      pausedByHide = false;
+      if (!playing && audioBuffer) startPlayback(offsetSec);
       return;
     }
 
@@ -1189,8 +1302,12 @@
     if (!audioBuffer) return;
     ensureCtx();
     if (playing) {
+      pausedByHide = false;
       pausePlayback();
     } else {
+      // Called from the play button and from the lock screen, both of which are
+      // gestures as far as the element is concerned.
+      bgPrime();
       startPlayback(offsetSec >= audioBuffer.duration - 0.02 ? 0 : offsetSec);
     }
   }
@@ -1198,6 +1315,7 @@
   el['aud-play'].addEventListener('click', togglePlay);
 
   function stopPlayback() {
+    pausedByHide = false;
     if (bgActive) bgStop();
     else stopSource();
     offsetSec = 0;
@@ -1214,11 +1332,41 @@
     el['aud-seek'].value = to;
     el['aud-current'].textContent = formatTime(to);
     if (playing) startPlayback(to);
-    else offsetSec = to;
+    else { offsetSec = to; nowPlayingPosition(); }
   }
 
   el['aud-seek'].addEventListener('input', function() {
     seekTo(parseFloat(el['aud-seek'].value) || 0);
+  });
+
+  // --- continue in the background --------------------------------------------
+  //
+  // A property of this browser on this device rather than of the sound, so it is
+  // remembered here and stays out of the share link: what a listener wants a
+  // background tab to do is not something the person who made the link decides.
+  var BG_STORE = 'aud-background';
+
+  function bgTipText() {
+    if (!bgAllowed) return 'pauses when you switch away, and picks up where it left off';
+    if (handoffNeeded) return 'keeps playing when you leave &middot; effects and the spectrum wait for you';
+    return 'keeps playing when you switch tabs or lock the screen';
+  }
+
+  function setBackground(on, remember) {
+    bgAllowed = !!on;
+    el['aud-bg-on'].checked = bgAllowed;
+    el['aud-bg-tip'].innerHTML = bgTipText();
+    if (!bgAllowed) pausedByHide = false;
+    if (remember) {
+      try { window.localStorage.setItem(BG_STORE, bgAllowed ? '1' : '0'); } catch (e) {}
+    }
+  }
+
+  el['aud-bg-on'].addEventListener('change', function() {
+    setBackground(el['aud-bg-on'].checked, true);
+    // Ticking it is itself a gesture, and the element may never get another one
+    // before the page is put away.
+    if (bgAllowed) bgPrime();
   });
 
   el['aud-volume'].addEventListener('input', function() {
@@ -1755,6 +1903,8 @@
     bgRelease();
     audioBuffer = null;
     offsetSec = 0;
+    // Tearing the track down settles any debt the door left owing on it.
+    pausedByHide = false;
     setPlaying(false);
     txReset();
     loadToken++;
@@ -2986,6 +3136,14 @@
   // --- boot ------------------------------------------------------------------
 
   el['aud-vol-val'].textContent = Math.round(parseFloat(el['aud-volume'].value) * 100) + '%';
+  (function restoreBackground() {
+    var saved = null;
+    try { saved = window.localStorage.getItem(BG_STORE); } catch (e) {}
+    // On unless it has been turned off, which is the answer that needs no
+    // explaining: audio that stops because you looked at another tab is the
+    // surprise, not audio that carries on.
+    setBackground(saved !== '0', false);
+  })();
   syncFilterLabels();
   el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
   el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);

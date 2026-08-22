@@ -32,6 +32,9 @@ const decay = (n) => {
 const ID_A = 'AAAAAAAAAAAAAAAAAAAAAA';
 const ID_B = 'BBBBBBBBBBBBBBBBBBBBBB';
 
+// Survives a boot, the way a real browser's localStorage survives a reload.
+const persisted = new Map();
+
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => {
   if (cond) { pass++; console.log('  PASS  ' + name); }
@@ -59,7 +62,9 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     txCut: txCut,
     state: function() {
       return { queue: queue, current: current, txSegments: txSegments, txNext: txNext, txDone: txDone,
-        txOn: txOn, playing: playing, offsetSec: offsetSec, bgActive: bgActive };
+        txOn: txOn, playing: playing, offsetSec: offsetSec, bgActive: bgActive,
+        bgAllowed: bgAllowed, handoffNeeded: handoffNeeded, pausedByHide: pausedByHide,
+        bgPrimed: bgPrimed, hasSource: !!bufSource };
     },
     seekTo: seekTo,
     effects: function() {
@@ -74,12 +79,29 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
   draw();
 })();`);
 
-function boot(hash, fetchImpl) {
+// The default agent is a desktop one, where an AudioContext survives a hidden
+// tab. IPHONE_UA boots the other branch: the one platform that interrupts it.
+const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+// A Mac, which says "Macintosh" like an iPad does and is told apart from one by
+// having no touch points.
+const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+
+function boot(hash, fetchImpl, userAgent) {
   const dom = new JSDOM(
     '<!doctype html><body class="dark-mode"><div id="wrap"></div></body>',
     { url: 'https://nerohamidi.github.io/portfolio-website/playroom/audio/' + (hash || ''), runScripts: 'outside-only' },
   );
   const w = dom.window;
+  // Set here rather than through jsdom's own option, which has moved between
+  // versions. maxTouchPoints comes with it because the pair is what tells an
+  // iPad apart from the Mac whose user agent it borrows.
+  if (userAgent) {
+    Object.defineProperty(w.navigator, 'userAgent', { value: userAgent, configurable: true });
+    Object.defineProperty(w.navigator, 'maxTouchPoints', {
+      value: /iPad|iPhone|iPod/.test(userAgent) ? 5 : 0,
+      configurable: true,
+    });
+  }
   w.document.getElementById('wrap').innerHTML = markup;
 
   // --- Web Audio, reduced to what the engine touches ---
@@ -140,8 +162,15 @@ function boot(hash, fetchImpl) {
   // one. Stubbed so it is inert and quiet, and recorded so the handoff tests can
   // see what it was asked to do.
   Object.defineProperty(w.document, 'hidden', { value: false, configurable: true });
-  w.HTMLMediaElement.prototype.play = function () { this.playing = true; return Promise.resolve(); };
-  w.HTMLMediaElement.prototype.pause = function () { this.playing = false; };
+  w.HTMLMediaElement.prototype.play = function () {
+    this.playing = true;
+    this.everPlayed = true;
+    return Promise.resolve();
+  };
+  w.HTMLMediaElement.prototype.pause = function () {
+    this.playing = false;
+    this.dispatchEvent(new w.Event('pause'));
+  };
   w.HTMLMediaElement.prototype.load = function () {};
   // Real browsers carry this, and the engine only switches it off where it finds
   // it, so the mock has to have it for that path to be exercised at all.
@@ -158,6 +187,17 @@ function boot(hash, fetchImpl) {
   // loop would spin the run forever, so it alone is left un-scheduled.
   w.requestAnimationFrame = (fn) => { if (fn.name !== 'draw') setTimeout(() => fn(0), 0); return 0; };
   w.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => () => ({}) });
+  // jsdom gives each window its own storage, and a preference that survives the
+  // page is exactly what the background toggle claims to be. One store across
+  // boots is what "the next visit" means here.
+  Object.defineProperty(w, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k) => (persisted.has(k) ? persisted.get(k) : null),
+      setItem: (k, v) => persisted.set(k, String(v)),
+      removeItem: (k) => persisted.delete(k),
+    },
+  });
   w.fetch = fetchImpl || (() => Promise.reject(new Error('no fetch in this test')));
   w.URL.createObjectURL = () => 'blob:x';
   w.URL.revokeObjectURL = () => {};
@@ -1244,26 +1284,65 @@ check('and offers no line for a stage that is off', !/Echo/.test(mathText) && !/
 
 // --- 11. leaving the page ----------------------------------------------------
 //
-// iOS Safari interrupts an AudioContext the moment Safari is backgrounded, so
-// Web Audio cannot play there and a media element has to take the track over.
-// These drive the handoff in both directions.
+// One switch and one platform fact decide all of this. A desktop tab keeps its
+// AudioContext running while hidden, so the right move there is to do nothing;
+// iOS Safari interrupts it, so the track has to be handed to a media element.
+// These drive every branch of that.
 
 const hide = (win, hidden) => {
   Object.defineProperty(win.document, 'hidden', { value: hidden, configurable: true });
   win.document.dispatchEvent(new win.Event('visibilitychange'));
 };
+const DEMO = '#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d';
 
-w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+// --- the desktop branch: the graph is left alone -----------------------------
+
+w = boot(DEMO, () => res({ chunks: [] }), MAC_UA);
 await settle();
 let bg = w.document.getElementById('aud-bg');
 
-check('the track is also kept as bytes an element can play', /^blob:/.test(bg.src), bg.src);
+check('the toggle is on by default', w.document.getElementById('aud-bg-on').checked && w.__probe.state().bgAllowed);
+check('a Mac is not mistaken for an iPad', w.__probe.state().handoffNeeded === false);
+check('and the tip says so', /switch tabs/.test(w.document.getElementById('aud-bg-tip').textContent),
+  w.document.getElementById('aud-bg-tip').textContent);
+check('the track is still kept as bytes an element could play', /^blob:/.test(bg.src), bg.src);
+
 w.document.getElementById('aud-play').click();
-check('playing starts on the graph while the page is visible', w.__probe.graph().gain.out.length > 0 && !bg.playing);
+await settle();
+check('playing starts on the graph while the page is visible', w.__probe.state().hasSource && !bg.playing);
+check('and the element is left untouched, because it will never be needed', !bg.everPlayed);
+
+w.__probe.seekTo(30);
+hide(w, true);
+check('leaving a desktop tab does not hand the track over', w.__probe.state().bgActive === false && !bg.playing);
+check('the buffer source is still the one playing, so nothing blips and nothing gets louder',
+  w.__probe.state().hasSource === true);
+check('and the page still reads as playing', w.__probe.state().playing === true);
+
+hide(w, false);
+check('coming back changes nothing either', w.__probe.state().playing === true && w.__probe.state().bgActive === false);
+check('and the position was never rewound', Math.abs(w.__probe.state().offsetSec - 30) < 0.5,
+  String(w.__probe.state().offsetSec));
+
+// --- the iOS branch: the element takes the track -----------------------------
+
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+bg = w.document.getElementById('aud-bg');
+check('an iPhone is marked as needing the handoff', w.__probe.state().handoffNeeded === true);
+check('and the tip warns the effects drop out', /effects/.test(w.document.getElementById('aud-bg-tip').textContent),
+  w.document.getElementById('aud-bg-tip').textContent);
+
+w.document.getElementById('aud-play').click();
+await settle();
+check('the play button unlocks the element for later, muted', bg.everPlayed === true && w.__probe.state().bgPrimed);
+check('and leaves it paused and audible for when it is really needed', !bg.playing && bg.muted === false);
+check('while the graph is the one actually playing', w.__probe.graph().gain.out.length > 0);
 
 w.__probe.seekTo(30);
 hide(w, true);
 check('leaving the page hands the track to the element', bg.playing === true);
+check('and takes it off the graph', w.__probe.state().hasSource === false);
 check('at the position the graph had reached', Math.abs(bg.currentTime - 30) < 0.5, String(bg.currentTime));
 check('and the page still reads as playing', w.__probe.state().playing === true);
 
@@ -1275,21 +1354,103 @@ check('and picks the graph up where the element got to', Math.abs(w.__probe.stat
 check('still playing', w.__probe.state().playing === true);
 
 // A paused page is left paused: nothing here starts audio nobody asked for.
-w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
 await settle();
 bg = w.document.getElementById('aud-bg');
 hide(w, true);
 check('leaving a paused page starts nothing', bg.playing !== true && w.__probe.state().playing === false);
 
 // The element carries the volume and the varispeed across with it.
-w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.4&p=7&t=d`, () => res({ chunks: [] }));
+w = boot('#v=3&flt=off,500,1&viz=1,1&vol=0.4&p=7&t=d', () => res({ chunks: [] }), IPHONE_UA);
 await settle();
 bg = w.document.getElementById('aud-bg');
 w.document.getElementById('aud-play').click();
+await settle();
 hide(w, true);
+check('the handoff happened, so the rest of this is about the element', bg.playing === true);
 check('the element takes the volume with it', Math.abs(bg.volume - 0.4) < 0.001, String(bg.volume));
 check('and the pitch shift, as a rate', Math.abs(bg.playbackRate - Math.pow(2, 7 / 12)) < 0.001, String(bg.playbackRate));
 check('with pitch preservation off, so it varispeeds like the buffer source', bg.preservesPitch === false);
+
+// And keeps following the slider once it has it, since the gain node it used to
+// go through is no longer in the path.
+const vol = w.document.getElementById('aud-volume');
+vol.value = '0.9';
+vol.dispatchEvent(new w.Event('input'));
+check('a volume change while away reaches the element', Math.abs(bg.volume - 0.9) < 0.001, String(bg.volume));
+
+// Something outside the page stopping the element is a decision, not a glitch.
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+bg = w.document.getElementById('aud-bg');
+w.document.getElementById('aud-play').click();
+await settle();
+w.__probe.seekTo(12);
+hide(w, true);
+check('the element has the track', w.__probe.state().bgActive === true && bg.playing);
+
+bg.currentTime = 25;
+bg.pause();
+check('a pause from outside the page is believed', w.__probe.state().playing === false &&
+  w.__probe.state().bgActive === false);
+check('and the position it stopped at is kept', Math.abs(w.__probe.state().offsetSec - 25) < 0.5,
+  String(w.__probe.state().offsetSec));
+
+hide(w, false);
+check('so coming back does not start it again behind the listener', w.__probe.state().playing === false);
+check('with the track still where it was left', Math.abs(w.__probe.state().offsetSec - 25) < 0.5,
+  String(w.__probe.state().offsetSec));
+
+// --- the toggle off: pause at the door, resume on the way in -----------------
+
+const setBg = (win, on) => {
+  const box = win.document.getElementById('aud-bg-on');
+  box.checked = on;
+  box.dispatchEvent(new win.Event('change'));
+};
+
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+bg = w.document.getElementById('aud-bg');
+setBg(w, false);
+check('turning it off is remembered', w.__probe.state().bgAllowed === false);
+check('and the tip changes to match', /picks up/.test(w.document.getElementById('aud-bg-tip').textContent),
+  w.document.getElementById('aud-bg-tip').textContent);
+
+w.document.getElementById('aud-play').click();
+await settle();
+w.__probe.seekTo(18);
+hide(w, true);
+check('leaving now pauses instead of handing over', w.__probe.state().playing === false && !bg.playing);
+check('at the position it had reached', Math.abs(w.__probe.state().offsetSec - 18) < 0.5,
+  String(w.__probe.state().offsetSec));
+check('and it is remembered as ours to undo', w.__probe.state().pausedByHide === true);
+
+hide(w, false);
+check('coming back picks it up again', w.__probe.state().playing === true);
+check('from where it stopped', Math.abs(w.__probe.state().offsetSec - 18) < 0.5, String(w.__probe.state().offsetSec));
+check('and the debt is cleared', w.__probe.state().pausedByHide === false);
+
+// Pausing by hand while away is the listener's decision, not ours to undo.
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+setBg(w, false);
+w.document.getElementById('aud-play').click();
+await settle();
+hide(w, true);
+w.document.getElementById('aud-stop').click();
+hide(w, false);
+check('a stop while away is not undone on return', w.__probe.state().playing === false &&
+  w.__probe.state().pausedByHide === false);
+
+// The choice outlives the page.
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+check('the stored choice is read back on the next visit', w.__probe.state().bgAllowed === false);
+setBg(w, true);
+w = boot(DEMO, () => res({ chunks: [] }), IPHONE_UA);
+await settle();
+check('and so is turning it back on', w.__probe.state().bgAllowed === true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

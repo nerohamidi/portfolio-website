@@ -33,10 +33,11 @@
     <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB each &middot; drop several to build a playlist &middot; nothing leaves your browser until you make a link or turn on the transcript</p>
   </div>
 
-  <!-- The transport that takes over when the page is hidden. iOS Safari
-       interrupts an AudioContext the moment Safari is backgrounded, so Web
-       Audio cannot keep playing there; a bare media element can, because it is
-       the platform's own audio session rather than ours. -->
+  <!-- The transport of last resort. Only iOS needs it: Safari interrupts an
+       AudioContext the moment it is backgrounded, so Web Audio cannot keep
+       playing there, while a bare media element can because it runs on the
+       platform's own audio session rather than ours. Everywhere else the graph
+       survives a hidden page and this element stays out of the way. -->
   <audio id="aud-bg" preload="auto" playsinline></audio>
 
   <!-- Player -->
@@ -95,6 +96,14 @@
         <input type="range" id="aud-volume" class="aud-volume" min="0" max="1" value="0.7" step="0.01" aria-label="Volume">
         <span class="aud-vol-val" id="aud-vol-val">70%</span>
       </div>
+    </div>
+
+    <div class="aud-bg-bar">
+      <label class="aud-check">
+        <input type="checkbox" id="aud-bg-on" checked>
+        <span>Continue in the background</span>
+      </label>
+      <span class="aud-bg-tip" id="aud-bg-tip"></span>
     </div>
   </section>
 
