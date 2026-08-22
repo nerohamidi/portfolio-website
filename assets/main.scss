@@ -3359,3 +3359,61 @@ body.light-mode {
 
   .aud-simple-tag { color: #888; }
 }
+
+// --- separating into sources ---
+//
+// Offline work, so unlike everything else on the page it has a button, a bar and
+// something to say for itself.
+
+.aud-sep {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aud-sep-run {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.aud-sep-status {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12px;
+  color: #888;
+  line-height: 1.5;
+}
+
+.aud-sep-bar {
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+
+  i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background: #6cb6ff;
+    transition: width 0.2s linear;
+  }
+}
+
+// A strip whose source has not been worked out yet. Still readable, plainly not
+// yet doing anything.
+.aud-stem.is-idle {
+  opacity: 0.5;
+
+  .aud-stem-meter { visibility: hidden; }
+}
+
+body.light-mode {
+  .aud-sep-status { color: #666; }
+  .aud-sep-bar {
+    background: rgba(0, 0, 0, 0.08);
+    i { background: #2a7ae2; }
+  }
+}

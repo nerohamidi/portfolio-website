@@ -74,6 +74,28 @@
   ];
   var SPLIT_F1 = 200;
   var SPLIT_F2 = 6000;
+
+  // The other way to cut a track up: not by where a sound sits, but by what it
+  // is. Three classical measurements agree or disagree per time-frequency bin,
+  // and the four stems that fall out are the four a mixing engineer would name.
+  // The work is in the worker; see audio-separate.html for what it does.
+  //
+  // It is offline because two of the three cues need the whole track: a median
+  // over four hundred milliseconds cannot be taken causally, and a model of what
+  // repeats cannot be built before the repeats have happened.
+  var SOURCE_STEMS = [
+    { code: 'vx', name: 'Vocals', what: 'harmonic, unrepeating, centred, in a voice\u2019s range' },
+    { code: 'dr', name: 'Drums',  what: 'whatever is smooth across frequency rather than across time' },
+    { code: 'bs', name: 'Bass',   what: 'the harmonic part below the crossover' },
+    { code: 'ot', name: 'Other',  what: 'the rest \u2014 the track minus the other three, exactly' }
+  ];
+  // Four channels of float at the track's own rate, held for as long as the
+  // stems are loaded. Long enough and that is more memory than a phone will give
+  // a page, so there is a ceiling and it says so rather than crashing.
+  var SEP_MAX_SEC = 12 * 60;
+  var SEP_WARN_SEC = 6 * 60;
+  // The worker's window, repeated here only so the math panel can quote it.
+  var N_SEP = 2048;
   // Web Audio reads a low or high pass's Q as decibels of resonance rather than
   // as a quality factor, so the Butterworth alignment the crossover is built out
   // of has to be asked for as -3.01 dB and not as 0.707. The allpass that puts
@@ -160,7 +182,10 @@
     'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
     'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
     'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
-    'aud-target', 'aud-target-chips'
+    'aud-target', 'aud-target-chips',
+    'aud-split-how', 'aud-split-note', 'aud-by-bands', 'aud-by-sources',
+    'aud-sep', 'aud-sep-width', 'aud-sep-width-val', 'aud-sep-voice', 'aud-sep-voice-val',
+    'aud-sep-go', 'aud-sep-status', 'aud-sep-bar', 'aud-sep-fill', 'aud-tx-tip'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -171,6 +196,10 @@
 
   var audioCtx = null;
   var gainNode = null;
+  // The stems' own volume, kept at whatever the slider says so the two paths
+  // stay level with each other. One slider, two nodes, because the fourth stem
+  // is a subtraction between them and a subtraction only works at equal gain.
+  var sepGain = null;
   var analyser = null;
 
   // --- racks -----------------------------------------------------------------
@@ -220,7 +249,21 @@
   // to be looking, not part of the sound.
   var target = -1;
 
-  var split = { on: false, f1Pos: 0, f2Pos: 0, nodes: null };
+  // `mode` says which cut is in force; the four mixer strips are the same four
+  // either way, and so are their racks. A strip is a strip: what feeds it
+  // changes, and the filter you put on it stays where you put it.
+  var split = { on: false, mode: 'bands', f1Pos: 0, f2Pos: 0, nodes: null };
+
+  // The separated track: four channels at the original rate, in the order the
+  // stems are declared -- vocals, drums left, drums right, bass. The fourth stem
+  // is not in here. It is the track minus the other three, made with three
+  // inverting gains in the graph, which costs nothing and is exact.
+  var sepBuffer = null;
+  var sepFor = '';        // which track it was made from, so a change invalidates it
+  var sepBusy = false;
+  var sepAsked = false;   // a link asked for source mode, and cannot carry the stems
+  var sepWorker = null;
+  var sepNodes = null;
 
   var simpleMode = false;
   var mathOn = false;
@@ -234,6 +277,39 @@
   function rackAt(t) { return t < 0 ? master : stems[t].rack; }
   function rack() { return rackAt(target); }
 
+  // Four strips either way, named for whatever is feeding them.
+  function stemSpecs() { return split.mode === 'sources' ? SOURCE_STEMS : STEMS; }
+
+  function nameStems() {
+    var specs = stemSpecs();
+    stems.forEach(function(st, i) {
+      st.code = specs[i].code;
+      st.name = specs[i].name;
+      st.what = specs[i].what;
+      st.rack.label = specs[i].name;
+    });
+  }
+
+  // Whether the separated stems are ready and belong to the track that is loaded.
+  function sepReady() {
+    return Boolean(sepBuffer && audioBuffer && sepFor === trackKey());
+  }
+
+  function trackKey() {
+    var e = queue[current];
+    return (e ? (e.ref || e.name || String(current)) : '') + '|' + (audioBuffer ? audioBuffer.length : 0);
+  }
+
+  // Source mode only means anything once the analysis has run.
+  function sourcesLive() { return split.on && split.mode === 'sources' && sepReady(); }
+
+  // And until it has, there is nothing to split by. Falling back to the band
+  // network would put the low band through a strip labelled Vocals, which is a
+  // worse answer than leaving the track alone: the strips show as idle, the mix
+  // is the recording untouched, and pressing Separate is the only thing that
+  // changes either.
+  function splitLive() { return split.on && (split.mode === 'bands' || sepReady()); }
+
   // Playback runs off a decoded AudioBuffer rather than an <audio> element.
   // Routing an element through createMediaElementSource leaves pause and
   // playbackRate at the mercy of each browser's media stack, and Safari honours
@@ -243,6 +319,7 @@
   // the 12 MB upload cap already bounds.
   var audioBuffer = null;
   var bufSource = null;
+  var sepSource = null;     // the stem buffer's source, when source mode is live
   var offsetSec = 0;        // position in the buffer, in buffer seconds
   var startedAt = 0;        // audioCtx.currentTime when the current source started
   var playing = false;
@@ -404,6 +481,8 @@
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       gainNode = audioCtx.createGain();
       gainNode.gain.value = parseFloat(el['aud-volume'].value);
+      sepGain = audioCtx.createGain();
+      sepGain.gain.value = gainNode.gain.value;
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
       // A browser that takes the context away from a hidden page has just said
@@ -684,6 +763,51 @@
     [n.mid.a, n.mid.b, n.top.a, n.top.b, n.comp].forEach(function(f) { f.frequency.value = f2; });
   }
 
+  // --- the source network ----------------------------------------------------
+  //
+  // Three of the four stems arrive as channels of one buffer. The fourth is not
+  // stored at all: it is the track with the other three taken out of it, which
+  // three inverting gains do exactly and for nothing. That is worth more than
+  // the memory it saves -- it means the four sum to the recording by
+  // construction rather than by the masks being careful, and it leaves the stem
+  // that most wants two channels with the two channels the recording had.
+  function buildSources() {
+    if (sepNodes || !audioCtx) return sepNodes;
+    var ctx = audioCtx;
+    var input = ctx.createGain();      // the four-channel stem buffer
+    var mix = ctx.createGain();        // the track itself, at the same volume
+    var out = ctx.createGain();
+    var rest = ctx.createGain();       // what becomes the fourth stem
+
+    var sp = ctx.createChannelSplitter(4);
+    input.connect(sp);
+
+    // Vocals and bass came out of the middle and are one channel each; the kit
+    // kept both of the recording's.
+    var vox = ctx.createChannelMerger(2);
+    sp.connect(vox, 0, 0);
+    sp.connect(vox, 0, 1);
+    var drums = ctx.createChannelMerger(2);
+    sp.connect(drums, 1, 0);
+    sp.connect(drums, 2, 1);
+    var bass = ctx.createChannelMerger(2);
+    sp.connect(bass, 3, 0);
+    sp.connect(bass, 3, 1);
+
+    // The subtraction. Taken from the stems as they arrive rather than from the
+    // strips they feed, so muting the vocal does not put it back into Other.
+    mix.connect(rest);
+    [vox, drums, bass].forEach(function(node) {
+      var neg = ctx.createGain();
+      neg.gain.value = -1;
+      node.connect(neg);
+      neg.connect(rest);
+    });
+
+    sepNodes = { input: input, mix: mix, output: out, heads: [vox, drums, bass, rest] };
+    return sepNodes;
+  }
+
   // Whether a stem is audible. A solo anywhere silences everything that is not
   // soloed, a mute silences it regardless, and the bottom of the fader is off
   // rather than very quiet.
@@ -720,11 +844,28 @@
     try { m.output.disconnect(); } catch (e) {}
     try { analyser.disconnect(); } catch (e) {}
 
-    if (split.on) {
-      var sn = buildSplit();
-      applySplitFreqs();
-      try { sn.output.disconnect(); } catch (e) {}
-      gainNode.connect(sn.input);
+    if (splitLive()) {
+      var sn;
+      if (sourcesLive()) {
+        if (split.nodes) { try { split.nodes.output.disconnect(); } catch (e) {} }
+        sn = buildSources();
+        try { sn.output.disconnect(); } catch (e) {}
+        try { sepGain.disconnect(); } catch (e) {}
+        try { sn.mix.disconnect(); } catch (e) {}
+        // Two sources, one clock: the stems come off their own buffer and the
+        // track off its own, both started at the same instant and both moved by
+        // the same playback rate, so the subtraction lines up sample for sample.
+        sepGain.connect(sn.input);
+        gainNode.connect(sn.mix);
+        sn.mix.connect(sn.heads[3]);
+      } else {
+        if (sepNodes) { try { sepNodes.output.disconnect(); } catch (e) {} }
+        try { sepGain.disconnect(); } catch (e) {}
+        sn = buildSplit();
+        applySplitFreqs();
+        try { sn.output.disconnect(); } catch (e) {}
+        gainNode.connect(sn.input);
+      }
 
       stems.forEach(function(st, i) {
         if (!st.gainNode) {
@@ -737,6 +878,9 @@
         }
         var rn = wireRack(st.rack);
         try { sn.heads[i].disconnect(); } catch (e) {}
+        // Cutting the fourth head's outputs also cut the edge that feeds it,
+        // because it is the same node; said again rather than special-cased.
+        if (sourcesLive() && i === 3) sn.mix.connect(sn.heads[3]);
         try { rn.output.disconnect(); } catch (e) {}
         try { st.gainNode.disconnect(); } catch (e) {}
         try { st.meter.disconnect(); } catch (e) {}
@@ -752,9 +896,11 @@
 
       sn.output.connect(m.input);
     } else {
-      // The split network is left standing but unfed, so turning it back on
+      // The split networks are left standing but unfed, so turning one back on
       // costs no rebuild and every stem's rack is exactly where it was left.
       if (split.nodes) { try { split.nodes.output.disconnect(); } catch (e) {} }
+      if (sepNodes) { try { sepNodes.output.disconnect(); } catch (e) {} }
+      try { sepGain.disconnect(); } catch (e) {}
       gainNode.connect(m.input);
       stems.forEach(function(st) { st.level = 0; });
     }
@@ -799,6 +945,8 @@
     pausedByHide = false;
     setPlaying(false);
     txReset();
+    // The stems belonged to the track being replaced.
+    sepDrop();
     resetTrackUi(name);
     el['aud-name'].textContent = name + '  (decoding\u2026)';
 
@@ -1002,6 +1150,11 @@
   }
 
   function stopSource() {
+    if (sepSource) {
+      try { sepSource.stop(); } catch (e) {}
+      try { sepSource.disconnect(); } catch (e) {}
+      sepSource = null;
+    }
     if (!bufSource) return;
     try { bufSource.onended = null; } catch (e) {}
     try { bufSource.stop(); } catch (e) {}
@@ -1019,6 +1172,15 @@
     bufSource.buffer = audioBuffer;
     bufSource.playbackRate.value = rate();
     bufSource.connect(gainNode);
+    // The stems ride alongside on their own source. Both are given the same
+    // start time rather than each being told "now", because the fourth stem is
+    // the difference between them and a quantum of drift would be audible in it.
+    if (sourcesLive()) {
+      sepSource = audioCtx.createBufferSource();
+      sepSource.buffer = sepBuffer;
+      sepSource.playbackRate.value = rate();
+      sepSource.connect(sepGain);
+    }
     bufSource.onended = function() {
       // Only a natural end reaches here; stopSource clears the handler first.
       offsetSec = 0;
@@ -1031,7 +1193,8 @@
       if (playThrough && current >= 0 && current < queue.length - 1) playIndex(current + 1, true);
     };
     startedAt = audioCtx.currentTime;
-    bufSource.start(0, offsetSec);
+    bufSource.start(startedAt, offsetSec);
+    if (sepSource) sepSource.start(startedAt, offsetSec);
     setPlaying(true);
   }
 
@@ -1510,6 +1673,7 @@
     el['aud-pitch-val'].textContent = (semitones > 0 ? '+' : '') + semitones + ' st';
     el['aud-pitch-rate'].textContent = r.toFixed(2) + '\u00d7 speed';
     if (bufSource) bufSource.playbackRate.value = r;
+    if (sepSource) sepSource.playbackRate.value = r;
     bgSync();
     syncSimple();
     renderMath();
@@ -1702,6 +1866,7 @@
   el['aud-volume'].addEventListener('input', function() {
     var v = parseFloat(el['aud-volume'].value);
     if (gainNode) gainNode.gain.value = v;
+    if (sepGain) sepGain.gain.value = v;
     bgSync();
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
   });
@@ -1914,14 +2079,15 @@
     split.on = !!on;
     el['aud-split-on'].classList.toggle('is-on', split.on);
     el['aud-split-on'].setAttribute('aria-pressed', split.on ? 'true' : 'false');
-    el['aud-split-params'].classList.toggle('hidden', !split.on);
-    el['aud-stem-list'].classList.toggle('hidden', !split.on);
-    el['aud-stem-foot'].classList.toggle('hidden', !split.on);
     // Nothing to point at any more, so the panel goes back to the master rather
     // than editing a stem the mix no longer contains.
     if (!split.on && target >= 0) target = -1;
+    syncSplitUi();
     syncRackUi();
     rebuildChain();
+    // Source mode plays a second buffer, and a running source cannot be given
+    // one, so the transport is restarted where it stands.
+    if (playing && split.mode === 'sources' && sepReady()) startPlayback(position());
   }
 
   function stemRow(st, i) {
@@ -1933,10 +2099,8 @@
 
     var name = document.createElement('span');
     name.className = 'aud-stem-name';
-    name.textContent = st.name;
     var what = document.createElement('span');
     what.className = 'aud-stem-what';
-    what.textContent = st.what;
     var meter = document.createElement('span');
     meter.className = 'aud-stem-meter';
     var fill = document.createElement('i');
@@ -2003,7 +2167,8 @@
 
     li.appendChild(head);
     li.appendChild(tools);
-    st.row = { li: li, fill: fill, mute: mute, solo: solo, fader: fader, db: db, edit: edit };
+    st.row = { li: li, fill: fill, mute: mute, solo: solo, fader: fader, db: db,
+               edit: edit, name: name, what: what };
     return li;
   }
 
@@ -2031,6 +2196,15 @@
       var row = st.row;
       if (!row) return;
       var fx = rackSummary(st.rack);
+      row.name.textContent = st.name;
+      row.what.textContent = st.what;
+      row.mute.setAttribute('aria-label', 'Mute ' + st.name);
+      row.solo.setAttribute('aria-label', 'Solo ' + st.name);
+      row.fader.setAttribute('aria-label', st.name + ' level');
+      row.edit.setAttribute('aria-label', 'Edit the ' + st.name + ' stem\u2019s effects');
+      // A source-mode strip with nothing behind it yet is a strip that cannot do
+      // anything, and should not look as if it can.
+      row.li.classList.toggle('is-idle', split.mode === 'sources' && !sepReady());
       row.li.classList.toggle('is-target', split.on && target === i);
       row.li.classList.toggle('is-silent', stemGainValue(st) === 0);
       row.li.classList.toggle('has-fx', Boolean(fx));
@@ -2103,6 +2277,209 @@
     el['aud-split-f1-val'].textContent = formatFilterFreq(splitF1());
     el['aud-split-f2-val'].textContent = formatFilterFreq(splitF2());
   }
+
+  // --- running the separation ------------------------------------------------
+  //
+  // The analysis is seconds of arithmetic on a full-length track, so it goes to
+  // a worker: a page that stops answering for five seconds is a page that looks
+  // broken, whatever it is busy with. The worker's source is sitting in the
+  // document as text; it is wrapped in a Blob here so that the whole app stays
+  // one file with nothing extra to fetch.
+
+  function sepBoot() {
+    if (sepWorker) return sepWorker;
+    var tag = document.getElementById('aud-sep-worker');
+    if (!tag || !window.Worker || !window.Blob || !window.URL) return null;
+    try {
+      var url = URL.createObjectURL(new Blob([tag.textContent], { type: 'text/javascript' }));
+      sepWorker = new Worker(url);
+      // The Blob is only needed until the worker has read it.
+      URL.revokeObjectURL(url);
+      sepWorker.onmessage = sepMessage;
+      sepWorker.onerror = function() { sepFail('The separator stopped unexpectedly.'); };
+    } catch (e) {
+      sepWorker = null;
+    }
+    return sepWorker;
+  }
+
+  function sepStatus(text) {
+    el['aud-sep-status'].textContent = text || '';
+  }
+
+  function sepProgress(frac) {
+    el['aud-sep-bar'].classList.toggle('hidden', frac === null);
+    if (frac !== null) el['aud-sep-fill'].style.width = Math.round(frac * 100) + '%';
+  }
+
+  function sepFail(why) {
+    sepBusy = false;
+    sepProgress(null);
+    el['aud-sep-go'].disabled = false;
+    el['aud-sep-go'].textContent = 'Separate';
+    sepStatus(why);
+  }
+
+  function sepWidth() { return parseFloat(el['aud-sep-width'].value); }
+  function sepVoice() { return parseFloat(el['aud-sep-voice'].value); }
+
+  function sepStart() {
+    if (sepBusy || !audioBuffer) return;
+    var worker = sepBoot();
+    if (!worker) { sepFail('This browser cannot run the separator.'); return; }
+    if (audioBuffer.duration > SEP_MAX_SEC) {
+      sepFail('Too long to separate \u2014 the stems would not fit in memory. ' +
+        Math.round(SEP_MAX_SEC / 60) + ' minutes is the ceiling.');
+      return;
+    }
+
+    // Copies, because the arrays are handed to the worker and a transfer leaves
+    // the originals detached -- and the originals here are the track itself.
+    var left = new Float32Array(audioBuffer.getChannelData(0));
+    var right = audioBuffer.numberOfChannels > 1
+      ? new Float32Array(audioBuffer.getChannelData(1))
+      : new Float32Array(left);
+
+    sepBusy = true;
+    sepFor = trackKey();
+    el['aud-sep-go'].disabled = true;
+    el['aud-sep-go'].textContent = 'Separating\u2026';
+    sepProgress(0);
+    sepStatus('Starting\u2026');
+
+    worker.postMessage({
+      type: 'separate',
+      left: left.buffer, right: right.buffer,
+      sampleRate: audioBuffer.sampleRate,
+      bassHz: filterSliderToFreq(split.f1Pos),
+      width: sepWidth(), voice: sepVoice()
+    }, [left.buffer, right.buffer]);
+  }
+
+  function sepMessage(ev) {
+    var msg = ev.data || {};
+    if (msg.type === 'progress') {
+      sepProgress(Math.max(0, Math.min(1, msg.frac || 0)));
+      sepStatus(msg.stage + (msg.loop ? ' \u2014 a ' + msg.loop.toFixed(1) + ' s figure' : '') + '\u2026');
+      return;
+    }
+    if (msg.type === 'error') { sepFail(msg.message || 'The separation failed.'); return; }
+    if (msg.type !== 'done') return;
+    sepAdopt(msg);
+  }
+
+  function sepAdopt(msg) {
+    sepBusy = false;
+    sepProgress(null);
+    el['aud-sep-go'].disabled = false;
+    el['aud-sep-go'].textContent = 'Separate again';
+
+    try {
+      var n = msg.length;
+      var buf = audioCtx.createBuffer(4, n, msg.sampleRate);
+      // One at a time, dropping each as it lands: four channels of a long track
+      // is a lot to be holding twice over.
+      var parts = [msg.vox, msg.drL, msg.drR, msg.bass];
+      for (var c = 0; c < 4; c++) {
+        buf.copyToChannel(new Float32Array(parts[c]), c);
+        parts[c] = null;
+      }
+      sepBuffer = buf;
+    } catch (e) {
+      sepBuffer = null;
+      sepFail('There was not enough memory for the stems.');
+      return;
+    }
+
+    sepStatus('Four stems, and together they are the track again.');
+    nameStems();
+    syncSplitUi();
+    txSyncControls();
+    rebuildChain();
+    // The stems have to join a track that may already be playing, and a source
+    // cannot be started late and still be in step, so the transport is restarted
+    // where it stands.
+    if (playing) startPlayback(position());
+  }
+
+  el['aud-sep-go'].addEventListener('click', sepStart);
+
+  wireParam('aud-sep-width', function() {
+    el['aud-sep-width-val'].textContent = sepWidth().toFixed(2);
+  });
+  wireParam('aud-sep-voice', function() {
+    el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2);
+  });
+
+  // Both knobs are read when the analysis runs, not while it plays, so moving
+  // one after the fact is an offer to run it again rather than a change.
+  function sepStale() {
+    if (sepReady() && !sepBusy) sepStatus('Moved \u2014 press Separate again to hear it.');
+  }
+  el['aud-sep-width'].addEventListener('change', sepStale);
+  el['aud-sep-voice'].addEventListener('change', sepStale);
+
+  // What the line under the button says when nothing is running. Worked out from
+  // the state rather than announced once, because a link that asks for source
+  // mode says so before the track it names has finished loading -- and loading a
+  // track drops the stems, which used to wipe the message with it.
+  function sepIdleText() {
+    if (split.mode === 'sources' && sepAsked && !sepReady()) {
+      return 'They split this into sources \u2014 press Separate to hear it their way.';
+    }
+    if (audioBuffer && audioBuffer.duration > SEP_WARN_SEC) {
+      return 'A long track \u2014 this will take a while and hold a lot of memory.';
+    }
+    return 'Takes a few seconds, and holds the stems in memory while they play.';
+  }
+
+  // A new track invalidates the stems: they were made from the old one.
+  function sepDrop() {
+    sepBuffer = null;
+    sepFor = '';
+    sepProgress(null);
+    el['aud-sep-go'].disabled = false;
+    el['aud-sep-go'].textContent = 'Separate';
+    sepStatus(sepIdleText());
+  }
+
+  // --- which cut is in force ---------------------------------------------------
+
+  function setSplitMode(mode) {
+    split.mode = mode === 'sources' ? 'sources' : 'bands';
+    nameStems();
+    syncSplitUi();
+    rebuildChain();
+    // Source mode plays from a second buffer, and whether that buffer is in the
+    // graph is decided when a source is made rather than while it runs.
+    if (playing) startPlayback(position());
+  }
+
+  function syncSplitUi() {
+    var sources = split.mode === 'sources';
+    el['aud-by-bands'].classList.toggle('is-on', !sources);
+    el['aud-by-bands'].setAttribute('aria-pressed', sources ? 'false' : 'true');
+    el['aud-by-sources'].classList.toggle('is-on', sources);
+    el['aud-by-sources'].setAttribute('aria-pressed', sources ? 'true' : 'false');
+
+    el['aud-split-how'].classList.toggle('hidden', !split.on);
+    el['aud-split-params'].classList.toggle('hidden', !split.on || sources);
+    el['aud-sep'].classList.toggle('hidden', !split.on || !sources);
+    el['aud-stem-list'].classList.toggle('hidden', !split.on);
+    el['aud-stem-foot'].classList.toggle('hidden', !split.on);
+
+    el['aud-split-note'].innerHTML = sources
+      ? 'Held notes against hits, what repeats against what does not, and where each bin cancels between the speakers. Nothing learned, nothing guessed \u2014 and the four sum back to the recording exactly.'
+      : 'Two crossovers and a mid/side matrix &mdash; nothing learned, nothing guessed. All four up is the track again, level for level.';
+
+    if (sources && !sepReady() && !sepBusy) sepStatus(sepIdleText());
+    renderTargets();
+    renderStems();
+    renderMath();
+  }
+
+  el['aud-by-bands'].addEventListener('click', function() { setSplitMode('bands'); });
+  el['aud-by-sources'].addEventListener('click', function() { setSplitMode('sources'); });
 
   // --- simple mode -----------------------------------------------------------
   //
@@ -2295,8 +2672,23 @@
 
     // The split first, because it is what decides which signal the rack below it
     // is even looking at.
-    if (split.on) {
-      add('t-split', 'Split', true);
+    if (split.on && split.mode === 'sources') {
+      add('t-split', 'Split by source', true);
+      if (!sepReady()) {
+        add('sp-idle', 'nothing separated yet — press Separate');
+      } else {
+        add('sp-stft', 'X(t,f): ' + N_SEP + '-point window, hopped ' + (N_SEP / 2) + ', sine both ways');
+        add('sp-hp', 'H = median<sub>t</sub>|X|, P = median<sub>f</sub>|X|, over 17');
+        add('sp-hpm', 'm<sub>perc</sub> = P²/(H²+P²) &nbsp;→&nbsp; drums');
+        add('sp-rep', 'W(f, t mod p) = median over repetitions of |X|');
+        add('sp-repm', 'm<sub>rep</sub> = min(W,|X|)²/|X|², p from the beat spectrum');
+        add('sp-az', 'd* = argmin<sub>d</sub> |L − dR|, c = how near d* is to 1');
+        add('sp-vox', 'm<sub>vox</sub> = (1−m<sub>perc</sub>)(1−m<sub>bass</sub>)(1−m<sub>rep</sub>)&middot;c&middot;v(f)');
+        add('sp-sum2', 'Σ m = 1 in every bin, and the masks are real');
+        add('sp-exact', 'so all four up is the recording, sample for sample');
+      }
+    } else if (split.on) {
+      add('t-split', 'Split by band', true);
       add('sp-lr', 'H<sub>LP</sub>(s) = 1/(s²+√2s+1)², H<sub>HP</sub>(s) = s⁴/(s²+√2s+1)²');
       add('sp-sum', 'H<sub>LP</sub> + H<sub>HP</sub> = (s²−√2s+1)/(s²+√2s+1), so |H| = 1');
       add('sp-f', 'f<sub>1</sub> = ' + grouped(splitF1()) + ' Hz, f<sub>2</sub> = ' +
@@ -2610,6 +3002,7 @@
     pausedByHide = false;
     setPlaying(false);
     txReset();
+    sepDrop();
     loadToken++;
     el['aud-drop'].classList.remove('hidden');
     ['aud-player', 'aud-shape', 'aud-share', 'aud-queue', 'aud-stems'].forEach(function(id) {
@@ -2870,6 +3263,11 @@
 
   function txSyncControls() {
     var box = el['aud-tx-on'];
+    if (el['aud-tx-tip']) {
+      el['aud-tx-tip'].innerHTML = txSeparated()
+        ? 'off until you tick it &middot; then short windows of <strong>the vocal stem</strong> go to Gemini'
+        : 'off until you tick it &middot; then short windows of the track go to Gemini';
+    }
     // The box says what was asked for, and nothing else. It used to say
     // `txOn || txDone`, which made a finished transcript re-tick the box the
     // instant it was cleared: the change handler set txWanted false, this ran,
@@ -2900,7 +3298,7 @@
       txLoadCached(id, txDuration);
       return;
     }
-    if (!txSegments.length) txStatus('Listening ahead…');
+    if (!txSegments.length) txStatus('Listening ahead to ' + txListensTo() + '…');
   }
 
   function txReset() {
@@ -2991,11 +3389,50 @@
     }).catch(function() {}).then(function() {
       // Found or not, the pump takes it from here; it has been running since the
       // press. This only has to say something if the lookup came back empty.
-      if (token === loadToken && txOn && !txSegments.length) txStatus('Listening ahead…');
+      if (token === loadToken && txOn && !txSegments.length) txStatus('Listening ahead to ' + txListensTo() + '…');
     });
   }
 
   // --- cutting the window ---
+  //
+  // What the transcriber is given, which is not the same thing as what is
+  // playing. A model handed a voice with the band still on it spends its
+  // attention deciding which of the two it is being asked about; handed the
+  // vocal stem it gets a voice on a quiet background, which is the case it was
+  // trained for. So when the track has been separated, the transcript is taken
+  // from channel zero of the stems and not from the mix.
+  //
+  // It changes more than the words. The window boundaries are chosen on the
+  // quietest moment nearby, and quiet in the mix is where the band stops, while
+  // quiet in the vocal stem is where the singer stops -- which is exactly the
+  // place a window should end.
+  function txSeparated() { return sepReady() && sepBuffer.numberOfChannels >= 4; }
+
+  function txListensTo() {
+    return txSeparated() ? 'the vocal stem' : 'the track';
+  }
+
+  // One channel of whatever is being listened to, for the stretch asked for.
+  // Built rather than referenced, so the resampler downstream is handed a voice
+  // rather than a four-channel buffer it would helpfully mix back together.
+  function txMono(start, end) {
+    var src = txSeparated() ? sepBuffer : audioBuffer;
+    var sr = src.sampleRate;
+    var from = Math.max(0, Math.floor(start * sr));
+    var to = Math.min(src.length, Math.ceil(end * sr));
+    var n = Math.max(1, to - from);
+    var out = audioCtx.createBuffer(1, n, sr);
+    var dst = out.getChannelData(0);
+
+    if (txSeparated()) {
+      dst.set(src.getChannelData(0).subarray(from, to));
+    } else {
+      var l = src.getChannelData(0);
+      var r = src.numberOfChannels > 1 ? src.getChannelData(1) : null;
+      for (var i = 0; i < n; i++) dst[i] = r ? (l[from + i] + r[from + i]) * 0.5 : l[from + i];
+    }
+    return out;
+  }
 
   // The quietest 20 ms in the search band around the target length. Silence is
   // where a sentence is least likely to be split.
@@ -3003,8 +3440,9 @@
     var target = Math.min(start + TX_TARGET_SEC, txDuration);
     if (txDuration - target < 2) return txDuration;
 
-    var sr = audioBuffer.sampleRate;
-    var data = audioBuffer.getChannelData(0);
+    var src = txSeparated() ? sepBuffer : audioBuffer;
+    var sr = src.sampleRate;
+    var data = src.getChannelData(0);
     var win = Math.max(64, Math.floor(sr * 0.02));
     var from = Math.max(start + 1, target - TX_CUT_SEARCH);
     var to = Math.min(txDuration - 0.05, target + TX_CUT_SEARCH);
@@ -3053,9 +3491,12 @@
   // stride would fold everything above 8 kHz back down into the speech band.
   // Only reached where an offline context at 16 kHz is refused.
   function txDecimate(start, end) {
-    var sr = audioBuffer.sampleRate;
-    var left = audioBuffer.getChannelData(0);
-    var right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+    var src = txSeparated() ? sepBuffer : audioBuffer;
+    var sr = src.sampleRate;
+    var left = src.getChannelData(0);
+    // The stems' first channel is the voice on its own, so there is nothing to
+    // average it with; the track's two channels still want summing.
+    var right = (!txSeparated() && src.numberOfChannels > 1) ? src.getChannelData(1) : null;
     var step = sr / TX_RATE;
     var n = Math.max(1, Math.floor((end - start) * TX_RATE));
     var out = new Float32Array(n);
@@ -3087,9 +3528,12 @@
       try {
         var off = new Offline(1, frames, TX_RATE);
         var src = off.createBufferSource();
-        src.buffer = audioBuffer;
+        // A single channel, already chosen: handing the four-channel stem buffer
+        // to a mono destination would have it helpfully mixed back into the
+        // track this is trying to get away from.
+        src.buffer = txMono(start, end);
         src.connect(off.destination);
-        src.start(0, start, end - start);
+        src.start(0);
         return new Promise(function(resolve, reject) {
           off.oncomplete = function(ev) {
             resolve(txWav(ev.renderedBuffer.getChannelData(0), TX_RATE));
@@ -3162,7 +3606,7 @@
 
     txBusy = true;
     var token = loadToken;
-    if (!txSegments.length) txStatus('Listening ahead…');
+    if (!txSegments.length) txStatus('Listening ahead to ' + txListensTo() + '…');
 
     txSlice(start, end).then(function(wav) {
       if (token !== loadToken) return null;
@@ -3361,7 +3805,11 @@
     rackKeys(master, '', true);
 
     if (split.on) {
-      parts.push('sp=' + [split.f1Pos, split.f2Pos].join(','));
+      // A third field on a key that used to have two. A page from before this
+      // splits on the comma, takes the two it knows and ignores the rest, which
+      // is a link that opens on the band split -- the right failure, because the
+      // band split is the one that needs no analysis to be heard.
+      parts.push('sp=' + [split.f1Pos, split.f2Pos, split.mode === 'sources' ? 's' : 'b'].join(','));
       stems.forEach(function(st, i) {
         var prefix = 's' + i;
         if (st.db !== 0 || st.muted || st.soloed) {
@@ -3475,6 +3923,11 @@
     if (s.sp && sp.length >= 2) {
       split.f1Pos = inRange(sp[0], 0, 1000 - SPLIT_MIN_GAP, split.f1Pos);
       split.f2Pos = inRange(sp[1], split.f1Pos + SPLIT_MIN_GAP, 1000, split.f2Pos);
+      // The stems themselves are not in the link and could not be: they are
+      // hundreds of megabytes made out of the recording. What travels is the
+      // instruction, and the recipient presses Separate to carry it out.
+      split.mode = sp[2] === 's' ? 'sources' : 'bands';
+      sepAsked = split.mode === 'sources';
       stems.forEach(function(st, i) {
         var prefix = 's' + i;
         var mix = (s[prefix] || '').split(',');
@@ -3485,6 +3938,7 @@
         }
         readRack(s, st.rack, prefix);
       });
+      nameStems();
       syncSplitLabels();
       setSplit(true);
     }
@@ -3915,7 +4369,11 @@
   split.f1Pos = freqToSlider(SPLIT_F1);
   split.f2Pos = freqToSlider(SPLIT_F2);
   buildStems();
+  nameStems();
   syncSplitLabels();
+  syncSplitUi();
+  el['aud-sep-width-val'].textContent = sepWidth().toFixed(2);
+  el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2);
   // The math panel starts closed on every visit. It is not remembered, and it
   // is not carried in a link.
   mathOn = false;

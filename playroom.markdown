@@ -33,7 +33,7 @@ Interactive tools and experiments. Click into one to explore.
     </svg>
   </div>
   <h2>Signal Share</h2>
-  <p>Load a track, split it into stems, filter each one, watch its spectrum, and send someone a link that opens on your exact settings.</p>
+  <p>Load a track, pull the vocals and the band apart, filter each stem on its own, and send someone a link that opens on your exact settings.</p>
   <span class="playroom-card-tag">Audio</span>
 </a>
 

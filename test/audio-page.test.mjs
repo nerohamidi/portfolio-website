@@ -42,6 +42,8 @@ const check = (name, cond, extra = '') => {
 };
 
 const markup = fs.readFileSync(ROOT + '/_includes/audio-app.html', 'utf8');
+const workerSrc = fs.readFileSync(ROOT + '/_includes/audio-separate.html', 'utf8')
+  .split('type="text/worker">')[1].split('</scr' + 'ipt>')[0];
 let engine = fs.readFileSync(ROOT + '/_includes/audio-engine.html', 'utf8')
   .split('<script>')[1].split('</script>')[0]
   .replace('{{ "/assets/audio/symphony.mp3" | relative_url }}', '/assets/audio/symphony.mp3');
@@ -85,6 +87,14 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     mode: function() { return simpleMode; },
     target: function() { return target; },
     racks: function() { return { master: master, stems: stems.map(function(s) { return s.rack; }) }; },
+    sep: function() {
+      return { buffer: sepBuffer, busy: sepBusy, ready: sepReady(), live: sourcesLive(),
+        mode: split.mode, separated: txSeparated() };
+    },
+    setSplitMode: setSplitMode,
+    txMono: txMono,
+    txCut: txCut,
+    txListensTo: txListensTo,
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
   };
   sizeCanvas();
@@ -115,6 +125,13 @@ function boot(hash, fetchImpl, userAgent) {
     });
   }
   w.document.getElementById('wrap').innerHTML = markup;
+  // The separator's source rides in the page as text; the engine looks it up by
+  // id, so it has to be there or the button reports the browser cannot run it.
+  const tag = w.document.createElement('script');
+  tag.id = 'aud-sep-worker';
+  tag.type = 'text/worker';
+  tag.textContent = workerSrc;
+  w.document.body.appendChild(tag);
 
   // --- Web Audio, reduced to what the engine touches ---
   const param = (v) => ({ value: v, setValueAtTime() {} });
@@ -159,7 +176,12 @@ function boot(hash, fetchImpl, userAgent) {
     this.createConvolver = () => Object.assign(node('convolver'), { buffer: null, normalize: true });
     this.createBuffer = (channels, length, rate) => {
       const data = Array.from({ length: channels }, () => new Float32Array(length));
-      return { numberOfChannels: channels, length, sampleRate: rate, getChannelData: (c) => data[c] };
+      return {
+        numberOfChannels: channels, length, sampleRate: rate,
+        duration: length / rate,
+        getChannelData: (c) => data[c],
+        copyToChannel: (src, c) => data[c].set(src.subarray(0, data[c].length)),
+      };
     };
     this.createAnalyser = () => Object.assign(node('analyser'), {
       fftSize: 2048, frequencyBinCount: 1024,
@@ -179,6 +201,17 @@ function boot(hash, fetchImpl, userAgent) {
       getChannelData: () => new Float32Array(frames),
     });
   };
+  // jsdom has no Worker. A fake one records what it was asked to do and lets the
+  // test hand back what the real separator would have sent, so the page's half of
+  // the exchange is driven without running the DSP -- which has its own tests.
+  w.Blob = class { constructor(parts) { this.parts = parts; } };
+  w.URL = { createObjectURL: () => 'blob:fake', revokeObjectURL: () => {} };
+  w.Worker = class {
+    constructor() { this.sent = []; w.__worker = this; }
+    postMessage(msg) { this.sent.push(msg); }
+    terminate() {}
+  };
+
   // jsdom implements no media element, and the engine's handoff path touches
   // one. Stubbed so it is inert and quiet, and recorded so the handoff tests can
   // see what it was asked to do.
@@ -1649,7 +1682,8 @@ setRange(fader(w, 0), -3);
 stemBtn(w, 2, MUTE).click();
 hash = w.__probe.encodeState();
 
-check('the link carries the crossovers', /(^|&)sp=\d+,\d+(&|$)/.test(hash), hash);
+check('the link carries the crossovers and which cut they belong to',
+  /(^|&)sp=\d+,\d+,b(&|$)/.test(hash), hash);
 check('and the fader that was moved', /(^|&)s0=-3,0,0(&|$)/.test(hash), hash);
 check('and the mute', /(^|&)s2=0,1,0(&|$)/.test(hash), hash);
 check('and the stem that is carrying effects', /(^|&)s1flt=hp,/.test(hash) && /(^|&)s1ec=/.test(hash), hash);
@@ -1780,6 +1814,142 @@ await settle();
 check('a shared link opens in whichever mode this browser was left in', w.__probe.mode() === true);
 check('with its effects showing on the simple switches',
   w.document.getElementById('aud-simple-rev').classList.contains('is-on'));
+
+// --- 14. separating by source ------------------------------------------------
+//
+// The DSP has its own tests, on a mix whose parts are known. What is checked
+// here is the page's half of the exchange: what it sends, what it does with what
+// comes back, and that a stem buffer actually reaches the graph and the
+// transcriber.
+
+const DEMO3 = '#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d';
+
+// What the separator would have sent back, for a track of `n` samples. Channel
+// zero is the voice, so it is given something recognisable.
+const separated = (win, n = 120 * 44100) => {
+  const mk = (fill) => {
+    const a = new Float32Array(n);
+    for (let i = 0; i < n; i++) a[i] = fill;
+    return a.buffer;
+  };
+  win.__worker.onmessage({ data: {
+    type: 'done', vox: mk(0.5), drL: mk(0.25), drR: mk(0.125), bass: mk(0.0625),
+    length: n, sampleRate: 44100,
+  } });
+};
+
+w = boot(DEMO3, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-split-on');
+
+check('a fresh split is by band', w.__probe.sep().mode === 'bands');
+check('and the source controls are put away', w.document.getElementById('aud-sep').classList.contains('hidden'));
+
+w.document.getElementById('aud-by-sources').click();
+check('choosing sources switches the cut', w.__probe.sep().mode === 'sources');
+check('the crossover sliders go away with it', w.document.getElementById('aud-split-params').classList.contains('hidden'));
+check('and the separate button appears', !w.document.getElementById('aud-sep').classList.contains('hidden'));
+check('the strips are renamed for what will feed them',
+  rowsOf(w).map((r) => r.querySelector('.aud-stem-name').textContent).join(',') === 'Vocals,Drums,Bass,Other',
+  rowsOf(w).map((r) => r.querySelector('.aud-stem-name').textContent).join(','));
+check('and read as not yet doing anything', rowsOf(w).every((r) => r.classList.contains('is-idle')));
+check('nothing has been separated yet', w.__probe.sep().ready === false);
+// And with nothing to split by, the track is left whole rather than being put
+// through the band network under source-mode labels.
+check('so the track reaches the master rack untouched',
+  w.__probe.graph().gain.out.length === 1 && w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+check('and every strip is silent', w.__probe.stems().every((st) => st.level === 0));
+
+press(w, 'aud-sep-go');
+check('pressing separate sends the track to the worker', w.__worker.sent.length === 1 &&
+  w.__worker.sent[0].type === 'separate');
+const sent = w.__worker.sent[0];
+check('with both channels', sent.left instanceof w.ArrayBuffer || sent.left.byteLength > 0);
+check('and the knobs it needs', sent.width > 0 && sent.voice > 0 && sent.bassHz > 0,
+  JSON.stringify({ width: sent.width, voice: sent.voice, bassHz: Math.round(sent.bassHz) }));
+check('the button says what it is doing', w.document.getElementById('aud-sep-go').disabled === true);
+
+w.__worker.onmessage({ data: { type: 'progress', stage: 'Finding what repeats', frac: 0.5, loop: 3.9 } });
+check('progress is shown', w.document.getElementById('aud-sep-fill').style.width === '50%');
+check('and the loop it found is named', /3\.9 s/.test(w.document.getElementById('aud-sep-status').textContent),
+  w.document.getElementById('aud-sep-status').textContent);
+
+separated(w);
+check('the stems arrive as one four-channel buffer', w.__probe.sep().buffer &&
+  w.__probe.sep().buffer.numberOfChannels === 4, String(w.__probe.sep().buffer && w.__probe.sep().buffer.numberOfChannels));
+check('and the page says they are ready', w.__probe.sep().ready === true && w.__probe.sep().live === true);
+check('the strips stop reading as idle', rowsOf(w).every((r) => !r.classList.contains('is-idle')));
+
+g = w.__probe.graph();
+sp = g.split;
+check('the band network stops being fed', g.gain.out.indexOf(sp.input) < 0);
+let sn = w.__probe.stems();
+check('every strip is fed by the source network', sn.every((st) => st.rack.nodes && st.gainNode));
+check('and the mix still ends at the master rack', g.master.input.out.length > 0);
+
+// The fourth stem is the track with the other three taken out of it, so it must
+// be fed by the mix and by three inverted stems and nothing else.
+const restNode = sn[3].rack.nodes.input;
+check('the fourth strip is a subtraction, not a fourth channel',
+  sn[3].rack.nodes.input !== sn[0].rack.nodes.input);
+
+// --- 14b. what a link says about it -----------------------------------------
+
+hash = w.__probe.encodeState();
+check('the link records that the cut was by source', /(^|&)sp=\d+,\d+,s(&|$)/.test(hash), hash);
+
+const other = boot('#' + hash, () => res({ chunks: [] }));
+await settle();
+check('opening it comes up in source mode', other.__probe.sep().mode === 'sources');
+check('with nothing separated, because stems do not fit in a URL', other.__probe.sep().ready === false);
+check('and it says so rather than looking broken',
+  /Separate/.test(other.document.getElementById('aud-sep-status').textContent),
+  other.document.getElementById('aud-sep-status').textContent);
+
+// --- 14c. the transcriber listens to the voice ------------------------------
+
+w = boot(DEMO3, () => res({ chunks: [] }));
+await settle();
+check('with no stems, the transcript comes off the track', w.__probe.sep().separated === false &&
+  w.__probe.txListensTo() === 'the track');
+check('and the tip says so', /short windows of the track/.test(w.document.getElementById('aud-tx-tip').textContent),
+  w.document.getElementById('aud-tx-tip').textContent);
+
+press(w, 'aud-split-on');
+w.document.getElementById('aud-by-sources').click();
+press(w, 'aud-sep-go');
+separated(w);
+
+check('once separated it listens to the vocal stem instead', w.__probe.sep().separated === true &&
+  w.__probe.txListensTo() === 'the vocal stem');
+check('and the tip changes to match', /vocal stem/.test(w.document.getElementById('aud-tx-tip').textContent),
+  w.document.getElementById('aud-tx-tip').textContent);
+
+// The window handed to the resampler must be the voice on its own. The fake
+// stems put a different constant in each channel, so which one arrived is not a
+// matter of opinion.
+let mono = w.__probe.txMono(1, 2);
+check('the window it cuts is one channel', mono.numberOfChannels === 1);
+check('and it is the vocal channel, not a mix of all four',
+  Math.abs(mono.getChannelData(0)[0] - 0.5) < 1e-6, String(mono.getChannelData(0)[0]));
+
+// The stems outlive the split switch, and so does the transcript source: what
+// makes the best signal for a transcriber has nothing to do with what is coming
+// out of the speakers.
+press(w, 'aud-split-on');
+check('turning the split off leaves the transcript on the vocal stem',
+  w.__probe.txListensTo() === 'the vocal stem');
+check('because the stems are still there to listen to', w.__probe.sep().ready === true &&
+  w.__probe.sep().live === false);
+
+// A new track invalidates the stems, which were made out of the old one.
+w.__probe.playIndex(0, false);
+await settle();
+check('loading a track drops the stems it did not come from', w.__probe.sep().ready === false);
+check('and the button offers to run again', w.document.getElementById('aud-sep-go').disabled === false &&
+  w.document.getElementById('aud-sep-go').textContent === 'Separate');
+
+void restNode;
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

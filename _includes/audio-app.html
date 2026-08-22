@@ -15,7 +15,7 @@
 
   <ol class="aud-steps">
     <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
-    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Split into stems, stack effects on each</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Pull it into stems, stack effects on each</span></li>
     <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">Whole playlist, your settings</span></li>
   </ol>
 
@@ -57,7 +57,7 @@
       </label>
       <button class="aud-btn aud-btn-sm" id="aud-tx-copy" type="button" disabled>Copy text</button>
       <span class="aud-tx-status" id="aud-tx-status"></span>
-      <span class="aud-tx-tip">off until you tick it &middot; then short windows of the track go to Gemini</span>
+      <span class="aud-tx-tip" id="aud-tx-tip">off until you tick it &middot; then short windows of the track go to Gemini</span>
     </div>
 
     <canvas class="aud-canvas" id="aud-canvas"></canvas>
@@ -159,11 +159,20 @@
   <section class="aud-panel hidden" id="aud-stems" aria-label="Stems">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Stems</h2>
-      <p class="aud-panel-hint">Two crossovers and a mid/side matrix &mdash; nothing learned, nothing guessed. All four up is the track again, level for level.</p>
+      <p class="aud-panel-hint" id="aud-split-note">Nothing learned, nothing guessed. All four up is the track again.</p>
     </div>
     <div class="aud-chips">
       <button class="aud-chip" id="aud-split-on" type="button" aria-pressed="false">Split into stems</button>
     </div>
+
+    <div class="aud-target hidden" id="aud-split-how">
+      <span class="aud-target-tag">By</span>
+      <div class="aud-chips">
+        <button class="aud-chip aud-chip-sm is-on" id="aud-by-bands" type="button" aria-pressed="true">Band</button>
+        <button class="aud-chip aud-chip-sm" id="aud-by-sources" type="button" aria-pressed="false">Source</button>
+      </div>
+    </div>
+
     <div class="aud-params hidden" id="aud-split-params">
       <label class="aud-param">
         <span class="aud-param-name">Low&ndash;mid</span>
@@ -176,6 +185,27 @@
         <span class="aud-param-val" id="aud-split-f2-val">6.0 kHz</span>
       </label>
     </div>
+    <!-- Source mode: the analysis is offline, so it has a button and a bar. -->
+    <div class="aud-sep hidden" id="aud-sep">
+      <div class="aud-params">
+        <label class="aud-param">
+          <span class="aud-param-name">Focus</span>
+          <input type="range" id="aud-sep-width" min="0.12" max="0.8" value="0.35" step="0.01">
+          <span class="aud-param-val" id="aud-sep-width-val">0.35</span>
+        </label>
+        <label class="aud-param">
+          <span class="aud-param-name">Voice</span>
+          <input type="range" id="aud-sep-voice" min="0.3" max="1.6" value="1" step="0.05">
+          <span class="aud-param-val" id="aud-sep-voice-val">1.00</span>
+        </label>
+      </div>
+      <div class="aud-sep-run">
+        <button class="aud-btn aud-btn-primary" id="aud-sep-go" type="button">Separate</button>
+        <span class="aud-sep-status" id="aud-sep-status">Takes a few seconds, and holds the stems in memory while they play.</span>
+      </div>
+      <div class="aud-sep-bar hidden" id="aud-sep-bar"><i id="aud-sep-fill"></i></div>
+    </div>
+
     <ol class="aud-stem-list hidden" id="aud-stem-list"></ol>
     <p class="aud-stem-foot hidden" id="aud-stem-foot">Every stem has its own filter, echo and reverb &mdash; press Edit to point the panel below at one.</p>
   </section>

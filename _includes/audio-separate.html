@@ -1,0 +1,601 @@
+<!-- The separation worker.
+     ==================================================================
+     Held as text rather than as a script the browser runs: the engine reads it
+     out of here, wraps it in a Blob and hands that to a Worker. The app stays
+     one page with no second file to fetch and nothing to keep in step.
+
+     Everything below runs off the main thread. It is several seconds of work on
+     a full-length track, and a page that stops answering for that long is a page
+     that looks broken. -->
+<script id="aud-sep-worker" type="text/worker">
+'use strict';
+
+// Pulling a mix apart into stems, with nothing learned and nothing trained.
+//
+// One cue is never enough. A voice and a rhythm guitar are both harmonic, both
+// usually centred, and both live in the same octaves; whichever single
+// measurement is chosen, some instrument matches the voice on it. So three are
+// taken, picked because they disagree about different things:
+//
+//   HPSS     is it smooth along time, or along frequency?   Fitzgerald, DAFx-10
+//   REPET    does this bar sound like the other bars?       Rafii & Pardo, 2013
+//   ADRess   where between the speakers does it cancel?     Barry et al, DAFx-04
+//
+// Each returns a soft weight per time-frequency bin. A voice is what is harmonic
+// AND unrepeating AND centred AND in the range a voice sings in, so an
+// instrument that matches it on one of those still has to match on the rest.
+//
+// The four weights are then arranged to sum to exactly one in every bin. That is
+// worth more than it looks. The stems are one complex spectrum scaled by real
+// numbers that add to one, so nothing moves in phase and nothing is lost in the
+// overlap: put all four back together and the recording returns sample for
+// sample. The crossover split on the same page can only promise a flat
+// magnitude, which is a weaker thing.
+
+var N = 2048;                 // window
+var HOP = N / 2;              // and half of it, which the sine window wants
+var BINS = N / 2 + 1;
+
+// The sine window, on the way in and again on the way out. Squared it is a
+// raised cosine, and two of those a half-window apart sum to one exactly, so the
+// overlap-add reconstructs rather than nearly reconstructs. A Hann window would
+// need a quarter-window hop to make the same promise, which is twice the work.
+var WIN = new Float32Array(N);
+for (var wi = 0; wi < N; wi++) WIN[wi] = Math.sin(Math.PI * (wi + 0.5) / N);
+
+var MED_T = 17;               // frames of median for the harmonic estimate, ~400 ms
+var MED_F = 17;               // bins for the percussive one, ~370 Hz
+var AZ_STEPS = 32;            // resolution of the azimuth sweep
+var AZ_TOP_HZ = 9000;         // above which panning stops telling you much
+var REPET_WIN_SEC = 24;       // REPET is re-fitted this often, so the loop may change
+var REPET_MIN_LAG = 0.7;      // seconds; shorter than this is a beat, not a bar
+var REPET_MAX_LAG = 10;
+var EPS = 1e-10;
+
+// --- FFT -------------------------------------------------------------------
+//
+// Radix 2, iterative, twiddles worked out once. Two packings earn their keep,
+// and both come from the same fact: a real signal's spectrum is symmetric, so a
+// complex transform of a real input throws half of itself away.
+//
+//   in    L and R go in as the real and imaginary parts of one transform and
+//         are pulled apart after. One transform, two spectra.
+//   out   two stems go back in as real and imaginary and come out as two
+//         signals. One transform, two stems.
+//
+// Which turns five transforms a frame into three.
+
+function makeFft(n) {
+  var levels = 0;
+  while ((1 << levels) < n) levels++;
+  var cos = new Float64Array(n / 2);
+  var sin = new Float64Array(n / 2);
+  var i, j;
+  for (i = 0; i < n / 2; i++) {
+    cos[i] = Math.cos(2 * Math.PI * i / n);
+    sin[i] = Math.sin(2 * Math.PI * i / n);
+  }
+  var rev = new Uint32Array(n);
+  for (i = 0; i < n; i++) {
+    var x = i, r = 0;
+    for (j = 0; j < levels; j++) { r = (r << 1) | (x & 1); x >>= 1; }
+    rev[i] = r;
+  }
+  return function(re, im, inverse) {
+    var a, b, k, t;
+    for (a = 0; a < n; a++) {
+      b = rev[a];
+      if (b > a) {
+        t = re[a]; re[a] = re[b]; re[b] = t;
+        t = im[a]; im[a] = im[b]; im[b] = t;
+      }
+    }
+    for (var size = 2; size <= n; size <<= 1) {
+      var half = size >> 1, step = n / size;
+      for (a = 0; a < n; a += size) {
+        for (b = a, k = 0; b < a + half; b++, k += step) {
+          var l = b + half;
+          var c = cos[k], s = inverse ? sin[k] : -sin[k];
+          var tre = re[l] * c - im[l] * s;
+          var tim = re[l] * s + im[l] * c;
+          re[l] = re[b] - tre; im[l] = im[b] - tim;
+          re[b] += tre; im[b] += tim;
+        }
+      }
+    }
+    if (inverse) {
+      for (a = 0; a < n; a++) { re[a] /= n; im[a] /= n; }
+    }
+  };
+}
+
+// L and R out of the one transform of l + jr:
+//   L(k) = ( X(k) + conj X(N-k) ) / 2
+//   R(k) = ( X(k) - conj X(N-k) ) / 2j
+var un = { lr: 0, li: 0, rr: 0, ri: 0 };
+function unpack(re, im, k) {
+  var m = (N - k) % N;
+  var ar = re[k], ai = im[k];
+  var br = re[m], bi = -im[m];        // conj X(N-k)
+  un.lr = (ar + br) * 0.5;
+  un.li = (ai + bi) * 0.5;
+  // Dividing by 2j is multiplying by -j/2, which swaps the parts and negates one.
+  un.rr = (ai - bi) * 0.5;
+  un.ri = (br - ar) * 0.5;
+  return un;
+}
+
+// --- a running median ------------------------------------------------------
+//
+// Both halves of HPSS are a median over a sliding window, once along time and
+// once along frequency, and there are tens of millions of them. Sorting each
+// window from scratch is about a hundred and fifty comparisons; keeping one
+// sorted window and editing it is about thirty.
+
+function Median(size) {
+  this.size = size;
+  this.sorted = new Float32Array(size);
+  this.ring = new Float32Array(size);
+  this.at = 0;
+  this.n = 0;
+}
+
+Median.prototype.reset = function() { this.at = 0; this.n = 0; };
+
+Median.prototype.push = function(v) {
+  var s = this.sorted, i, lo, hi, mid;
+  if (this.n === this.size) {
+    var old = this.ring[this.at];
+    lo = 0; hi = this.n - 1;
+    while (lo < hi) { mid = (lo + hi) >> 1; if (s[mid] < old) lo = mid + 1; else hi = mid; }
+    for (i = lo; i < this.n - 1; i++) s[i] = s[i + 1];
+    this.n--;
+  }
+  this.ring[this.at] = v;
+  this.at = (this.at + 1) % this.size;
+  lo = 0; hi = this.n;
+  while (lo < hi) { mid = (lo + hi) >> 1; if (s[mid] < v) lo = mid + 1; else hi = mid; }
+  for (i = this.n; i > lo; i--) s[i] = s[i - 1];
+  s[lo] = v;
+  this.n++;
+  return s[this.n >> 1];
+};
+
+// --- ADRess ----------------------------------------------------------------
+//
+// Barry, Lawlor and Coyle's idea, applied to one bin. Sweep a gain d and watch
+// |L - dR|: a source arriving in the two channels at a ratio of d cancels when d
+// reaches it, leaving a null in the sweep. Where the null falls is where the
+// source is panned, and how deep it goes is how much of the bin belongs to it.
+//
+// What is wanted here is the null at d = 1, a source arriving equally in both
+// channels -- the middle. Two things have to be true of a bin before it counts
+// as centred, and only asking one of them is a mistake worth spelling out.
+//
+// The first is that the null is actually in the middle. Asking instead how much
+// quieter d = 1 is than the loudest point of the sweep sounds equivalent and is
+// not: |L - dR| is a V, so a guitar panned at d = 0.25 still reads more than
+// half centred on that measure, because the middle is a long way down one arm of
+// its V. Reading the position of the null instead puts it at 0.25, which is
+// nowhere near the middle, and it scores nothing.
+//
+// The second is that there is a null at all. A bin holding two sources at once
+// has a shallow floor rather than a null, and its position means very little, so
+// the depth of the trough scales the answer down.
+//
+// That is the entire reason for doing this per bin rather than once for the
+// signal. A plain mid/side takes the sum, and a guitar at nine o'clock
+// contributes to the sum every bit as much as a voice does.
+
+function azimuth(lr, li, rr, ri, near0, near1) {
+  var peak = 0, best = Infinity, bestAt = 0;
+  for (var g = 0; g <= AZ_STEPS; g++) {
+    var d = (2 * g) / AZ_STEPS;            // 0 .. 2, so the middle lands on a step
+    var dr = lr - d * rr, di = li - d * ri;
+    var v = Math.sqrt(dr * dr + di * di);
+    if (v > peak) peak = v;
+    if (v < best) { best = v; bestAt = d; }
+  }
+  if (peak <= EPS) return 0;
+  var off = Math.abs(bestAt - 1);
+  var near = off <= near0 ? 1 : (off >= near1 ? 0 : (near1 - off) / (near1 - near0));
+  if (near <= 0) return 0;
+  var depth = (peak - best) / peak;
+  var c = near * depth;
+  return c < 0 ? 0 : (c > 1 ? 1 : c);
+}
+
+// --- pass one: what the cues need ------------------------------------------
+//
+// The spectra themselves are deliberately not kept. Four arrays of complex
+// numbers over a four-minute track is a couple of hundred megabytes, and
+// recomputing the forward transform in the second pass costs a second and a
+// half. The masks are kept as bytes for the same reason: a mask is a number
+// between nought and one, and eight bits of it is finer than anything downstream
+// can hear.
+
+function analyse(left, right, sampleRate, opts, report) {
+  var near1 = opts.width;
+  var near0 = near1 / 3;
+  var len = left.length;
+  var frames = Math.max(1, Math.ceil(len / HOP) + 1);
+  var fft = makeFft(N);
+  var midMag = new Float32Array(frames * BINS);
+  var centre = new Uint8Array(frames * BINS);
+  var re = new Float64Array(N), im = new Float64Array(N);
+  var azTop = Math.min(BINS - 1, Math.round(AZ_TOP_HZ * N / sampleRate));
+
+  for (var t = 0; t < frames; t++) {
+    var base = t * HOP - HOP;
+    var i, at;
+    for (i = 0; i < N; i++) {
+      at = base + i;
+      re[i] = (at >= 0 && at < len) ? left[at] * WIN[i] : 0;
+      im[i] = (at >= 0 && at < len) ? right[at] * WIN[i] : 0;
+    }
+    fft(re, im, false);
+
+    var off = t * BINS;
+    for (var k = 0; k < BINS; k++) {
+      var u = unpack(re, im, k);
+      var mr = (u.lr + u.rr) * 0.5, mi = (u.li + u.ri) * 0.5;
+      midMag[off + k] = Math.sqrt(mr * mr + mi * mi);
+      centre[off + k] = k <= azTop
+        ? Math.round(255 * azimuth(u.lr, u.li, u.rr, u.ri, near0, near1))
+        : 0;
+    }
+    if ((t & 127) === 0) report('Reading the spectrum', t / frames);
+  }
+
+  return { frames: frames, len: len, sampleRate: sampleRate, midMag: midMag, centre: centre, fft: fft };
+}
+
+// --- HPSS ------------------------------------------------------------------
+//
+// A held note is a horizontal line on a spectrogram and a drum hit is a vertical
+// one, so a median along time keeps the note and loses the hit, and a median
+// along frequency does the opposite. Two medians and a soft mask between them is
+// the whole of Fitzgerald's method, and one of the better ratios of result to
+// code anywhere in the field.
+
+function hpss(a, report) {
+  var frames = a.frames, S = a.midMag;
+  var harm = new Float32Array(frames * BINS);
+  var half = MED_T >> 1, t, f, i;
+
+  // Along time, a bin at a time. The window runs ahead of the output by half its
+  // length, which is what centres it on the frame being written.
+  var med = new Median(MED_T);
+  for (f = 0; f < BINS; f++) {
+    med.reset();
+    for (i = 0; i < half; i++) med.push(S[i * BINS + f]);
+    for (t = 0; t < frames; t++) {
+      var ahead = t + half;
+      harm[t * BINS + f] = med.push(ahead < frames ? S[ahead * BINS + f] : 0);
+    }
+    if ((f & 63) === 0) report('Telling held notes from hits', 0.5 * f / BINS);
+  }
+
+  // And along frequency, a frame at a time, folded straight into the mask so the
+  // percussive estimate never has to be kept for the whole track.
+  var mask = new Uint8Array(frames * BINS);
+  var medF = new Median(MED_F);
+  var halfF = MED_F >> 1;
+  var perc = new Float32Array(BINS);
+  for (t = 0; t < frames; t++) {
+    var off = t * BINS;
+    medF.reset();
+    for (i = 0; i < halfF; i++) medF.push(S[off + i]);
+    for (f = 0; f < BINS; f++) {
+      var up = f + halfF;
+      perc[f] = medF.push(up < BINS ? S[off + up] : 0);
+    }
+    for (f = 0; f < BINS; f++) {
+      // Wiener-flavoured rather than hard: squaring sharpens the decision
+      // without the gating chirps a binary mask leaves behind.
+      var h = harm[off + f], p = perc[f];
+      var h2 = h * h, p2 = p * p;
+      mask[off + f] = (h2 + p2) > EPS ? Math.round(255 * h2 / (h2 + p2)) : 255;
+    }
+    if ((t & 255) === 0) report('Telling held notes from hits', 0.5 + 0.5 * t / frames);
+  }
+  return mask;     // the harmonic share; 255 minus it is the percussive one
+}
+
+// --- REPET -----------------------------------------------------------------
+//
+// Rafii and Pardo's observation, which is almost too simple to believe until it
+// is heard: the backing repeats and the voice does not. Take the length of the
+// loop from how much the spectrogram looks like itself a lag later, take the
+// median across every repetition of that loop, and what has been built is a
+// model of the part that keeps coming back. Whatever the mix has over the model
+// is the part that does not.
+//
+// Re-fitted every REPET_WIN_SEC, so a track that changes its loop at the chorus
+// is not modelled by the average of both.
+
+function repet(a, report) {
+  var frames = a.frames, S = a.midMag;
+  var mask = new Uint8Array(frames * BINS);
+  var perWin = Math.max(64, Math.round(REPET_WIN_SEC * a.sampleRate / HOP));
+  var minLag = Math.max(2, Math.round(REPET_MIN_LAG * a.sampleRate / HOP));
+  var maxLag = Math.round(REPET_MAX_LAG * a.sampleRate / HOP);
+  var col = new Float32Array(64);
+
+  // Window boundaries first, so a track that is not a whole number of windows
+  // long does not end with a two-frame offcut trying to find a loop in itself.
+  var bounds = [];
+  for (var s0 = 0; s0 < frames; s0 += perWin) bounds.push(s0);
+  if (bounds.length > 1 && frames - bounds[bounds.length - 1] < perWin / 2) bounds.pop();
+
+  var x = new Float64Array(perWin + perWin);
+  var acf = new Float64Array(maxLag + 2);
+
+  bounds.forEach(function(start, wi) {
+    var end = wi + 1 < bounds.length ? bounds[wi + 1] : frames;
+    var n = end - start;
+    // At least three turns of the loop inside the window, or the median that
+    // builds the model is a median of two numbers and models nothing.
+    var top = Math.min(maxLag, Math.floor(n / 3));
+    var period = n;
+    var lag, t, f;
+
+    if (top > minLag) {
+      // The beat spectrum: how much the window sounds like itself a lag later.
+      //
+      // Taken per frequency channel and normalised there before the channels are
+      // added up, which is the part that cannot be skipped. A plain cross
+      // product is dominated by whatever is loudest and sustained -- a bass note
+      // held through the bar correlates with itself at every lag equally -- so
+      // the sum has no peak at the period and the winner is decided by noise.
+      // Removing each channel's mean leaves only what changes, which is what
+      // repeating is about, and dividing by its own energy stops one loud
+      // channel speaking for all of them.
+      for (lag = 0; lag <= top; lag++) acf[lag] = 0;
+      var channels = 0;
+      for (f = 1; f < BINS; f += 4) {
+        var mean = 0;
+        for (t = 0; t < n; t++) {
+          var v = S[(start + t) * BINS + f];
+          x[t] = v * v;
+          mean += x[t];
+        }
+        mean /= n;
+        var denom = 0;
+        for (t = 0; t < n; t++) { x[t] -= mean; denom += x[t] * x[t]; }
+        if (denom <= EPS) continue;
+        channels++;
+        for (lag = minLag; lag <= top; lag++) {
+          var acc = 0;
+          for (t = 0; t + lag < n; t++) acc += x[t] * x[t + lag];
+          // Biased, deliberately: dividing by the window's own energy leaves a
+          // taper of (n-lag)/n on the result, and that taper is the point. The
+          // unbiased estimate divides it back out, which hands the long lags a
+          // bonus exactly where they have the fewest terms to average and the
+          // most variance -- and the argmax then lands on whichever long lag got
+          // lucky. This is the same reason every pitch detector uses the biased
+          // autocorrelation.
+          acf[lag] += acc / denom;
+        }
+      }
+      if (channels) {
+        var best = -Infinity;
+        for (lag = minLag; lag <= top; lag++) {
+          if (acf[lag] > best) { best = acf[lag]; period = lag; }
+        }
+        // A figure that comes round every four bars also comes round every two,
+        // and the shorter answer scores just as well while modelling less: the
+        // median then averages two different bars together and calls the
+        // difference between them non-repeating. So if a whole multiple of the
+        // winner scores nearly as well, take that instead. This is the octave
+        // error every pitch and tempo estimator has, and the same fix.
+        if (best > 0) {
+          for (var mult = 4; mult >= 2; mult--) {
+            var cand = period * mult;
+            if (cand > top) continue;
+            // A loop is almost never a whole number of frames -- four seconds at
+            // this hop is 172.3 of them -- so twice the winner lands a frame or
+            // two off where the music actually comes round, and the drift grows
+            // with the multiple. Looking either side of the multiple is what
+            // lets the true period win against its own quantisation.
+            var localBest = -Infinity, localAt = cand;
+            for (var d = -2; d <= 2; d++) {
+              var c2 = cand + d;
+              if (c2 >= minLag && c2 <= top && acf[c2] > localBest) {
+                localBest = acf[c2]; localAt = c2;
+              }
+            }
+            // Held to nearly the winner's standard rather than merely a good one.
+            // The taper above already costs a longer lag something, so the bar
+            // sits below one.
+            if (localBest >= best * 0.85) { period = localAt; break; }
+          }
+        }
+      }
+    }
+
+    var reps = Math.ceil(n / period);
+    if (col.length < reps) col = new Float32Array(reps);
+    for (var j = 0; j < period; j++) {
+      for (var f2 = 0; f2 < BINS; f2++) {
+        var have = 0, r, tt;
+        for (r = 0; r < reps; r++) {
+          tt = start + r * period + j;
+          if (tt < end) col[have++] = S[tt * BINS + f2];
+        }
+        if (!have) continue;
+        var sub = col.subarray(0, have);
+        sub.sort();
+        // A voice sings something different each time round and is pushed out of
+        // the median; a drum machine plays the same thing and survives it.
+        var model = sub[have >> 1];
+        for (r = 0; r < reps; r++) {
+          tt = start + r * period + j;
+          if (tt >= end) break;
+          var idx = tt * BINS + f2;
+          var sv = S[idx];
+          // The model cannot be louder than the mix it is a model of.
+          var w = model < sv ? model : sv;
+          var s2 = sv * sv, w2 = w * w;
+          mask[idx] = s2 > EPS ? Math.round(255 * (1 - w2 / s2)) : 0;
+        }
+      }
+    }
+    report('Finding what repeats', end / frames, period * HOP / a.sampleRate);
+  });
+  return mask;    // the non-repeating share
+}
+
+// --- pass two: the stems ---------------------------------------------------
+
+// A soft edge rather than a wall, so a partial is not cut in half by a boundary
+// that happens to sit on top of it. Smoothstep over about an octave.
+function ramp(hz, corner) {
+  var t = 0.5 + Math.log(hz / corner) / (Math.LN2 * 1.2);
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
+}
+
+function synthesise(a, harmMask, nonRep, opts, report) {
+  var frames = a.frames, len = a.len, sr = a.sampleRate, fft = a.fft;
+  var left = opts.left, right = opts.right;
+
+  var vox = new Float32Array(len);
+  var drL = new Float32Array(len);
+  var drR = new Float32Array(len);
+  var bass = new Float32Array(len);
+
+  // The two judgements that are only ever about frequency, worked out once.
+  var bassW = new Float32Array(BINS);
+  var voxW = new Float32Array(BINS);
+  for (var k = 0; k < BINS; k++) {
+    var hz = Math.max(k * sr / N, 1);
+    bassW[k] = 1 - ramp(hz, opts.bassHz);
+    // A voice runs from about the bottom of a bass singer to the top of the
+    // sibilance, and rolls off at both ends rather than stopping.
+    voxW[k] = ramp(hz, 110) * (1 - ramp(hz, 9000));
+  }
+
+  var re = new Float64Array(N), im = new Float64Array(N);
+  var ar = new Float64Array(N), ai = new Float64Array(N);
+  var vr = new Float64Array(BINS), vi = new Float64Array(BINS);
+  var br = new Float64Array(BINS), bi = new Float64Array(BINS);
+  var dlr = new Float64Array(BINS), dli = new Float64Array(BINS);
+  var drr = new Float64Array(BINS), dri = new Float64Array(BINS);
+
+  for (var t = 0; t < frames; t++) {
+    var base = t * HOP - HOP, i, at;
+    for (i = 0; i < N; i++) {
+      at = base + i;
+      re[i] = (at >= 0 && at < len) ? left[at] * WIN[i] : 0;
+      im[i] = (at >= 0 && at < len) ? right[at] * WIN[i] : 0;
+    }
+    fft(re, im, false);
+
+    var off = t * BINS;
+    for (k = 0; k < BINS; k++) {
+      var u = unpack(re, im, k);
+      var h = harmMask[off + k] / 255;
+      var p = 1 - h;
+      var b = h * bassW[k];
+
+      // Harmonic, unrepeating, centred, and in the range a voice sings in. The
+      // centredness is sharpened first: a bin that only half cancels in the
+      // middle is far likelier to be an instrument bleeding through than half a
+      // voice.
+      var c = a.centre[off + k] / 255;
+      c = c * c * (3 - 2 * c);
+      var v = (nonRep[off + k] / 255) * c * voxW[k] * opts.voice;
+      if (v > 1) v = 1;
+
+      var mv = h * (1 - bassW[k]) * v;
+      // What is left of the harmonic part after the voice and the bass have been
+      // taken is the fourth stem. It is never built here: the graph makes it by
+      // subtracting these three from the track, which is exact and free, and
+      // keeps the one stem that most wants two channels in two channels.
+
+      var mr = (u.lr + u.rr) * 0.5, mi = (u.li + u.ri) * 0.5;
+      // Vocals and bass are taken from the middle, which is where the method
+      // found them and the only place a mono stem could honestly come from. The
+      // kit keeps both channels: a hi-hat at two o'clock is a fact about the
+      // recording, not a mistake in it.
+      vr[k] = mv * mr; vi[k] = mv * mi;
+      br[k] = b * mr;  bi[k] = b * mi;
+      dlr[k] = p * u.lr; dli[k] = p * u.li;
+      drr[k] = p * u.rr; dri[k] = p * u.ri;
+    }
+
+    // Two stems per transform. Y = U + jV comes back as u + jv, provided both
+    // halves are given the conjugate symmetry a real signal's spectrum has --
+    // which is why the mirrored half is written from U and V separately rather
+    // than from the sum, whose symmetry is not the same.
+    pack(re, im, vr, vi, dlr, dli);
+    pack(ar, ai, br, bi, drr, dri);
+    fft(re, im, true);
+    fft(ar, ai, true);
+
+    for (var n2 = 0; n2 < N; n2++) {
+      at = base + n2;
+      if (at < 0 || at >= len) continue;
+      var w = WIN[n2];
+      vox[at] += re[n2] * w;
+      drL[at] += im[n2] * w;
+      bass[at] += ar[n2] * w;
+      drR[at] += ai[n2] * w;
+    }
+    if ((t & 127) === 0) report('Building the stems', t / frames);
+  }
+
+  return { vox: vox, drL: drL, drR: drR, bass: bass };
+}
+
+//   Y(k)   = U(k) + jV(k)          = (Ur - Vi) + j(Ui + Vr)
+//   Y(N-k) = conj U(k) + j conj V(k) = (Ur + Vi) + j(Vr - Ui)
+function pack(re, im, ur, ui, wr, wi) {
+  for (var k = 0; k <= N / 2; k++) {
+    re[k] = ur[k] - wi[k];
+    im[k] = ui[k] + wr[k];
+    if (k > 0 && k < N / 2) {
+      re[N - k] = ur[k] + wi[k];
+      im[N - k] = wr[k] - ui[k];
+    }
+  }
+}
+
+onmessage = function(ev) {
+  var msg = ev.data || {};
+  if (msg.type !== 'separate') return;
+  var report = function(stage, frac, loopSec) {
+    postMessage({ type: 'progress', stage: stage, frac: frac, loop: loopSec });
+  };
+  try {
+    var left = new Float32Array(msg.left);
+    var right = new Float32Array(msg.right);
+    var opts = {
+      bassHz: msg.bassHz || 200,
+      voice: msg.voice === undefined ? 1 : msg.voice,
+      // How far off centre a null may fall and still count as the middle. A
+      // narrow window rejects more and takes some of the voice with it.
+      width: msg.width === undefined ? 0.35 : msg.width,
+      left: left, right: right
+    };
+
+    var a = analyse(left, right, msg.sampleRate, opts, report);
+    var harmMask = hpss(a, report);
+    var nonRep = repet(a, report);
+    // The magnitudes have done their work and are the largest thing here.
+    a.midMag = null;
+    var out = synthesise(a, harmMask, nonRep, opts, report);
+    report('Done', 1);
+
+    postMessage({
+      type: 'done',
+      vox: out.vox.buffer, drL: out.drL.buffer, drR: out.drR.buffer, bass: out.bass.buffer,
+      length: left.length, sampleRate: msg.sampleRate
+    }, [out.vox.buffer, out.drL.buffer, out.drR.buffer, out.bass.buffer]);
+  } catch (err) {
+    postMessage({ type: 'error', message: String((err && err.message) || err) });
+  }
+};
+</script>
