@@ -69,6 +69,9 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
         bgPrimed: bgPrimed, hasSource: !!bufSource };
     },
     seekTo: seekTo,
+    // What the audio thread does when a buffer runs out, which no test can wait
+    // two minutes for.
+    endTrack: function() { if (bufSource && bufSource.onended) bufSource.onended(); },
     effects: function() {
       var r = rack();
       return { echoOn: r.echoOn, revOn: r.revOn, mathOn: mathOn,
@@ -84,7 +87,7 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     setTarget: setTarget,
     setSplit: setSplit,
     setMode: setMode,
-    mode: function() { return simpleMode; },
+    mode: function() { return uiMode; },
     target: function() { return target; },
     racks: function() { return { master: master, stems: stems.map(function(s) { return s.rack; }) }; },
     sep: function() {
@@ -1538,6 +1541,10 @@ check('and so is turning it back on', w.__probe.state().bgAllowed === true);
 // the wrong splitter output is a wiring fact, and wiring is recorded.
 
 const DEMO2 = '#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d';
+// Stems live behind their own mode now, and the mode decides what is heard as
+// well as what is shown, so every one of these has to walk through that door
+// first -- which is itself the thing the last block here checks.
+const lab = (win) => win.document.getElementById('aud-mode-lab').click();
 const stemsOf = (win) => win.__probe.stems();
 const rowsOf = (win) => Array.from(win.document.querySelectorAll('.aud-stem'));
 
@@ -1549,6 +1556,7 @@ check('and its faders are folded away', w.document.getElementById('aud-stem-list
 check('so there is nothing to point the effects panel at', w.document.getElementById('aud-target').classList.contains('hidden'));
 check('the whole track reaches the master rack', w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
 
+lab(w);
 press(w, 'aud-split-on');
 let sp = w.__probe.graph().split;
 g = w.__probe.graph();
@@ -1730,6 +1738,7 @@ check('with its effects on the master, where they were', w.__probe.racks().maste
 check('and the volume reaching that rack directly', w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
 
 // Turning the split off puts the track back together and lets go of the stems.
+lab(w);
 press(w, 'aud-split-on');
 targetChips(w)[2].click();
 check('a stem can be edited while the split is on', w.__probe.target() === 1);
@@ -1746,13 +1755,18 @@ check('and nothing of them in the link', !/(^|&)sp=/.test(w.__probe.encodeState(
 // simple mode are the ones pro mode uses, which is why the switch never
 // interrupts anything.
 
+// A first visit means no stored preference, and the blocks above this one left
+// one behind by walking into the experimental mode. localStorage survives a boot
+// here on purpose, so it has to be cleared on purpose too.
+persisted.delete('aud-mode');
 w = boot(DEMO2, () => res({ chunks: [] }));
 await settle();
 
-check('a first visit lands in simple mode', w.__probe.mode() === true &&
+check('a first visit lands in simple mode', w.__probe.mode() === 'simple' &&
   w.document.body.classList.contains('aud-simple'));
 check('with the switch showing where it is', w.document.getElementById('aud-mode-simple').classList.contains('is-on') &&
-  !w.document.getElementById('aud-mode-pro').classList.contains('is-on'));
+  !w.document.getElementById('aud-mode-pro').classList.contains('is-on') &&
+  !w.document.getElementById('aud-mode-lab').classList.contains('is-on'));
 
 press(w, 'aud-simple-echo');
 check('the echo switch there reaches the master rack', w.__probe.racks().master.echoOn === true);
@@ -1780,8 +1794,8 @@ check('what was built in simple mode is a plain link', /(^|&)ec=/.test(hash) && 
 check('and the mode itself stays out of it', !/(^|&)(mode|ui)=/.test(hash), hash);
 
 press(w, 'aud-mode-pro');
-check('switching to pro takes the class off the body', w.__probe.mode() === false &&
-  !w.document.body.classList.contains('aud-simple'));
+check('switching to pro takes the class off the body', w.__probe.mode() === 'pro' &&
+  !w.document.body.classList.contains('aud-simple') && !w.document.body.classList.contains('aud-lab'));
 check('and the pro panel is already on what simple mode built',
   w.document.getElementById('aud-echo-on').classList.contains('is-on') &&
   w.document.getElementById('aud-rev-on').classList.contains('is-on'));
@@ -1794,11 +1808,11 @@ check('turning it off in pro turns it off in simple too', w.__probe.racks().mast
 
 w = boot(DEMO2, () => res({ chunks: [] }));
 await settle();
-check('the choice outlives the page', w.__probe.mode() === false);
+check('the choice outlives the page', w.__probe.mode() === 'pro');
 press(w, 'aud-mode-simple');
 w = boot(DEMO2, () => res({ chunks: [] }));
 await settle();
-check('and so does switching back', w.__probe.mode() === true);
+check('and so does switching back', w.__probe.mode() === 'simple');
 
 // Simple mode has no playlist on screen, so its one file button swaps the track
 // rather than quietly growing a list nobody can see.
@@ -1829,7 +1843,7 @@ check('and on an empty page it just loads the track', st.queue.length === 1 && s
 // listener's, the same way the background switch is.
 w = boot('#v=3&flt=off,500,1&rv=2.2,20,0.3&viz=1,1&vol=0.7&t=d', () => res({ chunks: [] }));
 await settle();
-check('a shared link opens in whichever mode this browser was left in', w.__probe.mode() === true);
+check('a shared link opens in whichever mode this browser was left in', w.__probe.mode() === 'simple');
 check('with its effects showing on the simple switches',
   w.document.getElementById('aud-simple-rev').classList.contains('is-on'));
 
@@ -1858,6 +1872,7 @@ const separated = (win, n = 120 * 44100) => {
 
 w = boot(DEMO3, () => res({ chunks: [] }));
 await settle();
+lab(w);
 press(w, 'aud-split-on');
 
 check('a fresh split is by band', w.__probe.sep().mode === 'bands');
@@ -1993,6 +2008,7 @@ check('the next build is for the crossovers as they now stand',
 
 // Separating changes nothing about what is transcribed -- which is the point:
 // the transcript improved for everyone, not only for whoever pressed Separate.
+lab(w);
 press(w, 'aud-split-on');
 w.document.getElementById('aud-by-sources').click();
 press(w, 'aud-sep-go');
@@ -2022,6 +2038,154 @@ check('and the button offers to run again', w.document.getElementById('aud-sep-g
   w.document.getElementById('aud-sep-go').textContent === 'Separate');
 
 void restNode;
+
+// --- 15. the experimental door ----------------------------------------------
+//
+// Stems live behind their own mode, and the mode decides what is heard as well
+// as what is shown. Leaving it plays the track whole, because a stem mix nobody
+// can see the controls for is worse than no stem mix.
+
+persisted.delete('aud-mode');
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+
+check('the mode switch offers three ways in',
+  ['aud-mode-simple', 'aud-mode-pro', 'aud-mode-lab'].every((id) => w.document.getElementById(id)));
+check('pro has no stems panel', w.__probe.mode() === 'simple' &&
+  (press(w, 'aud-mode-pro'), w.document.getElementById('aud-stems').classList.contains('aud-off-mode')));
+check('and the experimental mode does', (lab(w), !w.document.getElementById('aud-stems').classList.contains('aud-off-mode')));
+check('which is the mode the body says it is in', w.document.body.classList.contains('aud-lab'));
+
+press(w, 'aud-split-on');
+targetChips(w)[2].click();
+check('a stem can be split and edited in there', w.__probe.split().on === true && w.__probe.target() === 1);
+check('and the graph is wired for it', w.__probe.graph().gain.out[0] === w.__probe.graph().split.input);
+
+press(w, 'aud-mode-pro');
+check('leaving plays the track whole again',
+  w.__probe.graph().gain.out.length === 1 && w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+check('and the effects panel goes back to the master', w.__probe.target() === -1);
+check('but the split itself is remembered rather than thrown away', w.__probe.split().on === true);
+
+lab(w);
+check('so going back restores it', w.__probe.graph().gain.out[0] === w.__probe.graph().split.input);
+check('with the stems as they were left', stemsOf(w).length === 4);
+
+// Simple mode is behind the same door.
+press(w, 'aud-mode-simple');
+check('simple plays the track whole too',
+  w.__probe.graph().gain.out[0] === w.__probe.graph().master.input);
+check('and the choice is remembered as its own mode', (() => {
+  const back = boot(DEMO2, () => res({ chunks: [] }));
+  return back.__probe.mode() === 'simple';
+})());
+
+// --- 16. transcribing from simple mode --------------------------------------
+
+posts = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.includes('/transcribe')) { posts.push({ url, init }); return res(reply); }
+  return res({}, {});
+});
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'talk.mp3' })], 0);
+w.__probe.playIndex(0, false);
+await settle();
+
+const txChip = () => w.document.getElementById('aud-simple-tx');
+const txNote = () => w.document.getElementById('aud-simple-note').textContent;
+
+check('simple mode carries a transcribe switch', Boolean(txChip()));
+check('off, like the one in pro', txChip().classList.contains('is-on') === false &&
+  w.__probe.state().txOn === false);
+// The sentence that cannot be cut for brevity.
+check('and it says where the audio goes before it goes', /sends short windows/.test(txNote()) &&
+  /Gemini/.test(txNote()), txNote());
+check('naming the band it will send', /Hz/.test(txNote()), txNote());
+
+txChip().click();
+check('pressing it starts transcription', w.__probe.state().txOn === true);
+check('and the pro checkbox moves with it, because it is the same switch',
+  w.document.getElementById('aud-tx-on').checked === true);
+check('the chip lights up', txChip().classList.contains('is-on'));
+
+await settle();
+w.__probe.txPump();
+await settle();
+check('a window is posted from simple mode', posts.length === 1, String(posts.length));
+
+txChip().click();
+check('pressing it again stops it', w.__probe.state().txOn === false &&
+  w.document.getElementById('aud-tx-on').checked === false);
+
+// Turning it on from Pro shows on the simple chip too.
+press(w, 'aud-mode-pro');
+arm(w);
+check('and arming it from pro lights the simple chip', txChip().classList.contains('is-on'));
+
+// --- 17. the play button says which of three things it will do ---------------
+
+// Read off the path that is actually drawn, found by walking the button rather
+// than by id. Reading the element the engine writes to would have passed while
+// the id sat on the <svg> and nothing on screen ever changed -- which is exactly
+// what it did, for as long as this test did not exist.
+const icon = () => w.document.querySelector('#aud-play svg path').getAttribute('d');
+const label = () => w.document.getElementById('aud-play').getAttribute('aria-label');
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+const PLAY = icon();
+check('a loaded track offers play', label() === 'Play');
+check('and the button is drawing something', Boolean(PLAY) && PLAY.length > 4, String(PLAY));
+
+w.document.getElementById('aud-play').click();
+check('playing offers pause', label() === 'Pause' && icon() !== PLAY);
+check('and the button reads as on', w.document.getElementById('aud-play').classList.contains('is-on'));
+
+w.document.getElementById('aud-play').click();
+check('pausing offers play again', label() === 'Play' && icon() === PLAY);
+
+// Running out is not the same as being paused a second in: the button says so.
+w.document.getElementById('aud-play').click();
+w.__probe.endTrack();
+check('a track that has run out offers a restart', label() === 'Play again',
+  label());
+check('with an icon of its own', icon() !== PLAY);
+check('and a class the styling can reach', w.document.getElementById('aud-play').classList.contains('is-end'));
+check('the playhead is back at the top, ready for it', Math.abs(w.__probe.state().offsetSec) < 0.01);
+
+w.document.getElementById('aud-play').click();
+check('pressing it plays from the start', w.__probe.state().playing === true &&
+  Math.abs(w.__probe.state().offsetSec) < 0.01);
+check('and the button goes back to offering pause', label() === 'Pause');
+
+// Stop is not the end of the track, and does not claim to be.
+w.document.getElementById('aud-stop').click();
+check('stopping offers play, not restart', label() === 'Play' &&
+  !w.document.getElementById('aud-play').classList.contains('is-end'));
+
+// Seeking away from the end clears it too.
+w.document.getElementById('aud-play').click();
+w.__probe.endTrack();
+w.__probe.seekTo(10);
+check('and seeking off the end clears it', label() === 'Play');
+
+// A playlist that has another track to play has not run out.
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'two.mp3' }),
+], 0);
+w.__probe.playIndex(0, false);
+await settle();
+w.document.getElementById('aud-play').click();
+w.__probe.endTrack();
+await settle();
+check('the end of one track in a playlist is not the end of the playlist',
+  w.document.getElementById('aud-play').getAttribute('aria-label') !== 'Play again',
+  w.document.getElementById('aud-play').getAttribute('aria-label'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

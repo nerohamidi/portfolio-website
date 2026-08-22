@@ -115,7 +115,15 @@
   // play button, not a filter bank, so that is what they get until they ask for
   // the rest -- and the answer is remembered per browser, the way the background
   // switch is, because it is about who is looking rather than about the sound.
+  //
+  // Experimental is the exception to that last part. Pulling a mix into stems is
+  // the newest thing here and the least settled, so it is kept behind its own
+  // door, and the door decides what is heard as well as what is shown: leaving
+  // it plays the track whole. Anything else would leave a mix nobody could see
+  // the controls for.
   var MODE_STORE = 'aud-mode';
+  var MODES = { s: 'simple', p: 'pro', x: 'experimental' };
+  var MODE_CODES = { simple: 's', pro: 'p', experimental: 'x' };
   var SIMPLE_PITCHES = [-12, -5, 0, 5, 12];
 
   // The delay line is allocated once at its longest, and the slider moves a
@@ -180,8 +188,9 @@
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
     'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip',
-    'aud-mode', 'aud-mode-simple', 'aud-mode-pro',
+    'aud-mode', 'aud-mode-simple', 'aud-mode-pro', 'aud-mode-lab',
     'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
+    'aud-simple-tx', 'aud-simple-note',
     'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
     'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
     'aud-target', 'aud-target-chips',
@@ -267,7 +276,7 @@
   var sepWorker = null;
   var sepNodes = null;
 
-  var simpleMode = false;
+  var uiMode = 'simple';
   var mathOn = false;
   var showWave = true;
   var showFreq = true;
@@ -302,15 +311,21 @@
     return (e ? (e.ref || e.name || String(current)) : '') + '|' + (audioBuffer ? audioBuffer.length : 0);
   }
 
+  function labMode() { return uiMode === 'experimental'; }
+
   // Source mode only means anything once the analysis has run.
-  function sourcesLive() { return split.on && split.mode === 'sources' && sepReady(); }
+  function sourcesLive() {
+    return labMode() && split.on && split.mode === 'sources' && sepReady();
+  }
 
   // And until it has, there is nothing to split by. Falling back to the band
   // network would put the low band through a strip labelled Vocals, which is a
   // worse answer than leaving the track alone: the strips show as idle, the mix
   // is the recording untouched, and pressing Separate is the only thing that
   // changes either.
-  function splitLive() { return split.on && (split.mode === 'bands' || sepReady()); }
+  function splitLive() {
+    return labMode() && split.on && (split.mode === 'bands' || sepReady());
+  }
 
   // Playback runs off a decoded AudioBuffer rather than an <audio> element.
   // Routing an element through createMediaElementSource leaves pause and
@@ -367,8 +382,16 @@
     return /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
   })();
 
+  // Three states, not two. A track that has run to the end is not the same thing
+  // as one that was paused a second in: pressing the button does something
+  // different -- it starts over rather than picking up -- so it says something
+  // different.
   var PLAY_PATH = 'M8 5.5v13l11-6.5z';
   var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
+  var REPLAY_PATH = 'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z';
+  // Whether the track has run out. Cleared by anything that puts a playhead
+  // somewhere other than the end.
+  var atEnd = false;
 
   // The queue is the unit the page shares now. Each entry is one track:
   //   ref   'demo', 'clip:<id>', or null while a file is still only local
@@ -945,6 +968,7 @@
     offsetSec = 0;
     // Tearing the track down settles any debt the door left owing on it.
     pausedByHide = false;
+    atEnd = false;
     setPlaying(false);
     txReset();
     // The stems belonged to the track being replaced.
@@ -1169,6 +1193,7 @@
     ensureCtx();
     stopSource();
 
+    atEnd = false;
     offsetSec = Math.max(0, Math.min(sec, Math.max(0, audioBuffer.duration - 0.01)));
     bufSource = audioCtx.createBufferSource();
     bufSource.buffer = audioBuffer;
@@ -1185,14 +1210,19 @@
     }
     bufSource.onended = function() {
       // Only a natural end reaches here; stopSource clears the handler first.
+      var more = playThrough && current >= 0 && current < queue.length - 1;
       offsetSec = 0;
       bufSource = null;
+      sepSource = null;
+      // Worked out before setPlaying, which is what draws the button, and false
+      // when there is another track: the playlist has not ended, this track has.
+      atEnd = !more;
       setPlaying(false);
       el['aud-seek'].value = 0;
       el['aud-current'].textContent = '0:00';
       // The context is already running by now, so the next track can start
       // without a fresh gesture.
-      if (playThrough && current >= 0 && current < queue.length - 1) playIndex(current + 1, true);
+      if (more) playIndex(current + 1, true);
     };
     startedAt = audioCtx.currentTime;
     bufSource.start(startedAt, offsetSec);
@@ -1215,9 +1245,16 @@
       if (navigator.mediaSession) navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
     } catch (e) {}
     nowPlayingPosition();
-    el['aud-play-icon'].setAttribute('d', on ? PAUSE_PATH : PLAY_PATH);
-    el['aud-play'].setAttribute('aria-label', on ? 'Pause' : 'Play');
-    el['aud-play'].classList.toggle('is-on', on);
+    syncPlayButton();
+  }
+
+  function syncPlayButton() {
+    var label = playing ? 'Pause' : (atEnd ? 'Play again' : 'Play');
+    el['aud-play-icon'].setAttribute('d', playing ? PAUSE_PATH : (atEnd ? REPLAY_PATH : PLAY_PATH));
+    el['aud-play'].setAttribute('aria-label', label);
+    el['aud-play'].setAttribute('title', label);
+    el['aud-play'].classList.toggle('is-on', playing);
+    el['aud-play'].classList.toggle('is-end', !playing && atEnd);
   }
 
   // --- the lock screen and the door ------------------------------------------
@@ -1815,6 +1852,8 @@
     if (bgActive) bgStop();
     else stopSource();
     offsetSec = 0;
+    // Stop puts the playhead at the top, which is not the same as having run out.
+    atEnd = false;
     setPlaying(false);
     el['aud-seek'].value = 0;
     el['aud-current'].textContent = '0:00';
@@ -1825,6 +1864,8 @@
   function seekTo(sec) {
     if (!audioBuffer) return;
     var to = Math.max(0, Math.min(sec, audioBuffer.duration));
+    atEnd = false;
+    syncPlayButton();
     el['aud-seek'].value = to;
     el['aud-current'].textContent = formatTime(to);
     if (playing) startPlayback(to);
@@ -2464,6 +2505,9 @@
 
   function syncSplitUi() {
     var sources = split.mode === 'sources';
+    // The whole panel belongs to one mode. Its own hidden flag still follows the
+    // track, so a page with nothing loaded shows nothing either way.
+    el['aud-stems'].classList.toggle('aud-off-mode', !labMode());
     el['aud-by-bands'].classList.toggle('is-on', !sources);
     el['aud-by-bands'].setAttribute('aria-pressed', sources ? 'false' : 'true');
     el['aud-by-sources'].classList.toggle('is-on', sources);
@@ -2494,20 +2538,35 @@
   // for echo and reverb, and five pitches. Everything it touches is the master
   // rack, so a link made here and a link made in Pro mode are the same link.
 
-  function setMode(simple, remember) {
-    simpleMode = !!simple;
-    document.body.classList.toggle('aud-simple', simpleMode);
-    el['aud-mode-simple'].classList.toggle('is-on', simpleMode);
-    el['aud-mode-pro'].classList.toggle('is-on', !simpleMode);
-    el['aud-mode-simple'].setAttribute('aria-pressed', simpleMode ? 'true' : 'false');
-    el['aud-mode-pro'].setAttribute('aria-pressed', simpleMode ? 'false' : 'true');
+  function setMode(mode, remember) {
+    uiMode = MODES[MODE_CODES[mode]] ? mode : 'simple';
+    document.body.classList.toggle('aud-simple', uiMode === 'simple');
+    document.body.classList.toggle('aud-lab', uiMode === 'experimental');
+
+    [['aud-mode-simple', 'simple'], ['aud-mode-pro', 'pro'], ['aud-mode-lab', 'experimental']]
+      .forEach(function(pair) {
+        var on = uiMode === pair[1];
+        el[pair[0]].classList.toggle('is-on', on);
+        el[pair[0]].setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+
+    // Nothing outside this mode can point the effects panel at a stem, and a
+    // panel left pointed at one would be editing a rack the mix no longer
+    // contains.
+    if (!labMode() && target >= 0) target = -1;
+
     if (remember) {
-      try { window.localStorage.setItem(MODE_STORE, simpleMode ? 's' : 'p'); } catch (e) {}
+      try { window.localStorage.setItem(MODE_STORE, MODE_CODES[uiMode]); } catch (e) {}
     }
     // The canvas is a different size in each mode and is sized from its box, so
     // it has to be measured again after the class has landed.
     sizeCanvas();
-    syncSimple();
+    syncRackUi();
+    syncSplitUi();
+    rebuildChain();
+    // Crossing this door changes what is playing, and a running source cannot be
+    // handed a different buffer, so the transport is restarted where it stands.
+    if (playing && split.on) startPlayback(position());
   }
 
   // Simple mode's switches are a second view onto the master rack, so they
@@ -2527,8 +2586,9 @@
     }
   }
 
-  el['aud-mode-simple'].addEventListener('click', function() { setMode(true, true); });
-  el['aud-mode-pro'].addEventListener('click', function() { setMode(false, true); });
+  el['aud-mode-simple'].addEventListener('click', function() { setMode('simple', true); });
+  el['aud-mode-pro'].addEventListener('click', function() { setMode('pro', true); });
+  el['aud-mode-lab'].addEventListener('click', function() { setMode('experimental', true); });
 
   // Switching a stage on from here writes into the master rack whether or not
   // the Pro panel happens to be pointed at it.
@@ -2541,6 +2601,19 @@
 
   el['aud-simple-echo'].addEventListener('click', function() { toggleMasterStage('echoOn'); });
   el['aud-simple-rev'].addEventListener('click', function() { toggleMasterStage('revOn'); });
+
+  // The transcript toggle, which simple mode has to carry too: the caption under
+  // the visualiser is one of the better reasons to be looking at this page, and
+  // hiding the only way to turn it on was not simplicity, it was an omission.
+  //
+  // It is the same switch as the checkbox in Pro, wired through the same
+  // function, so neither can get ahead of the other -- and it is still the only
+  // thing that ever starts it.
+  el['aud-simple-tx'].addEventListener('click', function() {
+    if (el['aud-simple-tx'].disabled) return;
+    el['aud-tx-on'].checked = !el['aud-tx-on'].checked;
+    el['aud-tx-on'].dispatchEvent(new Event('change', { bubbles: true }));
+  });
 
   (function wireSimplePitch() {
     var chips = el['aud-simple-pitch'].querySelectorAll('.aud-simple-st');
@@ -3266,8 +3339,18 @@
   var txActive = -1;
   var txActiveWord = -1;
 
+  // Said in both places, because simple mode has no transcript bar to read and a
+  // refusal that only appears somewhere invisible is a refusal nobody sees.
   function txStatus(text) {
     el['aud-tx-status'].textContent = text || '';
+    if (el['aud-simple-note']) el['aud-simple-note'].textContent = text || txConsentLine();
+  }
+
+  // The sentence that cannot be cut for brevity. Transcribing sends audio
+  // somewhere, and the person pressing the button has to know that before they
+  // press it, in the mode with the fewest words as much as in the others.
+  function txConsentLine() {
+    return 'Transcribe sends short windows of the centre band (' + txBandLabel() + ') to Gemini.';
   }
 
   function txSyncControls() {
@@ -3284,6 +3367,14 @@
     box.checked = txWanted;
     box.disabled = !audioBuffer;
     el['aud-tx-copy'].disabled = !txSegments.length;
+
+    var chip = el['aud-simple-tx'];
+    if (chip) {
+      chip.classList.toggle('is-on', txWanted);
+      chip.setAttribute('aria-pressed', txWanted ? 'true' : 'false');
+      chip.disabled = !audioBuffer;
+      if (!txWanted && !txSegments.length) el['aud-simple-note'].textContent = txConsentLine();
+    }
   }
 
   // The only way in. Nothing calls this on a load, on a track change, or on a
@@ -4478,10 +4569,10 @@
   (function restoreMode() {
     var saved = null;
     try { saved = window.localStorage.getItem(MODE_STORE); } catch (e) {}
-    // Simple until someone asks for the desk. A first visit is far more often
+    // Simple until someone asks for more. A first visit is far more often
     // someone opening a link than someone building one, and the switch out of it
-    // is the one control that shows in both modes.
-    setMode(saved !== 'p', false);
+    // is the one control that shows in every mode.
+    setMode(MODES[saved] || 'simple', false);
   })();
 
   try {

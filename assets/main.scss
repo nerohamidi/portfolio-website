@@ -3160,9 +3160,13 @@ body.aud-simple {
   .aud-panel,
   .aud-tx-bar,
   .aud-note-row,
-  .aud-caption,
   .aud-bg-bar,
   .aud-drop-fine { display: none !important; }
+
+  // The caption stays. Words appearing under the visualiser in time with the
+  // track are one of the better reasons to be looking at this page, and hiding
+  // the switch that turns them on was not simplicity, it was an omission.
+  .aud-caption { border-top: none; padding-top: 0; }
 
   .page-content { padding: 0; }
 
@@ -3486,4 +3490,67 @@ body.light-mode {
   .aud-test-q { color: #2a7ae2; }
   .aud-test-a { color: #555; em { color: #111; } }
   .aud-test-foot, .aud-sep-hint { color: #666; }
+}
+
+// --- the experimental mode ---
+//
+// A panel that belongs to one mode. Hidden rather than removed, so the state
+// inside it survives a trip out and back.
+
+.aud-off-mode { display: none !important; }
+
+.aud-tag-exp {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid rgba(224, 160, 64, 0.5);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #e0a040;
+  vertical-align: 1px;
+}
+
+// The switch has three stops now, and "Experimental" is a long word on a phone.
+.aud-mode-btn {
+  @media screen and (max-width: 600px) {
+    padding: 6px 10px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+}
+
+// --- simple mode's transcript switch ---
+
+.aud-simple-note {
+  margin: 2px 0 0;
+  max-width: 44ch;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #777;
+  min-height: 1.5em;
+}
+
+// The button offering a restart rather than a first play. Same size and place,
+// different job, so it is worth looking different.
+.aud-round-lg.is-end {
+  border-color: #e0a040;
+  background: rgba(224, 160, 64, 0.14);
+  color: #e0a040;
+
+  &:hover { background: rgba(224, 160, 64, 0.24); border-color: #f0b860; color: #f0b860; }
+}
+
+body.light-mode {
+  .aud-simple-note { color: #666; }
+  .aud-tag-exp { border-color: rgba(184, 121, 26, 0.45); color: #b8791a; }
+  .aud-round-lg.is-end {
+    border-color: #c08020;
+    background: rgba(192, 128, 32, 0.12);
+    color: #8a5510;
+    &:hover { background: rgba(192, 128, 32, 0.2); border-color: #8a5510; color: #6a3f08; }
+  }
 }

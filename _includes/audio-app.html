@@ -1,11 +1,14 @@
 <div class="aud">
 
-  <!-- Two ways in. Simple is a full-screen player with the four things most
-       people who open a shared link actually want; Pro is the whole desk. The
-       switch is the one control that shows in both. -->
+  <!-- Three ways in. Simple is a full-screen player with the handful of things
+       most people who open a shared link actually want; Pro is the desk; and
+       Experimental is the desk with the stem splitting on it, which is the part
+       that is still finding its feet. The switch is the one control that shows
+       in all three. -->
   <div class="aud-mode" id="aud-mode" role="group" aria-label="Interface mode">
     <button class="aud-mode-btn" id="aud-mode-simple" type="button" aria-pressed="true">Simple</button>
     <button class="aud-mode-btn" id="aud-mode-pro" type="button" aria-pressed="false">Pro</button>
+    <button class="aud-mode-btn" id="aud-mode-lab" type="button" aria-pressed="false">Experimental</button>
   </div>
 
   <header class="aud-head">
@@ -94,7 +97,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6h2v12H7zM19 6v12l-9-6z"/></svg>
       </button>
       <button class="aud-round aud-round-lg" id="aud-play" type="button" aria-label="Play">
-        <svg viewBox="0 0 24 24" aria-hidden="true" id="aud-play-icon"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <!-- The id belongs on the path, which is the thing that has a `d`. It sat
+             on the svg for a long time, and setting `d` on an svg does nothing at
+             all, so the transport drew a play triangle throughout: while playing,
+             while paused, and after the track had run out. -->
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path id="aud-play-icon" d="M8 5.5v13l11-6.5z"/></svg>
       </button>
       <button class="aud-round aud-round-step hidden" id="aud-next" type="button" aria-label="Next track">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6h2v12h-2zM5 6l9 6-9 6z"/></svg>
@@ -121,10 +128,17 @@
         <button class="aud-simple-chip aud-simple-st" data-st="5" type="button">+5</button>
         <button class="aud-simple-chip aud-simple-st" data-st="12" type="button">+12</button>
       </div>
+      <div class="aud-simple-row">
+        <button class="aud-simple-chip" id="aud-simple-tx" type="button" aria-pressed="false">Transcribe</button>
+      </div>
       <div class="aud-simple-row aud-simple-foot">
         <label class="aud-btn aud-btn-sm" for="aud-simple-file" tabindex="0">Track</label>
         <input type="file" id="aud-simple-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
       </div>
+      <!-- The one line that cannot be cut for brevity: transcribing sends audio
+           somewhere, and the person pressing it has to know that before they do,
+           in this mode as much as in the others. -->
+      <p class="aud-simple-note" id="aud-simple-note"></p>
     </div>
 
     <div class="aud-bg-bar">
@@ -158,8 +172,11 @@
   <!-- Stems -->
   <section class="aud-panel hidden" id="aud-stems" aria-label="Stems">
     <div class="aud-panel-head">
-      <h2 class="aud-panel-title">Stems</h2>
+      <h2 class="aud-panel-title">Stems <span class="aud-tag-exp">experimental</span></h2>
       <p class="aud-panel-hint" id="aud-split-note">Nothing learned, nothing guessed. All four up is the track again.</p>
+      <p class="aud-panel-hint">Pulling a mix apart is the part of this still finding its feet, so it lives
+        here rather than in Pro. Leaving this mode plays the track whole again and hands the settings back
+        when you return.</p>
     </div>
     <div class="aud-chips">
       <button class="aud-chip" id="aud-split-on" type="button" aria-pressed="false">Split into stems</button>
