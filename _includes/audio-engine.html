@@ -2268,6 +2268,9 @@
       syncSplitLabels();
       applySplitFreqs();
       renderMath();
+      // The transcriber listens to the centre band, so these two sliders decide
+      // what it hears as well as what the Centre stem is.
+      txSyncControls();
     });
   }
   splitSlider('aud-split-f1', 1);
@@ -3270,9 +3273,8 @@
   function txSyncControls() {
     var box = el['aud-tx-on'];
     if (el['aud-tx-tip']) {
-      el['aud-tx-tip'].innerHTML = txSeparated()
-        ? 'off until you tick it &middot; then short windows of <strong>the vocal stem</strong> go to Gemini'
-        : 'off until you tick it &middot; then short windows of the track go to Gemini';
+      el['aud-tx-tip'].innerHTML = 'off until you tick it &middot; then short windows of ' +
+        '<strong>the centre band</strong> (' + txBandLabel() + ') go to Gemini';
     }
     // The box says what was asked for, and nothing else. It used to say
     // `txOn || txDone`, which made a finished transcript re-tick the box the
@@ -3290,6 +3292,10 @@
   function txBegin() {
     txWanted = true;
     txOn = true;
+    // Before anything else, and before the early return below: the centre band
+    // has to be rendered whichever way this goes, and a clip that finds a cached
+    // transcript still needs it for whatever the cache did not cover.
+    txEnsureBand();
     // From the playhead, not from the top: the point is to read what is about to
     // be heard.
     if (!txSegments.length && !txNext) txNext = Math.max(0, position() - 0.5);
@@ -3307,6 +3313,32 @@
     if (!txSegments.length) txStatus('Listening ahead to ' + txListensTo() + '…');
   }
 
+  // Kicked from the press and from the pump. Only one build is ever in flight,
+  // and a build for the wrong crossovers is simply replaced by the next one.
+  function txEnsureBand() {
+    if (txBandBusy || txBandFailed) return;
+    if (txBand && txBandFor === txBandKey()) return;
+    txBandBusy = true;
+    var token = loadToken;
+    txBuildBand().catch(function() { return null; }).then(function(buf) {
+      if (token !== loadToken) return;
+      txBandBusy = false;
+      if (!buf) {
+        // Both paths refused. Recorded rather than retried: the pump asks for
+        // this every frame, and a failure it keeps re-attempting is a page that
+        // spends the rest of the track failing.
+        txBandFailed = true;
+        txOn = false;
+        txWanted = false;
+        txStatus('This track could not be prepared for transcription.');
+        txSyncControls();
+      }
+      // Nothing is kicked from here. The draw loop asks the pump every frame and
+      // is the only thing that ever does, so the window that was waiting on this
+      // goes out on the next one -- and the pump keeps a single driver.
+    });
+  }
+
   function txReset() {
     txOn = false;
     txWanted = false;
@@ -3322,6 +3354,7 @@
     txSpans = [];
     txActive = -1;
     txActiveWord = -1;
+    txDropBand();
     el['aud-caption'].classList.add('hidden');
     el['aud-caption-line'].textContent = '';
     txStatus('');
@@ -3399,64 +3432,166 @@
     });
   }
 
-  // --- cutting the window ---
+  // --- what the transcriber listens to ---------------------------------------
   //
-  // What the transcriber is given, which is not the same thing as what is
-  // playing. A model handed a voice with the band still on it spends its
-  // attention deciding which of the two it is being asked about; handed the
-  // vocal stem it gets a voice on a quiet background, which is the case it was
-  // trained for. So when the track has been separated, the transcript is taken
-  // from channel zero of the stems and not from the mix.
+  // The centre band: the track through the same two crossovers the band split
+  // uses, and then the middle of it. Not the mix, and -- after trying both --
+  // not the vocal stem either.
   //
-  // It changes more than the words. The window boundaries are chosen on the
-  // quietest moment nearby, and quiet in the mix is where the band stops, while
-  // quiet in the vocal stem is where the singer stops -- which is exactly the
-  // place a window should end.
-  function txSeparated() { return sepReady() && sepBuffer.numberOfChannels >= 4; }
+  // The vocal stem is the cleaner signal by every measure that can be plotted.
+  // It is also a masked resynthesis, and a mask that opens and closes on
+  // individual bins leaves musical noise behind: a faint warble around the
+  // voice, made of time-frequency cells switching on and off. A model trained on
+  // recorded speech has heard bleed before and has never heard that, and it
+  // turns out to mind the artefact more than it minds the drums. Cleaner by
+  // measurement, worse by result.
+  //
+  // The centre band has no artefact to mind, because nothing about it is
+  // estimated. It is two Linkwitz-Riley crossovers and a down-mix -- every
+  // sample of the voice arrives exactly as recorded, with the bass, the cymbals
+  // and everything panned wide taken off around it.
+  //
+  // It costs nothing to prepare, and it needs no separation to have been run, so
+  // this improves the transcript for everyone rather than only for whoever
+  // pressed Separate.
+  //
+  // Built once per track at the rate it will be posted at, which makes cutting a
+  // window a subarray rather than a render.
+  var txBand = null;
+  var txBandFor = '';
+  var txBandBusy = false;
+  var txBandFailed = false;
 
-  function txListensTo() {
-    return txSeparated() ? 'the vocal stem' : 'the track';
+  // The crossovers are in here, so moving them rebuilds it for the next window.
+  // That coupling is deliberate and is stated in the line above the toggle: the
+  // transcriber listens to the Centre stem, and the two sliders are what decide
+  // where the Centre stem begins and ends.
+  function txBandKey() {
+    return trackKey() + '|' + split.f1Pos + ',' + split.f2Pos;
   }
 
-  // One channel of whatever is being listened to, for the stretch asked for.
-  // Built rather than referenced, so the resampler downstream is handed a voice
-  // rather than a four-channel buffer it would helpfully mix back together.
-  function txMono(start, end) {
-    var src = txSeparated() ? sepBuffer : audioBuffer;
-    var sr = src.sampleRate;
-    var from = Math.max(0, Math.floor(start * sr));
-    var to = Math.min(src.length, Math.ceil(end * sr));
-    var n = Math.max(1, to - from);
-    var out = audioCtx.createBuffer(1, n, sr);
-    var dst = out.getChannelData(0);
+  function txBandLabel() {
+    return formatFilterFreq(splitF1()) + ' \u2013 ' + formatFilterFreq(splitF2());
+  }
 
-    if (txSeparated()) {
-      dst.set(src.getChannelData(0).subarray(from, to));
-    } else {
-      var l = src.getChannelData(0);
-      var r = src.numberOfChannels > 1 ? src.getChannelData(1) : null;
-      for (var i = 0; i < n; i++) dst[i] = r ? (l[from + i] + r[from + i]) * 0.5 : l[from + i];
+  function txListensTo() { return 'the centre band'; }
+
+  // The down-mix does the middle for nothing: a stereo signal arriving at a
+  // one-channel destination is summed as (L+R)/2, which is the mid channel by
+  // definition. So the whole chain is the crossover pair and an output.
+  function txBuildBand() {
+    if (txBand && txBandFor === txBandKey()) return Promise.resolve(txBand);
+    if (!audioBuffer) return Promise.resolve(null);
+    var Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var frames = Math.max(1, Math.round(audioBuffer.duration * TX_RATE));
+    var key = txBandKey();
+
+    if (!Offline) return Promise.resolve(txFallbackBand(key));
+
+    return new Promise(function(resolve) {
+      var settled = false;
+      var settle = function(buf) {
+        if (settled) return;
+        settled = true;
+        if (!buf) { resolve(txFallbackBand(key)); return; }
+        txBand = buf;
+        txBandFor = key;
+        resolve(buf);
+      };
+      var giveUp = function() { if (!settled) { settled = true; resolve(txFallbackBand(key)); } };
+
+      // The whole build, not only the constructor. A browser that is missing any
+      // one node here should end up on the hand-rolled path rather than on a
+      // promise that never settles -- and the pump waits on this promise, so a
+      // rejection here is a transcript that never starts.
+      try {
+        var off = new Offline(1, frames, TX_RATE);
+        var src = off.createBufferSource();
+        src.buffer = audioBuffer;
+
+        var head = src;
+        // The same alignment the split is built from, and the same reason for
+        // asking for it in decibels: a low or high pass reads Q as resonance.
+        [['highpass', splitF1()], ['highpass', splitF1()],
+         ['lowpass', splitF2()], ['lowpass', splitF2()]].forEach(function(spec) {
+          var f = off.createBiquadFilter();
+          f.type = spec[0];
+          f.Q.value = BUTTER_Q_DB;
+          f.frequency.value = spec[1];
+          head.connect(f);
+          head = f;
+        });
+        head.connect(off.destination);
+        src.start(0);
+
+        // Callback form as well: older Safari never returned a promise here.
+        off.oncomplete = function(ev) { settle(ev.renderedBuffer); };
+        var ret = off.startRendering();
+        if (ret && ret.then) ret.then(settle, giveUp);
+      } catch (e) { giveUp(); }
+    });
+  }
+
+  // Where an offline context is refused. The middle is still taken -- that is an
+  // average of the two channels and needs nothing -- but the band limiting is
+  // not, so this is the mid channel at full range. Weaker, and still better than
+  // the mix.
+  //
+  // Averaged over each decimation window rather than picked from it: a plain
+  // stride would fold everything above 8 kHz back down into the speech band.
+  function txFallbackBand(key) {
+    if (!audioCtx || !audioBuffer) return null;
+    var sr = audioBuffer.sampleRate;
+    var left = audioBuffer.getChannelData(0);
+    var right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+    var step = sr / TX_RATE;
+    var n = Math.max(1, Math.floor(audioBuffer.duration * TX_RATE));
+    var buf = audioCtx.createBuffer(1, n, TX_RATE);
+    var out = buf.getChannelData(0);
+
+    for (var i = 0; i < n; i++) {
+      var from = Math.floor(i * step);
+      var to = Math.floor((i + 1) * step);
+      if (to <= from) to = from + 1;
+      var sum = 0, count = 0;
+      for (var j = from; j < to && j < left.length; j++) {
+        sum += right ? (left[j] + right[j]) * 0.5 : left[j];
+        count++;
+      }
+      out[i] = count ? sum / count : 0;
     }
-    return out;
+    txBand = buf;
+    txBandFor = key;
+    return buf;
   }
+
+  function txDropBand() {
+    txBand = null;
+    txBandFor = '';
+    txBandBusy = false;
+    txBandFailed = false;
+  }
+
+  // --- cutting the window ---
 
   // The quietest 20 ms in the search band around the target length. Silence is
-  // where a sentence is least likely to be split.
+  // where a sentence is least likely to be split -- and quiet in the centre band
+  // is where the singer stops, where quiet in the mix is only where the band
+  // does.
   function txCut(start) {
     var target = Math.min(start + TX_TARGET_SEC, txDuration);
     if (txDuration - target < 2) return txDuration;
+    if (!txBand) return target;
 
-    var src = txSeparated() ? sepBuffer : audioBuffer;
-    var sr = src.sampleRate;
-    var data = src.getChannelData(0);
-    var win = Math.max(64, Math.floor(sr * 0.02));
+    var data = txBand.getChannelData(0);
+    var win = Math.max(64, Math.floor(TX_RATE * 0.02));
     var from = Math.max(start + 1, target - TX_CUT_SEARCH);
     var to = Math.min(txDuration - 0.05, target + TX_CUT_SEARCH);
     var best = target;
     var quietest = Infinity;
 
     for (var t = from; t <= to; t += 0.02) {
-      var at = Math.floor(t * sr);
+      var at = Math.floor(t * TX_RATE);
       var energy = 0;
       for (var i = at; i < at + win && i < data.length; i++) energy += data[i] * data[i];
       if (energy < quietest) { quietest = energy; best = t; }
@@ -3493,70 +3628,16 @@
     return buf;
   }
 
-  // Averaged over each decimation window rather than picked from it: a plain
-  // stride would fold everything above 8 kHz back down into the speech band.
-  // Only reached where an offline context at 16 kHz is refused.
-  function txDecimate(start, end) {
-    var src = txSeparated() ? sepBuffer : audioBuffer;
-    var sr = src.sampleRate;
-    var left = src.getChannelData(0);
-    // The stems' first channel is the voice on its own, so there is nothing to
-    // average it with; the track's two channels still want summing.
-    var right = (!txSeparated() && src.numberOfChannels > 1) ? src.getChannelData(1) : null;
-    var step = sr / TX_RATE;
-    var n = Math.max(1, Math.floor((end - start) * TX_RATE));
-    var out = new Float32Array(n);
-    var base = start * sr;
-
-    for (var i = 0; i < n; i++) {
-      var from = Math.floor(base + i * step);
-      var to = Math.floor(base + (i + 1) * step);
-      if (to <= from) to = from + 1;
-      var sum = 0;
-      var count = 0;
-      for (var j = from; j < to && j < left.length; j++) {
-        sum += right ? (left[j] + right[j]) * 0.5 : left[j];
-        count++;
-      }
-      out[i] = count ? sum / count : 0;
-    }
-    return out;
-  }
-
-  // An offline context resamples properly and downmixes to mono on the way out,
-  // because its destination has one channel. Safari refused rates outside the
-  // hardware range for years, hence the fallback.
+  // The band is already mono and already at the rate it is posted at, so a
+  // window is a subarray. This used to be an offline render per window, with a
+  // timeout to catch the browsers that answered through neither the callback nor
+  // the promise; one render for the whole track took all of that with it.
   function txSlice(start, end) {
-    var Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    var frames = Math.max(1, Math.round((end - start) * TX_RATE));
-
-    if (Offline) {
-      try {
-        var off = new Offline(1, frames, TX_RATE);
-        var src = off.createBufferSource();
-        // A single channel, already chosen: handing the four-channel stem buffer
-        // to a mono destination would have it helpfully mixed back into the
-        // track this is trying to get away from.
-        src.buffer = txMono(start, end);
-        src.connect(off.destination);
-        src.start(0);
-        return new Promise(function(resolve, reject) {
-          off.oncomplete = function(ev) {
-            resolve(txWav(ev.renderedBuffer.getChannelData(0), TX_RATE));
-          };
-          var ret = off.startRendering();
-          if (ret && ret.then) {
-            ret.then(function(buf) { resolve(txWav(buf.getChannelData(0), TX_RATE)); }, reject);
-          }
-          // Neither form reported back. Without this the pump would sit busy for
-          // the rest of the track.
-          setTimeout(function() { reject(new Error('The browser stalled on that window.')); }, 20000);
-        });
-      } catch (e) {
-        // Fall through to the hand-rolled path.
-      }
-    }
-    return Promise.resolve(txWav(txDecimate(start, end), TX_RATE));
+    if (!txBand) return Promise.reject(new Error('The track could not be prepared.'));
+    var data = txBand.getChannelData(0);
+    var from = Math.max(0, Math.min(data.length, Math.round(start * TX_RATE)));
+    var to = Math.max(from + 1, Math.min(data.length, Math.round(end * TX_RATE)));
+    return Promise.resolve(txWav(data.subarray(from, to), TX_RATE));
   }
 
   function txPost(wav, start, index) {
@@ -3581,6 +3662,10 @@
 
   function txPump() {
     if (!txOn || txBusy || txDone || !audioBuffer) return;
+
+    // Nothing can be cut until the band has been built, and the crossovers may
+    // have moved since it was. Both are the same check.
+    if (!txBand || txBandFor !== txBandKey()) { txEnsureBand(); return; }
 
     if (txNext >= txDuration - 0.2) {
       txDone = true;

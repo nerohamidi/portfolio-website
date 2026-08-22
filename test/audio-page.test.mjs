@@ -89,12 +89,16 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     racks: function() { return { master: master, stems: stems.map(function(s) { return s.rack; }) }; },
     sep: function() {
       return { buffer: sepBuffer, busy: sepBusy, ready: sepReady(), live: sourcesLive(),
-        mode: split.mode, separated: txSeparated() };
+        mode: split.mode };
     },
     setSplitMode: setSplitMode,
-    txMono: txMono,
     txCut: txCut,
+    txSlice: txSlice,
     txListensTo: txListensTo,
+    txBand: function() {
+      return { buffer: txBand, key: txBandFor, wants: txBandKey(), label: txBandLabel() };
+    },
+    txEnsureBand: txEnsureBand,
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
   };
   sizeCanvas();
@@ -196,9 +200,18 @@ function boot(hash, fetchImpl, userAgent) {
   w.OfflineAudioContext = function (channels, frames, rate) {
     this.destination = node('destination');
     this.createBufferSource = () => Object.assign(node('source'), { buffer: null, playbackRate: param(1), start() {} });
+    this.createBiquadFilter = () => Object.assign(node('biquad'), {
+      type: 'lowpass', frequency: param(350), Q: param(1),
+    });
+    // The rendered centre band fades rather than being flat, for the same reason
+    // the decoded track does: a flat band puts the quietest moment of every one
+    // of txCut's search windows at its first sample, and every window is then cut
+    // as short as the search allows -- which is the one shape that hides whether
+    // the preload floor is doing anything.
     this.startRendering = () => Promise.resolve({
       duration: frames / rate, sampleRate: rate, numberOfChannels: 1,
-      getChannelData: () => new Float32Array(frames),
+      length: frames,
+      getChannelData: () => decay(frames),
     });
   };
   // jsdom has no Worker. A fake one records what it was asked to do and lets the
@@ -752,6 +765,9 @@ check('nothing is copyable yet', w.document.getElementById('aud-tx-copy').disabl
 arm(w);
 check('ticking the toggle starts it', w.__probe.state().txOn === true);
 
+// The centre band is rendered before any of it can be cut, so a pump driven by
+// hand waits for that the way the draw loop does.
+await settle();
 w.__probe.txPump();
 await settle();
 check('a window is posted', posts.length === 1, JSON.stringify(posts.length));
@@ -814,6 +830,7 @@ w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 
 w.__probe.playIndex(0, false);
 await settle();
 arm(w);
+await settle();
 w.__probe.txPump();
 await settle();
 check('a refused window stops the pump', w.__probe.state().txOn === false);
@@ -904,6 +921,7 @@ w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
 arm(w);
+await settle();
 w.__probe.txPump();
 await settle();
 check('the first track transcribes once it is asked to', posts.length === 1, String(posts.length));
@@ -1921,41 +1939,80 @@ check('and it says so rather than looking broken',
   /Separate/.test(other.document.getElementById('aud-sep-status').textContent),
   other.document.getElementById('aud-sep-status').textContent);
 
-// --- 14c. the transcriber listens to the voice ------------------------------
+// --- 14c. the transcriber listens to the centre band -------------------------
+//
+// Not the mix, and -- after trying both -- not the vocal stem either. The stem
+// is cleaner by measurement and worse by result: it is a masked resynthesis, and
+// the musical noise a mask leaves behind bothers a speech model more than bleed
+// does. The centre band is two crossovers and a down-mix, so every sample of the
+// voice arrives exactly as recorded.
 
 w = boot(DEMO3, () => res({ chunks: [] }));
 await settle();
-check('with no stems, the transcript comes off the track', w.__probe.sep().separated === false &&
-  w.__probe.txListensTo() === 'the track');
-check('and the tip says so', /short windows of the track/.test(w.document.getElementById('aud-tx-tip').textContent),
+
+check('the transcriber listens to the centre band', w.__probe.txListensTo() === 'the centre band');
+check('and the tip says so, with the band it means',
+  /centre band/.test(w.document.getElementById('aud-tx-tip').textContent) &&
+  /200 Hz/.test(w.document.getElementById('aud-tx-tip').textContent),
+  w.document.getElementById('aud-tx-tip').textContent);
+check('nothing is prepared before the toggle is ticked', w.__probe.txBand().buffer === null);
+
+arm(w);
+await settle();
+let band = w.__probe.txBand();
+check('ticking it renders the band, once, for the whole track', Boolean(band.buffer));
+check('at the rate the windows are posted at', band.buffer.sampleRate === 16000,
+  String(band.buffer.sampleRate));
+check('and in one channel, which is what makes it the middle',
+  band.buffer.numberOfChannels === 1, String(band.buffer.numberOfChannels));
+
+// Moving a crossover moves the band, so the next window is cut from the new one
+// rather than from a stale render. The tip follows it too.
+const f1 = w.document.getElementById('aud-split-f1');
+const bandKeyWas = w.__probe.txBand().key;
+const labelWas = w.__probe.txBand().label;
+f1.value = String(parseFloat(f1.value) + 60);
+f1.dispatchEvent(new w.Event('input', { bubbles: true }));
+
+check('moving a crossover leaves the rendered band behind what is now wanted',
+  w.__probe.txBand().key === bandKeyWas && w.__probe.txBand().wants !== bandKeyWas,
+  w.__probe.txBand().key + ' vs ' + w.__probe.txBand().wants);
+check('which is the mismatch the pump rebuilds on',
+  w.__probe.txBand().wants !== w.__probe.txBand().key);
+check('and the tip has already moved to the new band',
+  w.__probe.txBand().label !== labelWas &&
+  w.document.getElementById('aud-tx-tip').textContent.indexOf(w.__probe.txBand().label) > 0,
+  labelWas + ' -> ' + w.__probe.txBand().label + ' | ' +
   w.document.getElementById('aud-tx-tip').textContent);
 
+w.__probe.txEnsureBand();
+await settle();
+check('the next build is for the crossovers as they now stand',
+  w.__probe.txBand().key === w.__probe.txBand().wants && w.__probe.txBand().key !== bandKeyWas,
+  w.__probe.txBand().key);
+
+// Separating changes nothing about what is transcribed -- which is the point:
+// the transcript improved for everyone, not only for whoever pressed Separate.
 press(w, 'aud-split-on');
 w.document.getElementById('aud-by-sources').click();
 press(w, 'aud-sep-go');
 separated(w);
-
-check('once separated it listens to the vocal stem instead', w.__probe.sep().separated === true &&
-  w.__probe.txListensTo() === 'the vocal stem');
-check('and the tip changes to match', /vocal stem/.test(w.document.getElementById('aud-tx-tip').textContent),
+check('separating leaves the transcript on the centre band',
+  w.__probe.txListensTo() === 'the centre band');
+check('and the vocal stem is not what gets posted',
+  /centre band/.test(w.document.getElementById('aud-tx-tip').textContent),
   w.document.getElementById('aud-tx-tip').textContent);
 
-// The window handed to the resampler must be the voice on its own. The fake
-// stems put a different constant in each channel, so which one arrived is not a
-// matter of opinion.
-let mono = w.__probe.txMono(1, 2);
-check('the window it cuts is one channel', mono.numberOfChannels === 1);
-check('and it is the vocal channel, not a mix of all four',
-  Math.abs(mono.getChannelData(0)[0] - 0.5) < 1e-6, String(mono.getChannelData(0)[0]));
-
-// The stems outlive the split switch, and so does the transcript source: what
-// makes the best signal for a transcriber has nothing to do with what is coming
-// out of the speakers.
-press(w, 'aud-split-on');
-check('turning the split off leaves the transcript on the vocal stem',
-  w.__probe.txListensTo() === 'the vocal stem');
-check('because the stems are still there to listen to', w.__probe.sep().ready === true &&
-  w.__probe.sep().live === false);
+// The window handed over is a slice of that band, at that rate.
+const wav = await w.__probe.txSlice(1, 3);
+const dv = new DataView(wav);
+const rate = dv.getUint32(24, true);
+const channels = dv.getUint16(22, true);
+const samples = dv.getUint32(40, true) / 2;
+check('a window is mono PCM at 16 kHz', rate === 16000 && channels === 1,
+  channels + 'ch @ ' + rate);
+check('and is as long as the stretch asked for', Math.abs(samples - 2 * 16000) < 2,
+  String(samples));
 
 // A new track invalidates the stems, which were made out of the old one.
 w.__probe.playIndex(0, false);
