@@ -55,69 +55,8 @@
       <span class="combine-wave-label">W3</span>
     </div>
   </div>
-  <div class="audio-section">
-    <div class="audio-header">
-      <button class="audio-upload-btn" id="audio-demo">Demo</button>
-      <label class="audio-upload-btn" for="audio-file">Upload</label>
-      <input type="file" id="audio-file" accept="audio/*" style="display:none">
-      <span class="audio-filename" id="audio-filename"></span>
-    </div>
-    <div class="audio-controls hidden" id="audio-controls">
-      <div class="audio-transport">
-        <button class="audio-btn" id="audio-play">Play</button>
-        <button class="audio-btn" id="audio-stop">Stop</button>
-        <input type="range" id="audio-volume" min="0" max="1" value="0.5" step="0.01" class="audio-volume">
-        <span class="audio-vol-label" id="audio-vol-label">50%</span>
-      </div>
-      <div class="audio-progress-row">
-        <span class="audio-time" id="audio-current">0:00</span>
-        <input type="range" id="audio-seek" min="0" max="100" value="0" step="0.1" class="audio-seek">
-        <span class="audio-time" id="audio-duration">0:00</span>
-      </div>
-      <div class="audio-viz-options">
-        <button class="audio-viz-btn active" id="audio-viz-wave">Waveform</button>
-        <button class="audio-viz-btn active" id="audio-viz-freq">Spectrum</button>
-      </div>
-      <div class="audio-mix-section">
-        <div class="audio-filter-header">
-          <span class="audio-filter-label">Mix</span>
-          <button class="audio-viz-btn" id="audio-mix-w1">W1</button>
-          <button class="audio-mix-mode" id="audio-mix-mode1">add</button>
-          <button class="audio-viz-btn" id="audio-mix-w2">W2</button>
-          <button class="audio-mix-mode" id="audio-mix-mode2">add</button>
-          <button class="audio-viz-btn" id="audio-mix-w3">W3</button>
-          <button class="audio-mix-mode" id="audio-mix-mode3">add</button>
-          <input type="range" id="audio-mix-gain" min="0" max="1" value="0.3" step="0.01" class="audio-mix-gain-slider">
-          <span class="audio-filter-value" id="audio-mix-gain-label">30%</span>
-        </div>
-      </div>
-      <div class="audio-filter-section">
-        <div class="audio-filter-header">
-          <span class="audio-filter-label">Filter</span>
-          <button class="audio-viz-btn" id="audio-filter-lp">Low Pass</button>
-          <button class="audio-viz-btn" id="audio-filter-hp">High Pass</button>
-          <button class="audio-viz-btn" id="audio-filter-bp">Band Pass</button>
-          <button class="audio-viz-btn" id="audio-filter-bs">Band Stop</button>
-          <button class="audio-viz-btn" id="audio-filter-notch">Notch</button>
-        </div>
-        <div class="audio-filter-params hidden" id="audio-filter-params">
-          <div class="audio-filter-row">
-            <span class="audio-filter-param-label">Freq</span>
-            <input type="range" id="audio-filter-freq" min="0" max="1000" value="500" step="1" class="audio-filter-slider">
-            <span class="audio-filter-value" id="audio-filter-freq-label">1000 Hz</span>
-          </div>
-          <div class="audio-filter-row">
-            <span class="audio-filter-param-label">Q</span>
-            <input type="range" id="audio-filter-q" min="0.1" max="20" value="1" step="0.1" class="audio-filter-slider">
-            <span class="audio-filter-value" id="audio-filter-q-label">1.0</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
   <div class="wave-controls-footer">
     <button class="hide-waves-toggle" id="hide-waves">Hide Waves</button>
-    <button class="hide-waves-toggle" id="audio-only">Audio Only</button>
     <button class="close-panel-btn" id="close-controls" onclick="document.getElementById('wave-controls').classList.add('hidden'); document.getElementById('open-controls').classList.remove('hidden');">Close</button>
   </div>
 </div>

@@ -1,0 +1,114 @@
+<div class="aud">
+
+  <header class="aud-head">
+    <h1 class="aud-title">Signal Share</h1>
+    <p class="aud-sub">Load a track, shape it with a filter, then send someone a link that opens on exactly what you built.</p>
+  </header>
+
+  <ol class="aud-steps">
+    <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Filter it and watch the spectrum</span></li>
+    <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">It opens with your settings</span></li>
+  </ol>
+
+  <div class="aud-note aud-note-shared hidden" id="aud-shared-note">
+    <strong>Someone shared this with you.</strong>
+    <span id="aud-shared-detail">Press play to hear it with their filter settings.</span>
+  </div>
+
+  <!-- Empty state: no track yet -->
+  <div class="aud-drop" id="aud-drop">
+    <div class="aud-drop-icon" aria-hidden="true">
+      <svg viewBox="0 0 64 40" preserveAspectRatio="none">
+        <path d="M0,20 Q8,4 16,20 T32,20 T48,20 T64,20" fill="none" stroke="currentColor" stroke-width="2.5"/>
+      </svg>
+    </div>
+    <p class="aud-drop-lead">Drop an audio file here</p>
+    <div class="aud-drop-actions">
+      <label class="aud-btn aud-btn-primary" for="aud-file" tabindex="0">Choose a file</label>
+      <input type="file" id="aud-file" accept="audio/*" hidden>
+      <button class="aud-btn" id="aud-demo" type="button">Try the demo</button>
+    </div>
+    <p class="aud-drop-fine">MP3, WAV, OGG, FLAC, M4A &middot; up to 12&nbsp;MB &middot; nothing is uploaded until you make a link</p>
+  </div>
+
+  <!-- Player -->
+  <section class="aud-player hidden" id="aud-player" aria-label="Player">
+    <canvas class="aud-canvas" id="aud-canvas"></canvas>
+
+    <div class="aud-track">
+      <span class="aud-track-name" id="aud-name">&nbsp;</span>
+      <button class="aud-btn aud-btn-sm" id="aud-change" type="button">Change track</button>
+    </div>
+
+    <div class="aud-scrub">
+      <span class="aud-time" id="aud-current">0:00</span>
+      <input type="range" id="aud-seek" class="aud-seek" min="0" max="100" value="0" step="0.1" aria-label="Seek">
+      <span class="aud-time" id="aud-duration">0:00</span>
+    </div>
+
+    <div class="aud-transport">
+      <button class="aud-round" id="aud-stop" type="button" aria-label="Stop">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+      </button>
+      <button class="aud-round aud-round-lg" id="aud-play" type="button" aria-label="Play">
+        <svg viewBox="0 0 24 24" aria-hidden="true" id="aud-play-icon"><path d="M8 5.5v13l11-6.5z"/></svg>
+      </button>
+      <div class="aud-vol">
+        <svg viewBox="0 0 24 24" class="aud-vol-icon" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/></svg>
+        <input type="range" id="aud-volume" class="aud-volume" min="0" max="1" value="0.7" step="0.01" aria-label="Volume">
+        <span class="aud-vol-val" id="aud-vol-val">70%</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Controls -->
+  <section class="aud-panel hidden" id="aud-shape" aria-label="Filter">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Filter</h2>
+      <p class="aud-panel-hint">Pick one to cut part of the spectrum. Tap it again to switch it off.</p>
+    </div>
+    <div class="aud-chips" id="aud-filters">
+      <button class="aud-chip" data-filter="lowpass" type="button">Low Pass</button>
+      <button class="aud-chip" data-filter="highpass" type="button">High Pass</button>
+      <button class="aud-chip" data-filter="bandpass" type="button">Band Pass</button>
+      <button class="aud-chip" data-filter="notch-wide" type="button">Band Stop</button>
+      <button class="aud-chip" data-filter="notch-narrow" type="button">Notch</button>
+    </div>
+    <div class="aud-params hidden" id="aud-params">
+      <label class="aud-param">
+        <span class="aud-param-name">Cutoff</span>
+        <input type="range" id="aud-filter-freq" min="0" max="1000" value="500" step="1">
+        <span class="aud-param-val" id="aud-filter-freq-val">1.0 kHz</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Resonance</span>
+        <input type="range" id="aud-filter-q" min="0.1" max="20" value="1" step="0.1">
+        <span class="aud-param-val" id="aud-filter-q-val">1.0</span>
+      </label>
+    </div>
+
+    <div class="aud-panel-head aud-panel-head-sep">
+      <h2 class="aud-panel-title">View</h2>
+    </div>
+    <div class="aud-chips">
+      <button class="aud-chip is-on" id="aud-view-wave" type="button">Waveform</button>
+      <button class="aud-chip is-on" id="aud-view-freq" type="button">Spectrum</button>
+    </div>
+  </section>
+
+  <!-- Share -->
+  <section class="aud-panel aud-share hidden" id="aud-share" aria-label="Share">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Share</h2>
+      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this track with your filter and volume already set. Your file is uploaded only when you press the button.</p>
+    </div>
+    <button class="aud-btn aud-btn-primary aud-btn-wide" id="aud-share-btn" type="button">Create share link</button>
+    <div class="aud-share-out hidden" id="aud-share-out">
+      <input type="text" id="aud-share-link" class="aud-share-link" readonly aria-label="Share link">
+      <button class="aud-btn aud-btn-primary" id="aud-share-copy" type="button">Copy</button>
+    </div>
+    <p class="aud-share-status" id="aud-share-status"></p>
+  </section>
+
+</div>

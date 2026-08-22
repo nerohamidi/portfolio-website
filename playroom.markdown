@@ -16,8 +16,25 @@ Interactive tools and experiments. Click into one to explore.
     </svg>
   </div>
   <h2>Signal Playground</h2>
-  <p>Manipulate waveforms, view frequency-domain representations, combine signals, and process audio with filters.</p>
+  <p>Build waveforms, add and convolve them, and watch what each operation does to the frequency domain.</p>
   <span class="playroom-card-tag">DSP</span>
+</a>
+
+<a class="playroom-card" href="{{ '/playroom/audio/' | relative_url }}">
+  <div class="playroom-card-icon">
+    <svg viewBox="0 0 120 40" preserveAspectRatio="none">
+      <rect x="8" y="14" width="4" height="12" rx="2" fill="currentColor" opacity="0.45"/>
+      <rect x="18" y="8" width="4" height="24" rx="2" fill="currentColor" opacity="0.65"/>
+      <rect x="28" y="3" width="4" height="34" rx="2" fill="currentColor"/>
+      <rect x="38" y="11" width="4" height="18" rx="2" fill="currentColor" opacity="0.65"/>
+      <rect x="48" y="16" width="4" height="8" rx="2" fill="currentColor" opacity="0.45"/>
+      <circle cx="86" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="2.5"/>
+      <path d="M83,15 L92,20 L83,25 Z" fill="currentColor"/>
+    </svg>
+  </div>
+  <h2>Signal Share</h2>
+  <p>Load a track, filter it, watch its spectrum, and send someone a link that opens on your exact settings.</p>
+  <span class="playroom-card-tag">Audio</span>
 </a>
 
 <a class="playroom-card" href="{{ '/playroom/chatbot/' | relative_url }}">

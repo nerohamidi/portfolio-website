@@ -4,4 +4,5 @@ title: Signal Playground
 permalink: /playroom/signals/
 ---
 
-Manipulate waveforms, view their frequency-domain representations, combine signals, and process audio.
+Manipulate waveforms, view their frequency-domain representations, and add or convolve signals together.
+For loading and sharing audio, see [Signal Share]({{ "/playroom/audio/" | relative_url }}).

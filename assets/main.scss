@@ -87,6 +87,14 @@
   }
 }
 
+// Sections inside the panel that the engine shows and hides by toggling a `hidden`
+// class. Only `.wave-controls.hidden` and `.wave-controls-open.hidden` were ever
+// declared, so on the panel's own children the class did nothing and the audio
+// controls, the combine expression and the filter parameters all rendered open.
+.wave-controls .hidden {
+  display: none !important;
+}
+
 .wave-slider {
   display: flex;
   align-items: center;
@@ -1779,3 +1787,480 @@ body.light-mode {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Signal Share (/playroom/audio/)
+//
+// Its own app, so it does not borrow anything from the wave controls panel.
+// Sizing is deliberately larger than the playground: this one is meant to be
+// used by whoever opens a shared link, not only by someone who built it.
+// ---------------------------------------------------------------------------
+
+.aud {
+  max-width: 680px;
+  margin: 0 auto 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.aud-head { text-align: center; }
+
+.aud-title {
+  margin: 0 0 8px;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.aud-sub {
+  margin: 0 auto;
+  max-width: 46ch;
+  color: #999;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+// The three-step strip: the page has to explain itself to a first-time visitor.
+.aud-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+
+  li {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 12px 14px;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  @media screen and (max-width: 600px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.aud-step-n {
+  font-family: monospace;
+  font-size: 11px;
+  color: #6cb6ff;
+}
+
+.aud-step-t { font-size: 14px; font-weight: 600; }
+.aud-step-d { font-size: 12px; color: #888; line-height: 1.4; }
+
+.aud-note {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  border: 1px solid rgba(108, 182, 255, 0.4);
+  background: rgba(108, 182, 255, 0.1);
+
+  strong { display: block; margin-bottom: 2px; }
+  span { color: #aaa; }
+}
+
+// --- empty state ---
+
+.aud-drop {
+  border: 2px dashed #444;
+  border-radius: 14px;
+  padding: 44px 24px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+
+  &.is-over {
+    border-color: #6cb6ff;
+    background: rgba(108, 182, 255, 0.07);
+  }
+
+  @media screen and (max-width: 600px) {
+    padding: 32px 16px;
+  }
+}
+
+.aud-drop-icon {
+  width: 64px;
+  margin: 0 auto 14px;
+  color: #555;
+
+  svg { width: 100%; height: 40px; display: block; }
+}
+
+.aud-drop-lead {
+  margin: 0 0 16px;
+  font-size: 17px;
+  color: #ccc;
+}
+
+.aud-drop-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.aud-drop-fine {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+}
+
+// --- buttons ---
+
+.aud-btn {
+  display: inline-block;
+  border: 1px solid #555;
+  border-radius: 8px;
+  background: none;
+  color: #ccc;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 18px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  &:hover { border-color: #999; color: #fff; }
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.aud-btn-primary {
+  border-color: #6cb6ff;
+  background: rgba(108, 182, 255, 0.14);
+  color: #6cb6ff;
+
+  &:hover { background: rgba(108, 182, 255, 0.24); color: #9bd0ff; border-color: #9bd0ff; }
+}
+
+.aud-btn-sm { font-size: 12px; padding: 6px 12px; }
+.aud-btn-wide { width: 100%; padding: 13px 18px; font-size: 15px; }
+
+// --- player ---
+
+.aud-player {
+  border: 1px solid #3a3a3a;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.aud-canvas {
+  width: 100%;
+  height: 150px;
+  display: block;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+
+  @media screen and (max-width: 600px) {
+    height: 110px;
+  }
+}
+
+.aud-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.aud-track-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aud-scrub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aud-time {
+  font-family: monospace;
+  font-size: 12px;
+  color: #888;
+  min-width: 38px;
+
+  &:last-child { text-align: right; }
+}
+
+.aud-seek {
+  flex: 1;
+  accent-color: #6cb6ff;
+  height: 20px;
+}
+
+.aud-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+
+  @media screen and (max-width: 600px) {
+    gap: 12px;
+  }
+}
+
+.aud-round {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border: 1px solid #555;
+  border-radius: 50%;
+  background: none;
+  color: #ccc;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  svg { width: 22px; height: 22px; fill: currentColor; }
+  &:hover { border-color: #999; color: #fff; }
+}
+
+.aud-round-lg {
+  width: 72px;
+  height: 72px;
+  border-color: #6cb6ff;
+  background: rgba(108, 182, 255, 0.14);
+  color: #6cb6ff;
+
+  svg { width: 34px; height: 34px; }
+  &:hover { background: rgba(108, 182, 255, 0.24); border-color: #9bd0ff; color: #9bd0ff; }
+}
+
+.aud-vol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.aud-vol-icon { width: 18px; height: 18px; fill: #888; flex: none; }
+
+.aud-volume {
+  width: 90px;
+  accent-color: #6cb6ff;
+
+  @media screen and (max-width: 600px) {
+    width: 60px;
+  }
+}
+
+.aud-vol-val {
+  font-family: monospace;
+  font-size: 11px;
+  color: #888;
+  min-width: 34px;
+}
+
+// --- panels ---
+
+.aud-panel {
+  border: 1px solid #3a3a3a;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aud-panel-head-sep {
+  border-top: 1px solid #333;
+  padding-top: 14px;
+  margin-top: 2px;
+}
+
+.aud-panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #999;
+}
+
+.aud-panel-hint {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: #888;
+  line-height: 1.5;
+}
+
+.aud-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aud-chip {
+  border: 1px solid #555;
+  border-radius: 999px;
+  background: none;
+  color: #bbb;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  &:hover { border-color: #999; color: #fff; }
+  &.is-on {
+    background: rgba(108, 182, 255, 0.16);
+    border-color: #6cb6ff;
+    color: #6cb6ff;
+  }
+}
+
+.aud-params {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.aud-param {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  input[type="range"] {
+    flex: 1;
+    accent-color: #e0a040;
+    height: 20px;
+  }
+}
+
+.aud-param-name {
+  font-size: 13px;
+  color: #aaa;
+  min-width: 78px;
+}
+
+.aud-param-val {
+  font-family: monospace;
+  font-size: 12px;
+  color: #e0a040;
+  min-width: 62px;
+  text-align: right;
+}
+
+// --- share ---
+
+.aud-share-out {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.aud-share-link {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #555;
+  border-radius: 8px;
+  color: #ddd;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 11px 12px;
+
+  &:focus { outline: none; border-color: #6cb6ff; }
+}
+
+.aud-share-status {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+  min-height: 1.2em;
+}
+
+// --- light mode ---
+
+body.light-mode {
+  .aud-sub, .aud-step-d, .aud-panel-hint, .aud-share-status, .aud-drop-fine { color: #666; }
+  .aud-steps li { border-color: #ddd; background: rgba(0, 0, 0, 0.015); }
+  .aud-step-n { color: #2a7ae2; }
+
+  .aud-note {
+    border-color: rgba(42, 122, 226, 0.35);
+    background: rgba(42, 122, 226, 0.08);
+    span { color: #555; }
+  }
+
+  .aud-drop {
+    border-color: #ccc;
+    &.is-over { border-color: #2a7ae2; background: rgba(42, 122, 226, 0.06); }
+  }
+  .aud-drop-icon { color: #bbb; }
+  .aud-drop-lead { color: #444; }
+
+  .aud-btn {
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #888; color: #111; }
+  }
+
+  .aud-btn-primary {
+    border-color: #2a7ae2;
+    background: rgba(42, 122, 226, 0.1);
+    color: #2a7ae2;
+    &:hover { background: rgba(42, 122, 226, 0.18); color: #1a5cb8; border-color: #1a5cb8; }
+  }
+
+  .aud-player, .aud-panel { border-color: #e0e0e0; background: #fafafa; }
+  .aud-canvas { background: rgba(0, 0, 0, 0.04); }
+  .aud-panel-head-sep { border-top-color: #e4e4e4; }
+  .aud-panel-title { color: #777; }
+  .aud-time, .aud-vol-val { color: #777; }
+  .aud-vol-icon { fill: #999; }
+  .aud-seek, .aud-volume { accent-color: #2a7ae2; }
+
+  .aud-round {
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #888; color: #111; }
+  }
+
+  .aud-round-lg {
+    border-color: #2a7ae2;
+    background: rgba(42, 122, 226, 0.1);
+    color: #2a7ae2;
+    &:hover { background: rgba(42, 122, 226, 0.18); border-color: #1a5cb8; color: #1a5cb8; }
+  }
+
+  .aud-chip {
+    border-color: #ccc;
+    color: #555;
+    &:hover { border-color: #888; color: #111; }
+    &.is-on { background: rgba(42, 122, 226, 0.12); border-color: #2a7ae2; color: #2a7ae2; }
+  }
+
+  .aud-param-name { color: #555; }
+  .aud-param-val { color: #b8791a; }
+  .aud-param input[type="range"] { accent-color: #c08020; }
+
+  .aud-share-link {
+    background: #fff;
+    border-color: #ccc;
+    color: #333;
+    &:focus { border-color: #2a7ae2; }
+  }
+}
+
+// The app toggles sections with a `hidden` class, same as the wave panel.
+.aud .hidden { display: none !important; }

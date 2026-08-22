@@ -1,3 +1,30 @@
 name = "nero-chatbot-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+
+# Audio clips uploaded from the signal playground. Keys are random and the bucket
+# stays private: the Worker is the only reader.
+[[r2_buckets]]
+binding = "CLIPS"
+bucket_name = "nero-signal-clips"
+
+# Burst protection on the upload route. period must be 10 or 60, so this caps a
+# hammering client rather than enforcing a daily quota.
+[[ratelimits]]
+name = "CLIP_UPLOADS"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 6
+  period = 60
+
+# Storage ceilings for the clip bucket. Lower these to tighten the cap without
+# touching code; src/clips.js carries the same numbers as fallbacks.
+# 8 GiB total, under R2's 10 GB-month free tier, with room for a clip in flight.
+[vars]
+CLIP_MAX_BYTES = "12582912"
+CLIP_MAX_TOTAL_BYTES = "8589934592"
+CLIP_MAX_PER_UPLOADER_BYTES = "209715200"
+CLIP_MAX_OBJECTS = "4000"
+# Must match the bucket's lifecycle rule (--expire-days), which reclaims the space.
+CLIP_TTL_DAYS = "30"

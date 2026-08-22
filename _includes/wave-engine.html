@@ -282,61 +282,6 @@
     })(ei);
   }
 
-  var audioOnlyBtn = document.getElementById('audio-only');
-  var audioOnlyActive = false;
-  audioOnlyBtn.addEventListener('click', function() {
-    audioOnlyActive = !audioOnlyActive;
-    audioOnlyBtn.textContent = audioOnlyActive ? 'Show All' : 'Audio Only';
-    audioOnlyBtn.classList.toggle('active', audioOnlyActive);
-
-    if (audioOnlyActive) {
-      // Disable all waves
-      for (var i = 0; i < 3; i++) {
-        waveEnabled[i] = false;
-        enableBtns[i].classList.remove('active');
-      }
-      // Disable combine
-      if (combineActive) {
-        combineActive = false;
-        combinePowerBtn.classList.remove('active');
-        combineExpr.classList.add('hidden');
-        combineFft = false;
-        fftCombinedBtn.classList.remove('active');
-        fftCombinedBtn.textContent = 'Freq.';
-      }
-      // Hide text
-      if (!textHidden) {
-        textHidden = true;
-        hideTextBtn.textContent = 'Show Text';
-        hideTextBtn.classList.add('active');
-        var pageContent = document.querySelector('.page-content');
-        var header = document.querySelector('.site-header');
-        var footer = document.querySelector('.site-footer');
-        if (pageContent) pageContent.style.display = 'none';
-        if (header) header.style.display = 'none';
-        if (footer) footer.style.display = 'none';
-      }
-    } else {
-      // Re-enable all waves
-      for (var i = 0; i < 3; i++) {
-        waveEnabled[i] = true;
-        enableBtns[i].classList.add('active');
-      }
-      // Show text
-      if (textHidden) {
-        textHidden = false;
-        hideTextBtn.textContent = 'Hide Text';
-        hideTextBtn.classList.remove('active');
-        var pageContent = document.querySelector('.page-content');
-        var header = document.querySelector('.site-header');
-        var footer = document.querySelector('.site-footer');
-        if (pageContent) pageContent.style.display = '';
-        if (header) header.style.display = '';
-        if (footer) footer.style.display = '';
-      }
-    }
-  });
-
   function updateFftButtons() {
     for (var i = 0; i < 3; i++) {
       fftBtns[i].classList.toggle('active', fftState[i]);
@@ -724,171 +669,24 @@
     ctx.textAlign = 'start';
   }
 
-  // --- Audio visualizer ---
-  var audioFileInput = document.getElementById('audio-file');
-  var audioFilename = document.getElementById('audio-filename');
-  var audioControlsDiv = document.getElementById('audio-controls');
-  var audioPlayBtn = document.getElementById('audio-play');
-  var audioStopBtn = document.getElementById('audio-stop');
-  var audioVolumeSlider = document.getElementById('audio-volume');
-  var audioVolLabel = document.getElementById('audio-vol-label');
-  var audioSeek = document.getElementById('audio-seek');
-  var audioCurrent = document.getElementById('audio-current');
-  var audioDuration = document.getElementById('audio-duration');
-  var audioVizWaveBtn = document.getElementById('audio-viz-wave');
-  var audioVizFreqBtn = document.getElementById('audio-viz-freq');
-  var audioFilterLpBtn = document.getElementById('audio-filter-lp');
-  var audioFilterHpBtn = document.getElementById('audio-filter-hp');
-  var audioFilterBpBtn = document.getElementById('audio-filter-bp');
-  var audioFilterBsBtn = document.getElementById('audio-filter-bs');
-  var audioFilterNotchBtn = document.getElementById('audio-filter-notch');
-  var audioFilterParamsDiv = document.getElementById('audio-filter-params');
-  var audioFilterFreqSlider = document.getElementById('audio-filter-freq');
-  var audioFilterFreqLabel = document.getElementById('audio-filter-freq-label');
-  var audioFilterQSlider = document.getElementById('audio-filter-q');
-  var audioFilterQLabel = document.getElementById('audio-filter-q-label');
-  var audioMixBtns = [document.getElementById('audio-mix-w1'), document.getElementById('audio-mix-w2'), document.getElementById('audio-mix-w3')];
-  var audioMixModeBtns = [document.getElementById('audio-mix-mode1'), document.getElementById('audio-mix-mode2'), document.getElementById('audio-mix-mode3')];
-  var audioMixGainSlider = document.getElementById('audio-mix-gain');
-  var audioMixGainLabel = document.getElementById('audio-mix-gain-label');
+  // --- Tone playback ---------------------------------------------------------
+  //
+  // Each wave can be sounded as a pure tone. The audio-file player, its filters and
+  // the share links moved to their own app at /playroom/audio/, so nothing here
+  // builds an analyser or a filter chain: an oscillator goes straight to output.
+
   var wavePlayBtns = [document.getElementById('play1'), document.getElementById('play2'), document.getElementById('play3')];
+  var waveSliders = [slider1, slider2, slider3];
+  var waveAmpSliders = [ampSlider1, ampSlider2, ampSlider3];
+  var waveTypeSelects = [typeSelect1, typeSelect2, typeSelect3];
 
   var audioCtx = null;
-  var audioSource = null;
-  var audioAnalyser = null;
-  var audioGain = null;
-  var audioFilter = null;
-  var audioFilterType = null;
-  var audioMixEnabled = [false, false, false];
-  var audioMixModes = ['add', 'add', 'add'];
-  var audioOscillators = [null, null, null];
-  var audioOscGains = [null, null, null];
-  var audioConvolvers = [null, null, null];
-  var audioConvGains = [null, null, null];
-  var audioMixGain = null;
   var wavePlayOscs = [null, null, null];
   var wavePlayGains = [null, null, null];
-  var audioElement = null;
-  var audioPlaying = false;
-  var audioShowWave = true;
-  var audioShowFreq = true;
-
-  function formatTime(s) {
-    var m = Math.floor(s / 60);
-    var sec = Math.floor(s % 60);
-    return m + ':' + (sec < 10 ? '0' : '') + sec;
-  }
-
-  function rebuildAudioChain() {
-    if (!audioCtx) return;
-    try { audioGain.disconnect(); } catch(e) {}
-    if (audioMixGain) { try { audioMixGain.disconnect(); } catch(e) {} }
-    if (audioFilter) { try { audioFilter.disconnect(); } catch(e) {} }
-    for (var ci = 0; ci < 3; ci++) {
-      if (audioConvolvers[ci]) { try { audioConvolvers[ci].disconnect(); } catch(e) {} }
-      if (audioConvGains[ci]) { try { audioConvGains[ci].disconnect(); } catch(e) {} }
-    }
-    try { audioAnalyser.disconnect(); } catch(e) {}
-
-    var chainInput;
-    if (audioFilterType) {
-      if (!audioFilter) {
-        audioFilter = audioCtx.createBiquadFilter();
-      }
-      audioFilter.type = audioFilterType.replace('-wide', '').replace('-narrow', '');
-      audioFilter.frequency.value = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
-      audioFilter.Q.value = parseFloat(audioFilterQSlider.value);
-      chainInput = audioFilter;
-      audioFilter.connect(audioAnalyser);
-    } else {
-      chainInput = audioAnalyser;
-    }
-
-    audioGain.connect(chainInput);
-
-    for (var ci = 0; ci < 3; ci++) {
-      if (audioMixEnabled[ci] && audioMixModes[ci] === 'conv' && audioConvolvers[ci]) {
-        audioGain.connect(audioConvolvers[ci]);
-        audioConvolvers[ci].connect(audioConvGains[ci]);
-        audioConvGains[ci].connect(chainInput);
-      }
-    }
-
-    var anyAdd = false;
-    for (var ai = 0; ai < 3; ai++) {
-      if (audioMixEnabled[ai] && audioMixModes[ai] === 'add') anyAdd = true;
-    }
-    if (anyAdd) {
-      if (!audioMixGain) {
-        audioMixGain = audioCtx.createGain();
-      }
-      audioMixGain.gain.value = parseFloat(audioMixGainSlider.value);
-      audioMixGain.connect(chainInput);
-    }
-
-    audioAnalyser.connect(audioCtx.destination);
-  }
-
-  function setFilterType(type, defaultQ) {
-    var btns = [audioFilterLpBtn, audioFilterHpBtn, audioFilterBpBtn, audioFilterBsBtn, audioFilterNotchBtn];
-    var types = ['lowpass', 'highpass', 'bandpass', 'notch-wide', 'notch-narrow'];
-    if (audioFilterType === type) {
-      audioFilterType = null;
-      btns.forEach(function(b) { b.classList.remove('active'); });
-      audioFilterParamsDiv.classList.add('hidden');
-    } else {
-      audioFilterType = type;
-      btns.forEach(function(b, i) {
-        b.classList.toggle('active', types[i] === type);
-      });
-      audioFilterParamsDiv.classList.remove('hidden');
-      if (defaultQ !== undefined) {
-        audioFilterQSlider.value = defaultQ;
-        audioFilterQLabel.textContent = defaultQ.toFixed(1);
-      }
-    }
-    rebuildAudioChain();
-  }
-
-  audioFilterLpBtn.addEventListener('click', function() { setFilterType('lowpass'); });
-  audioFilterHpBtn.addEventListener('click', function() { setFilterType('highpass'); });
-  audioFilterBpBtn.addEventListener('click', function() { setFilterType('bandpass'); });
-  audioFilterBsBtn.addEventListener('click', function() { setFilterType('notch-wide', 0.5); });
-  audioFilterNotchBtn.addEventListener('click', function() { setFilterType('notch-narrow', 10); });
-
-  function filterSliderToFreq(val) {
-    var minLog = Math.log(20);
-    var maxLog = Math.log(20000);
-    return Math.exp(minLog + (val / 1000) * (maxLog - minLog));
-  }
-
-  function formatFilterFreq(hz) {
-    return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
-  }
-
-  audioFilterFreqSlider.addEventListener('input', function() {
-    var hz = filterSliderToFreq(parseFloat(audioFilterFreqSlider.value));
-    audioFilterFreqLabel.textContent = formatFilterFreq(hz);
-    if (audioFilter && audioFilterType) audioFilter.frequency.value = hz;
-  });
-
-  audioFilterQSlider.addEventListener('input', function() {
-    var v = parseFloat(audioFilterQSlider.value);
-    audioFilterQLabel.textContent = v.toFixed(1);
-    if (audioFilter && audioFilterType) audioFilter.Q.value = v;
-  });
-
-  var waveSliders = [document.getElementById('freq1'), document.getElementById('freq2'), document.getElementById('freq3')];
-  var waveAmpSliders = [document.getElementById('amp1'), document.getElementById('amp2'), document.getElementById('amp3')];
-  var waveTypeSelects = [document.getElementById('type1'), document.getElementById('type2'), document.getElementById('type3')];
 
   function ensureAudioCtx() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      audioGain = audioCtx.createGain();
-      audioAnalyser = audioCtx.createAnalyser();
-      audioAnalyser.fftSize = 2048;
-      rebuildAudioChain();
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
   }
@@ -908,16 +706,13 @@
       return;
     }
     ensureAudioCtx();
-    var freq = parseFloat(waveSliders[idx].value);
-    var ampMult = parseFloat(waveAmpSliders[idx].value);
-    var waveType = waveTypeSelects[idx].value;
 
     var osc = audioCtx.createOscillator();
-    osc.type = waveTypeToOsc(waveType);
-    osc.frequency.value = freq;
+    osc.type = waveTypeToOsc(waveTypeSelects[idx].value);
+    osc.frequency.value = parseFloat(waveSliders[idx].value);
 
     var gain = audioCtx.createGain();
-    gain.gain.value = ampMult * 0.3;
+    gain.gain.value = parseFloat(waveAmpSliders[idx].value) * 0.3;
     osc.connect(gain);
     gain.connect(audioCtx.destination);
     osc.start();
@@ -931,152 +726,13 @@
   wavePlayBtns[1].addEventListener('click', function() { toggleWavePlay(1); });
   wavePlayBtns[2].addEventListener('click', function() { toggleWavePlay(2); });
 
-  function startOscillator(idx) {
-    if (!audioCtx || audioOscillators[idx]) return;
-    if (!audioMixGain) {
-      audioMixGain = audioCtx.createGain();
-      audioMixGain.gain.value = parseFloat(audioMixGainSlider.value);
-    }
-    var freq = parseFloat(waveSliders[idx].value);
-    var ampMult = parseFloat(waveAmpSliders[idx].value);
-    var waveType = waveTypeSelects[idx].value;
-
-    var osc = audioCtx.createOscillator();
-    osc.type = waveTypeToOsc(waveType);
-    osc.frequency.value = freq;
-
-    var gain = audioCtx.createGain();
-    gain.gain.value = ampMult;
-    osc.connect(gain);
-    gain.connect(audioMixGain);
-    osc.start();
-
-    audioOscillators[idx] = osc;
-    audioOscGains[idx] = gain;
-    rebuildAudioChain();
-  }
-
-  function stopOscillator(idx) {
-    if (audioOscillators[idx]) {
-      audioOscillators[idx].stop();
-      audioOscillators[idx].disconnect();
-      audioOscillators[idx] = null;
-    }
-    if (audioOscGains[idx]) {
-      audioOscGains[idx].disconnect();
-      audioOscGains[idx] = null;
-    }
-    rebuildAudioChain();
-  }
-
-  function generateWaveBuffer(idx) {
-    var freq = parseFloat(waveSliders[idx].value);
-    var ampMult = parseFloat(waveAmpSliders[idx].value);
-    var waveType = waveTypeSelects[idx].value;
-    var sampleRate = audioCtx.sampleRate;
-    var cycleSamples = Math.round(sampleRate / freq);
-    cycleSamples = Math.min(cycleSamples, sampleRate * 2);
-    var buffer = audioCtx.createBuffer(1, cycleSamples, sampleRate);
-    var data = buffer.getChannelData(0);
-    for (var i = 0; i < cycleSamples; i++) {
-      var angle = 2 * Math.PI * freq * i / sampleRate;
-      data[i] = waveFnEval(waveType, angle) * ampMult / cycleSamples;
-    }
-    return buffer;
-  }
-
-  function startConvolver(idx) {
-    if (!audioCtx || audioConvolvers[idx]) return;
-    var conv = audioCtx.createConvolver();
-    conv.normalize = false;
-    conv.buffer = generateWaveBuffer(idx);
-
-    var gain = audioCtx.createGain();
-    gain.gain.value = parseFloat(audioMixGainSlider.value);
-
-    audioConvolvers[idx] = conv;
-    audioConvGains[idx] = gain;
-    rebuildAudioChain();
-  }
-
-  function stopConvolver(idx) {
-    if (audioConvolvers[idx]) {
-      try { audioConvolvers[idx].disconnect(); } catch(e) {}
-      audioConvolvers[idx] = null;
-    }
-    if (audioConvGains[idx]) {
-      try { audioConvGains[idx].disconnect(); } catch(e) {}
-      audioConvGains[idx] = null;
-    }
-    rebuildAudioChain();
-  }
-
-  function toggleMixWave(idx) {
-    if (!audioCtx) return;
-    audioMixEnabled[idx] = !audioMixEnabled[idx];
-    audioMixBtns[idx].classList.toggle('active', audioMixEnabled[idx]);
-    if (audioMixEnabled[idx]) {
-      if (audioMixModes[idx] === 'conv') {
-        startConvolver(idx);
-      } else {
-        startOscillator(idx);
-      }
-    } else {
-      stopOscillator(idx);
-      stopConvolver(idx);
-    }
-  }
-
-  function toggleMixMode(idx) {
-    var wasEnabled = audioMixEnabled[idx];
-    if (wasEnabled) {
-      stopOscillator(idx);
-      stopConvolver(idx);
-    }
-    audioMixModes[idx] = audioMixModes[idx] === 'add' ? 'conv' : 'add';
-    audioMixModeBtns[idx].textContent = audioMixModes[idx];
-    if (wasEnabled) {
-      if (audioMixModes[idx] === 'conv') {
-        startConvolver(idx);
-      } else {
-        startOscillator(idx);
-      }
-    }
-  }
-
-  audioMixBtns[0].addEventListener('click', function() { toggleMixWave(0); });
-  audioMixBtns[1].addEventListener('click', function() { toggleMixWave(1); });
-  audioMixBtns[2].addEventListener('click', function() { toggleMixWave(2); });
-  audioMixModeBtns[0].addEventListener('click', function() { toggleMixMode(0); });
-  audioMixModeBtns[1].addEventListener('click', function() { toggleMixMode(1); });
-  audioMixModeBtns[2].addEventListener('click', function() { toggleMixMode(2); });
-
-  audioMixGainSlider.addEventListener('input', function() {
-    var v = parseFloat(audioMixGainSlider.value);
-    audioMixGainLabel.textContent = Math.round(v * 100) + '%';
-    if (audioMixGain) audioMixGain.gain.value = v;
-    for (var i = 0; i < 3; i++) {
-      if (audioConvGains[i]) audioConvGains[i].gain.value = v;
-    }
-  });
-
+  // Keeps a tone that is already sounding in step with its sliders.
   function updateOscillatorParams(idx) {
-    if (wavePlayOscs[idx]) {
-      wavePlayOscs[idx].frequency.value = parseFloat(waveSliders[idx].value);
-      wavePlayOscs[idx].type = waveTypeToOsc(waveTypeSelects[idx].value);
-      if (wavePlayGains[idx]) {
-        wavePlayGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value) * 0.3;
-      }
-    }
-    if (audioOscillators[idx]) {
-      audioOscillators[idx].frequency.value = parseFloat(waveSliders[idx].value);
-      audioOscillators[idx].type = waveTypeToOsc(waveTypeSelects[idx].value);
-      if (audioOscGains[idx]) {
-        audioOscGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value);
-      }
-    }
-    if (audioConvolvers[idx]) {
-      audioConvolvers[idx].buffer = generateWaveBuffer(idx);
+    if (!wavePlayOscs[idx]) return;
+    wavePlayOscs[idx].frequency.value = parseFloat(waveSliders[idx].value);
+    wavePlayOscs[idx].type = waveTypeToOsc(waveTypeSelects[idx].value);
+    if (wavePlayGains[idx]) {
+      wavePlayGains[idx].gain.value = parseFloat(waveAmpSliders[idx].value) * 0.3;
     }
   }
 
@@ -1086,195 +742,6 @@
       waveAmpSliders[idx].addEventListener('input', function() { updateOscillatorParams(idx); });
       waveTypeSelects[idx].addEventListener('change', function() { updateOscillatorParams(idx); });
     })(mi);
-  }
-
-  function loadAudioSrc(src, name) {
-    audioFilename.textContent = name.length > 20 ? name.substring(0, 17) + '...' : name;
-    audioControlsDiv.classList.remove('hidden');
-
-    if (audioElement) {
-      audioElement.pause();
-      audioElement.src = '';
-    }
-    if (audioSource) {
-      try { audioSource.disconnect(); } catch(err) {}
-    }
-
-    ensureAudioCtx();
-
-    audioElement = new Audio();
-    audioElement.src = src;
-    audioElement.crossOrigin = 'anonymous';
-
-    audioElement.addEventListener('loadedmetadata', function() {
-      audioDuration.textContent = formatTime(audioElement.duration);
-      audioSeek.max = audioElement.duration;
-    });
-
-    audioElement.addEventListener('ended', function() {
-      audioPlaying = false;
-      audioPlayBtn.textContent = 'Play';
-      audioPlayBtn.classList.remove('active');
-    });
-
-    audioSource = audioCtx.createMediaElementSource(audioElement);
-    audioSource.connect(audioGain);
-    audioGain.gain.value = parseFloat(audioVolumeSlider.value);
-    audioPlaying = false;
-    audioPlayBtn.textContent = 'Play';
-    audioPlayBtn.classList.remove('active');
-  }
-
-  audioFileInput.addEventListener('change', function(e) {
-    var file = e.target.files[0];
-    if (!file) return;
-    loadAudioSrc(URL.createObjectURL(file), file.name);
-  });
-
-  var audioDemoBtn = document.getElementById('audio-demo');
-  audioDemoBtn.addEventListener('click', function() {
-    loadAudioSrc('{{ "/assets/audio/symphony.mp3" | relative_url }}', 'symphony.mp3');
-  });
-
-  audioPlayBtn.addEventListener('click', function() {
-    if (!audioElement) return;
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    if (audioPlaying) {
-      audioElement.pause();
-      audioPlaying = false;
-      audioPlayBtn.textContent = 'Play';
-      audioPlayBtn.classList.remove('active');
-    } else {
-      audioElement.play();
-      audioPlaying = true;
-      audioPlayBtn.textContent = 'Pause';
-      audioPlayBtn.classList.add('active');
-    }
-  });
-
-  audioStopBtn.addEventListener('click', function() {
-    if (!audioElement) return;
-    audioElement.pause();
-    audioElement.currentTime = 0;
-    audioPlaying = false;
-    audioPlayBtn.textContent = 'Play';
-    audioPlayBtn.classList.remove('active');
-  });
-
-  audioVolumeSlider.addEventListener('input', function() {
-    var v = parseFloat(audioVolumeSlider.value);
-    if (audioGain) audioGain.gain.value = v;
-    audioVolLabel.textContent = Math.round(v * 100) + '%';
-  });
-
-  audioSeek.addEventListener('input', function() {
-    if (audioElement) audioElement.currentTime = parseFloat(audioSeek.value);
-  });
-
-  audioVizWaveBtn.addEventListener('click', function() {
-    audioShowWave = !audioShowWave;
-    audioVizWaveBtn.classList.toggle('active', audioShowWave);
-  });
-
-  audioVizFreqBtn.addEventListener('click', function() {
-    audioShowFreq = !audioShowFreq;
-    audioVizFreqBtn.classList.toggle('active', audioShowFreq);
-  });
-
-  function drawAudioViz(w_css, h_css) {
-    if (!audioAnalyser || !audioPlaying) return;
-
-    if (audioElement) {
-      audioSeek.value = audioElement.currentTime;
-      audioCurrent.textContent = formatTime(audioElement.currentTime);
-    }
-
-    var bufferLength = audioAnalyser.frequencyBinCount;
-
-    if (audioShowWave) {
-      var timeData = new Uint8Array(bufferLength);
-      audioAnalyser.getByteTimeDomainData(timeData);
-
-      var waveY = h_css * 0.35;
-      var waveH = h_css * 0.12;
-      var waveColor = isLight ? 'rgba(34, 160, 80, 0.6)' : 'rgba(100, 220, 140, 0.6)';
-
-      var labelColor = isLight ? 'rgba(34, 160, 80, 0.5)' : 'rgba(100, 220, 140, 0.4)';
-      ctx.fillStyle = labelColor;
-      ctx.font = '11px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText('Waveform', 15, waveY - waveH - 4);
-
-      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, waveY);
-      ctx.lineTo(w_css, waveY);
-      ctx.stroke();
-
-      ctx.beginPath();
-      var sliceWidth = w_css / bufferLength;
-      for (var i = 0; i < bufferLength; i++) {
-        var v = (timeData[i] / 128.0) - 1.0;
-        var y = waveY + v * waveH;
-        if (i === 0) ctx.moveTo(0, y);
-        else ctx.lineTo(i * sliceWidth, y);
-      }
-      ctx.strokeStyle = waveColor;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
-    if (audioShowFreq) {
-      var freqData = new Uint8Array(bufferLength);
-      audioAnalyser.getByteFrequencyData(freqData);
-
-      var specY = h_css * 0.7;
-      var specH = h_css * 0.15;
-      var barCount = Math.min(bufferLength, Math.floor(w_css / 2));
-      var barW = w_css / barCount;
-      var barColor = isLight ? 'rgba(200, 50, 50,' : 'rgba(255, 100, 100,';
-
-      var slabelColor = isLight ? 'rgba(200, 50, 50, 0.5)' : 'rgba(255, 100, 100, 0.4)';
-      ctx.fillStyle = slabelColor;
-      ctx.font = '11px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText('Frequency Spectrum', 15, specY - specH - 4);
-
-      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, specY);
-      ctx.lineTo(w_css, specY);
-      ctx.stroke();
-
-      for (var j = 0; j < barCount; j++) {
-        var val = freqData[j] / 255.0;
-        var bh = val * specH;
-        var alpha = 0.3 + val * 0.5;
-        ctx.fillStyle = barColor + ' ' + alpha + ')';
-        ctx.fillRect(j * barW, specY - bh, Math.max(barW - 1, 1), bh);
-      }
-
-      if (audioCtx) {
-        var nyquist = audioCtx.sampleRate / 2;
-        ctx.fillStyle = isLight ? 'rgba(100,100,100,0.5)' : 'rgba(180,180,180,0.4)';
-        ctx.font = '9px monospace';
-        ctx.textAlign = 'center';
-        var freqMarks = [100, 500, 1000, 2000, 5000, 10000];
-        for (var fi = 0; fi < freqMarks.length; fi++) {
-          if (freqMarks[fi] > nyquist) break;
-          var fx = (freqMarks[fi] / nyquist) * w_css;
-          ctx.fillText(freqMarks[fi] >= 1000 ? (freqMarks[fi] / 1000) + 'k' : freqMarks[fi] + '', fx, specY + 14);
-          ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)';
-          ctx.beginPath();
-          ctx.moveTo(fx, specY);
-          ctx.lineTo(fx, specY - specH);
-          ctx.stroke();
-        }
-        ctx.fillText('Hz', w_css - 20, specY + 14);
-      }
-    }
   }
 
   function draw() {
@@ -1356,10 +823,6 @@
       return result;
     }
 
-    if (audioPlaying) {
-      drawAudioViz(w_css, h_css);
-    }
-
     if (!wavesHidden) {
       for (var i = 0; i < 3; i++) {
         if (!waveEnabled[i]) continue;
@@ -1418,6 +881,7 @@
 
     requestAnimationFrame(draw);
   }
+
 
   draw();
 })();

@@ -1,4 +1,5 @@
 import { SYSTEM_PROMPT } from './context.js';
+import { handleUpload, handleFetchClip } from './clips.js';
 
 const ALLOWED_ORIGINS = [
   'https://nerohamidi.github.io',
@@ -21,8 +22,10 @@ const GENERATION_CONFIG = {
 function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Clip-Name, Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length',
+    'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
 }
@@ -77,7 +80,7 @@ function readTurns(body) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
     const allowed = ALLOWED_ORIGINS.includes(origin);
     const headers = corsHeaders(allowed ? origin : ALLOWED_ORIGINS[0]);
@@ -85,6 +88,35 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers });
     }
+
+    const url = new URL(request.url);
+
+    // Clip routes are matched first. Anything that falls through stays on the
+    // chatbot path, which the playroom page has posted to at the bare origin
+    // since before clips existed.
+    const clipMatch = url.pathname.match(/^\/clip\/([^/]+)$/);
+    if (clipMatch) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      // Readable from any origin. The unguessable key is the access control here,
+      // and a shared link has to work wherever the recipient opens it.
+      return handleFetchClip(request, env, clipMatch[1], {
+        ...headers,
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    if (url.pathname === '/clip') {
+      if (request.method !== 'POST') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      if (!allowed) {
+        return json({ error: 'Forbidden' }, 403, headers);
+      }
+      return handleUpload(request, env, ctx, headers);
+    }
+
     if (request.method !== 'POST') {
       return json({ error: 'Method not allowed' }, 405, headers);
     }

@@ -1,0 +1,511 @@
+<script>
+(function() {
+  // Signal Share: an audio player whose entire state fits in a link.
+  //
+  // The wave/convolution playground is a separate app now. Nothing here reads or
+  // writes its controls, so the two can change independently.
+
+  var CLIP_API = 'https://nero-chatbot-proxy.nhamidi.workers.dev';
+  var CLIP_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+  var DEMO_SRC = '{{ "/assets/audio/symphony.mp3" | relative_url }}';
+
+  var FILTER_CODES = { lowpass: 'lp', highpass: 'hp', bandpass: 'bp', 'notch-wide': 'bs', 'notch-narrow': 'nt' };
+  var FILTER_TYPES = { lp: 'lowpass', hp: 'highpass', bp: 'bandpass', bs: 'notch-wide', nt: 'notch-narrow' };
+  // The two notch presets only differ by the Q they arrive with.
+  var FILTER_DEFAULT_Q = { 'notch-wide': 0.5, 'notch-narrow': 10 };
+
+  var el = {};
+  [
+    'aud-drop', 'aud-file', 'aud-demo', 'aud-player', 'aud-canvas', 'aud-name', 'aud-change',
+    'aud-current', 'aud-seek', 'aud-duration', 'aud-stop', 'aud-play', 'aud-play-icon',
+    'aud-volume', 'aud-vol-val', 'aud-shape', 'aud-filters', 'aud-params',
+    'aud-filter-freq', 'aud-filter-freq-val', 'aud-filter-q', 'aud-filter-q-val',
+    'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
+    'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
+    'aud-shared-note', 'aud-shared-detail'
+  ].forEach(function(id) { el[id] = document.getElementById(id); });
+
+  var ctx2d = el['aud-canvas'].getContext('2d');
+  var isLight = document.body.classList.contains('light-mode');
+  new MutationObserver(function() {
+    isLight = document.body.classList.contains('light-mode');
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  var audioCtx = null;
+  var source = null;
+  var gainNode = null;
+  var filterNode = null;
+  var analyser = null;
+  var audioEl = null;
+  var filterType = null;
+  var playing = false;
+  var showWave = true;
+  var showFreq = true;
+
+  var audioRef = null;        // 'demo' | 'clip:<id>'
+  var audioName = null;
+  var pendingFile = null;     // picked locally, not uploaded yet
+
+  var PLAY_PATH = 'M8 5.5v13l11-6.5z';
+  var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
+
+  function formatTime(s) {
+    if (!isFinite(s) || s < 0) s = 0;
+    var m = Math.floor(s / 60);
+    var sec = Math.floor(s % 60);
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  function filterSliderToFreq(val) {
+    var minLog = Math.log(20);
+    var maxLog = Math.log(20000);
+    return Math.exp(minLog + (val / 1000) * (maxLog - minLog));
+  }
+
+  function formatFilterFreq(hz) {
+    return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
+  }
+
+  // --- audio graph -----------------------------------------------------------
+
+  function ensureCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      gainNode = audioCtx.createGain();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      rebuildChain();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  function rebuildChain() {
+    if (!audioCtx) return;
+    try { gainNode.disconnect(); } catch (e) {}
+    if (filterNode) { try { filterNode.disconnect(); } catch (e) {} }
+    try { analyser.disconnect(); } catch (e) {}
+
+    var head = analyser;
+    if (filterType) {
+      if (!filterNode) filterNode = audioCtx.createBiquadFilter();
+      filterNode.type = filterType.replace('-wide', '').replace('-narrow', '');
+      filterNode.frequency.value = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+      filterNode.Q.value = parseFloat(el['aud-filter-q'].value);
+      filterNode.connect(analyser);
+      head = filterNode;
+    }
+    gainNode.connect(head);
+    analyser.connect(audioCtx.destination);
+  }
+
+  function loadSrc(src, name) {
+    ensureCtx();
+
+    if (audioEl) {
+      audioEl.pause();
+      audioEl.src = '';
+    }
+    if (source) { try { source.disconnect(); } catch (e) {} }
+
+    audioName = name;
+    el['aud-name'].textContent = name;
+    el['aud-drop'].classList.add('hidden');
+    el['aud-player'].classList.remove('hidden');
+    el['aud-shape'].classList.remove('hidden');
+    el['aud-share'].classList.remove('hidden');
+
+    audioEl = new Audio();
+    audioEl.crossOrigin = 'anonymous';
+    audioEl.src = src;
+
+    audioEl.addEventListener('loadedmetadata', function() {
+      el['aud-duration'].textContent = formatTime(audioEl.duration);
+      el['aud-seek'].max = audioEl.duration;
+    });
+    audioEl.addEventListener('ended', function() { setPlaying(false); });
+    audioEl.addEventListener('error', function() {
+      el['aud-name'].textContent = audioRef && audioRef.indexOf('clip:') === 0
+        ? 'This clip has expired'
+        : 'Could not load that track';
+    });
+
+    source = audioCtx.createMediaElementSource(audioEl);
+    source.connect(gainNode);
+    gainNode.gain.value = parseFloat(el['aud-volume'].value);
+    setPlaying(false);
+  }
+
+  function setPlaying(on) {
+    playing = on;
+    el['aud-play-icon'].setAttribute('d', on ? PAUSE_PATH : PLAY_PATH);
+    el['aud-play'].setAttribute('aria-label', on ? 'Pause' : 'Play');
+    el['aud-play'].classList.toggle('is-on', on);
+  }
+
+  // --- visualiser ------------------------------------------------------------
+
+  function sizeCanvas() {
+    var dpr = window.devicePixelRatio || 1;
+    var rect = el['aud-canvas'].getBoundingClientRect();
+    if (!rect.width) return;
+    el['aud-canvas'].width = rect.width * dpr;
+    el['aud-canvas'].height = rect.height * dpr;
+    ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', sizeCanvas);
+
+  function draw() {
+    var rect = el['aud-canvas'].getBoundingClientRect();
+    var w = rect.width;
+    var h = rect.height;
+
+    if (w && (el['aud-canvas'].width !== Math.round(w * (window.devicePixelRatio || 1)))) sizeCanvas();
+
+    ctx2d.clearRect(0, 0, w, h);
+
+    if (audioEl && playing) {
+      el['aud-seek'].value = audioEl.currentTime;
+      el['aud-current'].textContent = formatTime(audioEl.currentTime);
+    }
+
+    if (analyser && w) {
+      var bins = analyser.frequencyBinCount;
+      var half = showWave && showFreq;
+
+      if (showWave) {
+        var time = new Uint8Array(bins);
+        analyser.getByteTimeDomainData(time);
+        var mid = half ? h * 0.28 : h * 0.5;
+        var amp = (half ? h * 0.2 : h * 0.36);
+        ctx2d.beginPath();
+        for (var i = 0; i < bins; i++) {
+          var y = mid + ((time[i] / 128) - 1) * amp;
+          if (i === 0) ctx2d.moveTo(0, y);
+          else ctx2d.lineTo((i / bins) * w, y);
+        }
+        ctx2d.strokeStyle = isLight ? 'rgba(34,160,80,0.85)' : 'rgba(100,220,140,0.85)';
+        ctx2d.lineWidth = 2;
+        ctx2d.stroke();
+      }
+
+      if (showFreq) {
+        var freq = new Uint8Array(bins);
+        analyser.getByteFrequencyData(freq);
+        var base = half ? h * 0.95 : h * 0.9;
+        var span = half ? h * 0.5 : h * 0.75;
+        var bars = Math.min(bins, Math.max(24, Math.floor(w / 4)));
+        var bw = w / bars;
+        for (var j = 0; j < bars; j++) {
+          var v = freq[Math.floor((j / bars) * bins)] / 255;
+          var bh = v * span;
+          ctx2d.fillStyle = isLight
+            ? 'rgba(200,50,50,' + (0.25 + v * 0.55) + ')'
+            : 'rgba(255,100,100,' + (0.25 + v * 0.55) + ')';
+          ctx2d.fillRect(j * bw, base - bh, Math.max(bw - 1.5, 1), bh);
+        }
+      }
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  // --- transport -------------------------------------------------------------
+
+  el['aud-play'].addEventListener('click', function() {
+    if (!audioEl) return;
+    ensureCtx();
+    if (playing) {
+      audioEl.pause();
+      setPlaying(false);
+    } else {
+      // Flipped before the promise settles. play() resolves a tick or more later,
+      // and a transport button that lags the press feels broken.
+      setPlaying(true);
+      audioEl.play().catch(function() { setPlaying(false); });
+    }
+  });
+
+  el['aud-stop'].addEventListener('click', function() {
+    if (!audioEl) return;
+    audioEl.pause();
+    audioEl.currentTime = 0;
+    el['aud-seek'].value = 0;
+    el['aud-current'].textContent = '0:00';
+    setPlaying(false);
+  });
+
+  el['aud-seek'].addEventListener('input', function() {
+    if (audioEl) audioEl.currentTime = parseFloat(el['aud-seek'].value);
+  });
+
+  el['aud-volume'].addEventListener('input', function() {
+    var v = parseFloat(el['aud-volume'].value);
+    if (gainNode) gainNode.gain.value = v;
+    el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
+  });
+
+  el['aud-change'].addEventListener('click', function() { el['aud-file'].click(); });
+
+  // --- filter ----------------------------------------------------------------
+
+  function setFilter(type) {
+    var chips = el['aud-filters'].querySelectorAll('.aud-chip');
+    filterType = (filterType === type) ? null : type;
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('is-on', chips[i].getAttribute('data-filter') === filterType);
+    }
+    el['aud-params'].classList.toggle('hidden', !filterType);
+    if (filterType && FILTER_DEFAULT_Q[filterType] !== undefined) {
+      el['aud-filter-q'].value = FILTER_DEFAULT_Q[filterType];
+      el['aud-filter-q-val'].textContent = FILTER_DEFAULT_Q[filterType].toFixed(1);
+    }
+    rebuildChain();
+  }
+
+  (function wireFilterChips() {
+    var chips = el['aud-filters'].querySelectorAll('.aud-chip');
+    for (var i = 0; i < chips.length; i++) {
+      (function(chip) {
+        chip.addEventListener('click', function() { setFilter(chip.getAttribute('data-filter')); });
+      })(chips[i]);
+    }
+  })();
+
+  el['aud-filter-freq'].addEventListener('input', function() {
+    var hz = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+    el['aud-filter-freq-val'].textContent = formatFilterFreq(hz);
+    if (filterNode) filterNode.frequency.value = hz;
+  });
+
+  el['aud-filter-q'].addEventListener('input', function() {
+    var q = parseFloat(el['aud-filter-q'].value);
+    el['aud-filter-q-val'].textContent = q.toFixed(1);
+    if (filterNode) filterNode.Q.value = q;
+  });
+
+  el['aud-view-wave'].addEventListener('click', function() {
+    showWave = !showWave;
+    el['aud-view-wave'].classList.toggle('is-on', showWave);
+  });
+
+  el['aud-view-freq'].addEventListener('click', function() {
+    showFreq = !showFreq;
+    el['aud-view-freq'].classList.toggle('is-on', showFreq);
+  });
+
+  // --- picking a track -------------------------------------------------------
+
+  function takeFile(file) {
+    if (!file) return;
+    pendingFile = file;
+    audioRef = null;
+    resetShare();
+    loadSrc(URL.createObjectURL(file), file.name);
+  }
+
+  el['aud-file'].addEventListener('change', function(e) { takeFile(e.target.files[0]); });
+
+  el['aud-demo'].addEventListener('click', function() {
+    pendingFile = null;
+    audioRef = 'demo';
+    resetShare();
+    loadSrc(DEMO_SRC, 'symphony.mp3');
+  });
+
+  // Keyboard parity for the file label, which is not a real button.
+  document.querySelector('label[for="aud-file"]').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el['aud-file'].click(); }
+  });
+
+  ['dragenter', 'dragover'].forEach(function(ev) {
+    el['aud-drop'].addEventListener(ev, function(e) {
+      e.preventDefault();
+      el['aud-drop'].classList.add('is-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function(ev) {
+    el['aud-drop'].addEventListener(ev, function(e) {
+      e.preventDefault();
+      el['aud-drop'].classList.remove('is-over');
+    });
+  });
+  el['aud-drop'].addEventListener('drop', function(e) {
+    if (e.dataTransfer && e.dataTransfer.files) takeFile(e.dataTransfer.files[0]);
+  });
+
+  // --- share -----------------------------------------------------------------
+
+  function encodeState() {
+    var parts = ['v=2'];
+    function bit(b) { return b ? '1' : '0'; }
+    parts.push('flt=' + [
+      filterType ? FILTER_CODES[filterType] : 'off',
+      el['aud-filter-freq'].value,
+      el['aud-filter-q'].value
+    ].join(','));
+    parts.push('viz=' + [bit(showWave), bit(showFreq)].join(','));
+    parts.push('vol=' + el['aud-volume'].value);
+    if (audioRef) {
+      parts.push('a=' + audioRef);
+      if (audioName) parts.push('n=' + encodeURIComponent(audioName));
+    }
+    return parts.join('&');
+  }
+
+  function decodeState(hash) {
+    var out = {};
+    hash.replace(/^#/, '').split('&').forEach(function(kv) {
+      var eq = kv.indexOf('=');
+      if (eq < 1) return;
+      try { out[kv.slice(0, eq)] = decodeURIComponent(kv.slice(eq + 1)); }
+      catch (err) { out[kv.slice(0, eq)] = kv.slice(eq + 1); }
+    });
+    return out;
+  }
+
+  function setSlider(node, value) {
+    if (value === undefined || value === '' || isNaN(parseFloat(value))) return;
+    node.value = value;
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function applyState(s) {
+    if (s.v !== '2') return;
+
+    var flt = (s.flt || '').split(',');
+    if (flt.length >= 3) {
+      var want = flt[0] === 'off' ? null : (FILTER_TYPES[flt[0]] || null);
+      if (want) setFilter(want);
+      // After the type: the notch presets write their own Q on the way in.
+      setSlider(el['aud-filter-freq'], flt[1]);
+      setSlider(el['aud-filter-q'], flt[2]);
+    }
+
+    var viz = (s.viz || '').split(',');
+    if (viz.length >= 2) {
+      if ((viz[0] === '1') !== showWave) el['aud-view-wave'].click();
+      if ((viz[1] === '1') !== showFreq) el['aud-view-freq'].click();
+    }
+
+    if (s.vol !== undefined) setSlider(el['aud-volume'], s.vol);
+
+    if (s.a) restoreTrack(s.a, s.n);
+  }
+
+  function restoreTrack(ref, name) {
+    var src;
+    if (ref === 'demo') {
+      src = DEMO_SRC;
+      name = name || 'symphony.mp3';
+    } else if (ref.indexOf('clip:') === 0 && CLIP_ID_RE.test(ref.slice(5))) {
+      src = CLIP_API + '/clip/' + ref.slice(5);
+      name = name || 'shared clip';
+    } else {
+      return;
+    }
+
+    audioRef = ref;
+    el['aud-shared-note'].classList.remove('hidden');
+    el['aud-shared-detail'].textContent = 'Press play to hear "' + name + '" with their settings.';
+
+    // An AudioContext built without a user gesture starts suspended, and Safari will
+    // not resume one that was never tied to an interaction. Waiting for the first
+    // real click keeps the graph and the autoplay policy in agreement.
+    var armed = false;
+    function arm() {
+      if (armed) return;
+      armed = true;
+      document.removeEventListener('pointerdown', arm, true);
+      document.removeEventListener('keydown', arm, true);
+      loadSrc(src, name);
+    }
+    document.addEventListener('pointerdown', arm, true);
+    document.addEventListener('keydown', arm, true);
+
+    el['aud-drop'].classList.add('hidden');
+    el['aud-player'].classList.remove('hidden');
+    el['aud-shape'].classList.remove('hidden');
+    el['aud-share'].classList.remove('hidden');
+    el['aud-name'].textContent = name;
+  }
+
+  function uploadClip(file) {
+    return fetch(CLIP_API + '/clip', {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-Clip-Name': encodeURIComponent(file.name)
+      },
+      body: file
+    }).then(function(resp) {
+      return resp.json().catch(function() { return {}; }).then(function(data) {
+        if (!resp.ok) throw new Error(data.error || 'Upload failed.');
+        return data;
+      });
+    });
+  }
+
+  function resetShare() {
+    el['aud-share-out'].classList.add('hidden');
+    el['aud-share-status'].textContent = '';
+  }
+
+  function showLink() {
+    var hash = encodeState();
+    el['aud-share-link'].value = location.origin + location.pathname + '#' + hash;
+    el['aud-share-out'].classList.remove('hidden');
+    el['aud-share-link'].focus();
+    el['aud-share-link'].select();
+    history.replaceState(null, '', '#' + hash);
+  }
+
+  el['aud-share-btn'].addEventListener('click', function() {
+    if (!pendingFile) {
+      showLink();
+      el['aud-share-status'].textContent = audioRef === 'demo'
+        ? 'Anyone who opens this hears the demo with your settings.'
+        : 'Link copied to the box below.';
+      return;
+    }
+    el['aud-share-btn'].disabled = true;
+    el['aud-share-status'].textContent = 'Uploading your track...';
+    uploadClip(pendingFile).then(function(data) {
+      audioRef = 'clip:' + data.id;
+      audioName = data.name || audioName;
+      pendingFile = null;
+      showLink();
+      el['aud-share-status'].textContent = 'Ready. This link works for ' + data.expiresInDays + ' days.';
+    }).catch(function(err) {
+      el['aud-share-status'].textContent = err.message || 'Upload failed.';
+    }).then(function() {
+      el['aud-share-btn'].disabled = false;
+    });
+  });
+
+  el['aud-share-copy'].addEventListener('click', function() {
+    el['aud-share-link'].select();
+    function ok() { el['aud-share-status'].textContent = 'Copied.'; }
+    function fallback() { try { document.execCommand('copy'); ok(); } catch (e) {} }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(el['aud-share-link'].value).then(ok, fallback);
+    } else {
+      fallback();
+    }
+  });
+
+  // --- boot ------------------------------------------------------------------
+
+  el['aud-vol-val'].textContent = Math.round(parseFloat(el['aud-volume'].value) * 100) + '%';
+  el['aud-filter-freq-val'].textContent =
+    formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
+
+  if (location.hash.length > 1) {
+    // A hand-edited hash should never take the page down with it.
+    try { applyState(decodeState(location.hash)); }
+    catch (err) { if (window.console) console.warn('Could not read the shared state:', err); }
+  }
+
+  sizeCanvas();
+  draw();
+})();
+</script>
