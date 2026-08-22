@@ -26,15 +26,24 @@
     <p class="aud-drop-lead">Drop an audio file here</p>
     <div class="aud-drop-actions">
       <label class="aud-btn aud-btn-primary" for="aud-file" tabindex="0">Choose a file</label>
-      <input type="file" id="aud-file" accept="audio/*" hidden>
+      <input type="file" id="aud-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" hidden>
       <button class="aud-btn" id="aud-demo" type="button">Try the demo</button>
     </div>
-    <p class="aud-drop-fine">MP3, WAV, OGG, FLAC, M4A &middot; up to 12&nbsp;MB &middot; nothing is uploaded until you make a link</p>
+    <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB &middot; nothing is uploaded until you make a link</p>
   </div>
 
   <!-- Player -->
   <section class="aud-player hidden" id="aud-player" aria-label="Player">
     <canvas class="aud-canvas" id="aud-canvas"></canvas>
+
+    <div class="aud-note-row" id="aud-note-row">
+      <span class="aud-note-name" id="aud-note-name">&mdash;</span>
+      <span class="aud-note-meta">
+        <span class="aud-note-hz" id="aud-note-hz">no clear pitch</span>
+        <span class="aud-note-cents" id="aud-note-cents"></span>
+      </span>
+      <span class="aud-note-tip">clearest on a single instrument or voice</span>
+    </div>
 
     <div class="aud-track">
       <span class="aud-track-name" id="aud-name">&nbsp;</span>
@@ -86,6 +95,22 @@
         <input type="range" id="aud-filter-q" min="0.1" max="20" value="1" step="0.1">
         <span class="aud-param-val" id="aud-filter-q-val">1.0</span>
       </label>
+    </div>
+
+    <div class="aud-panel-head aud-panel-head-sep">
+      <h2 class="aud-panel-title">Pitch</h2>
+      <p class="aud-panel-hint">Resamples the track, so it speeds up as it rises and slows as it falls, the way varispeed works on tape.</p>
+    </div>
+    <div class="aud-params">
+      <label class="aud-param">
+        <span class="aud-param-name">Shift</span>
+        <input type="range" id="aud-pitch" min="-12" max="12" value="0" step="1">
+        <span class="aud-param-val" id="aud-pitch-val">0 st</span>
+      </label>
+      <div class="aud-pitch-foot">
+        <span class="aud-pitch-rate" id="aud-pitch-rate">1.00&times; speed</span>
+        <button class="aud-btn aud-btn-sm" id="aud-pitch-reset" type="button">Reset</button>
+      </div>
     </div>
 
     <div class="aud-panel-head aud-panel-head-sep">

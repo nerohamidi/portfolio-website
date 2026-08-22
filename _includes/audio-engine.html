@@ -20,6 +20,8 @@
     'aud-current', 'aud-seek', 'aud-duration', 'aud-stop', 'aud-play', 'aud-play-icon',
     'aud-volume', 'aud-vol-val', 'aud-shape', 'aud-filters', 'aud-params',
     'aud-filter-freq', 'aud-filter-freq-val', 'aud-filter-q', 'aud-filter-q-val',
+    'aud-pitch', 'aud-pitch-val', 'aud-pitch-rate', 'aud-pitch-reset',
+    'aud-note-name', 'aud-note-hz', 'aud-note-cents',
     'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
     'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
     'aud-shared-note', 'aud-shared-detail'
@@ -41,6 +43,9 @@
   var playing = false;
   var showWave = true;
   var showFreq = true;
+  var semitones = 0;
+  var lastDetect = 0;
+  var detectBuf = null;
 
   var audioRef = null;        // 'demo' | 'clip:<id>'
   var audioName = null;
@@ -132,11 +137,13 @@
     source = audioCtx.createMediaElementSource(audioEl);
     source.connect(gainNode);
     gainNode.gain.value = parseFloat(el['aud-volume'].value);
+    applyPitch();
     setPlaying(false);
   }
 
   function setPlaying(on) {
     playing = on;
+    if (!on) clearNote();
     el['aud-play-icon'].setAttribute('d', on ? PAUSE_PATH : PLAY_PATH);
     el['aud-play'].setAttribute('aria-label', on ? 'Pause' : 'Play');
     el['aud-play'].classList.toggle('is-on', on);
@@ -206,7 +213,133 @@
       }
     }
 
+    // Autocorrelation is far too costly to run every frame, and a note readout that
+    // updates faster than this is unreadable anyway.
+    var now = Date.now();
+    if (now - lastDetect > 120) {
+      lastDetect = now;
+      updateNote();
+    }
+
     requestAnimationFrame(draw);
+  }
+
+  // --- pitch -----------------------------------------------------------------
+  //
+  // Resampling, not a phase vocoder: playbackRate moves pitch and tempo together.
+  // Browsers default to preserving pitch across a rate change, which would turn this
+  // into a tempo control, so that has to be switched off on every element we make.
+
+  function applyPitch() {
+    var rate = Math.pow(2, semitones / 12);
+    el['aud-pitch-val'].textContent = (semitones > 0 ? '+' : '') + semitones + ' st';
+    el['aud-pitch-rate'].textContent = rate.toFixed(2) + '\u00d7 speed';
+    if (audioEl) {
+      audioEl.preservesPitch = false;
+      audioEl.mozPreservesPitch = false;
+      audioEl.webkitPreservesPitch = false;
+      audioEl.playbackRate = rate;
+    }
+  }
+
+  el['aud-pitch'].addEventListener('input', function() {
+    semitones = parseInt(el['aud-pitch'].value, 10) || 0;
+    applyPitch();
+  });
+
+  el['aud-pitch-reset'].addEventListener('click', function() {
+    semitones = 0;
+    el['aud-pitch'].value = '0';
+    applyPitch();
+  });
+
+  // --- note detection --------------------------------------------------------
+  //
+  // Autocorrelation over the analyser's time-domain window, so it reports what is
+  // actually coming out: after the filter, and after the pitch shift. Honest only on
+  // roughly monophonic material, which the clarity gate below is there to enforce.
+
+  var NOTE_MIN_HZ = 55;    // A1
+  var NOTE_MAX_HZ = 2100;  // a little over C7
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+  function detectPitch(buf, sr) {
+    var n = buf.length;
+    var energy = 0;
+    for (var i = 0; i < n; i++) energy += buf[i] * buf[i];
+    if (!energy || Math.sqrt(energy / n) < 0.01) return null;
+
+    var minLag = Math.max(2, Math.floor(sr / NOTE_MAX_HZ));
+    var maxLag = Math.min(n - 3, Math.floor(sr / NOTE_MIN_HZ));
+    if (maxLag <= minLag + 1) return null;
+
+    // Raw autocorrelation, deliberately not divided by the overlap count. The
+    // shrinking overlap makes the envelope fall away as the lag grows, and that
+    // decay is what keeps the true period ahead of its own multiples. Normalising
+    // by overlap flattens them into a tie, and the peak pick then lands on a
+    // subharmonic: an A4 comes back as a B1 seven periods down.
+    var acf = new Float32Array(maxLag + 2);
+    for (var lag = 0; lag <= maxLag + 1; lag++) {
+      var sum = 0;
+      for (var j = 0; j < n - lag; j++) sum += buf[j] * buf[j + lag];
+      acf[lag] = sum;
+    }
+
+    // Walk past the initial descent, or the answer is always lag zero.
+    var d = 0;
+    while (d < maxLag && acf[d] > acf[d + 1]) d++;
+
+    var from = Math.max(d, minLag);
+    var best = -Infinity;
+    var bestLag = -1;
+    for (var k = from; k <= maxLag; k++) {
+      if (acf[k] > best) { best = acf[k]; bestLag = k; }
+    }
+    if (bestLag < 1) return null;
+
+    // How periodic the window really is. Noise and dense polyphony fall well short.
+    if (best / acf[0] < 0.4) return null;
+
+    // Parabolic interpolation puts the peak between samples.
+    var lagF = bestLag;
+    var y1 = acf[bestLag - 1], y2 = acf[bestLag], y3 = acf[bestLag + 1];
+    var denom = y1 + y3 - 2 * y2;
+    if (denom) lagF = bestLag - (y3 - y1) / (2 * denom);
+
+    var hz = sr / lagF;
+    if (hz < NOTE_MIN_HZ || hz > NOTE_MAX_HZ) return null;
+    return hz;
+  }
+
+  function noteFor(hz) {
+    var midi = 69 + 12 * (Math.log(hz / 440) / Math.LN2);
+    var nearest = Math.round(midi);
+    return {
+      name: NOTE_NAMES[((nearest % 12) + 12) % 12] + (Math.floor(nearest / 12) - 1),
+      cents: Math.round((midi - nearest) * 100)
+    };
+  }
+
+  function clearNote() {
+    el['aud-note-name'].textContent = '\u2014';
+    el['aud-note-hz'].textContent = 'no clear pitch';
+    el['aud-note-cents'].textContent = '';
+  }
+
+  function updateNote() {
+    if (!analyser || !playing) { clearNote(); return; }
+    if (!detectBuf || detectBuf.length !== analyser.fftSize) {
+      detectBuf = new Float32Array(analyser.fftSize);
+    }
+    analyser.getFloatTimeDomainData(detectBuf);
+
+    var hz = detectPitch(detectBuf, audioCtx.sampleRate);
+    if (!hz) { clearNote(); return; }
+
+    var note = noteFor(hz);
+    el['aud-note-name'].textContent = note.name;
+    el['aud-note-hz'].textContent = hz.toFixed(1) + ' Hz';
+    el['aud-note-cents'].textContent = (note.cents > 0 ? '+' : '') + note.cents + '\u00a2';
   }
 
   // --- transport -------------------------------------------------------------
@@ -345,6 +478,7 @@
     ].join(','));
     parts.push('viz=' + [bit(showWave), bit(showFreq)].join(','));
     parts.push('vol=' + el['aud-volume'].value);
+    if (semitones) parts.push('p=' + semitones);
     if (audioRef) {
       parts.push('a=' + audioRef);
       if (audioName) parts.push('n=' + encodeURIComponent(audioName));
@@ -388,6 +522,15 @@
     }
 
     if (s.vol !== undefined) setSlider(el['aud-volume'], s.vol);
+
+    if (s.p !== undefined) {
+      var st = parseInt(s.p, 10);
+      if (!isNaN(st) && st >= -12 && st <= 12) {
+        el['aud-pitch'].value = st;
+        semitones = st;
+        applyPitch();
+      }
+    }
 
     if (s.a) restoreTrack(s.a, s.n);
   }

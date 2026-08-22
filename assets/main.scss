@@ -2264,3 +2264,62 @@ body.light-mode {
 
 // The app toggles sections with a `hidden` class, same as the wave panel.
 .aud .hidden { display: none !important; }
+
+// Live note readout, sitting under the visualiser.
+.aud-note-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.aud-note-name {
+  font-family: monospace;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  color: #6cb6ff;
+  min-width: 2.6em;
+}
+
+.aud-note-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #999;
+}
+
+.aud-note-cents { color: #e0a040; }
+
+.aud-note-tip {
+  margin-left: auto;
+  font-size: 11px;
+  color: #777;
+
+  @media screen and (max-width: 600px) {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+}
+
+.aud-pitch-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.aud-pitch-rate {
+  font-family: monospace;
+  font-size: 12px;
+  color: #888;
+}
+
+body.light-mode {
+  .aud-note-name { color: #2a7ae2; }
+  .aud-note-meta, .aud-pitch-rate { color: #666; }
+  .aud-note-cents { color: #b8791a; }
+  .aud-note-tip { color: #888; }
+}
