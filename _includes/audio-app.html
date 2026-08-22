@@ -184,21 +184,47 @@
         <input type="range" id="aud-split-f2" min="0" max="1000" value="826" step="1">
         <span class="aud-param-val" id="aud-split-f2-val">6.0 kHz</span>
       </label>
+      <p class="aud-sep-hint">Two frequencies cut the track in three. The middle band is then split once
+        more, into what both channels hold in common &mdash; <em>(L+R)/2</em>, which is whatever was panned up
+        the middle &mdash; and what they differ by, <em>(L&minus;R)/2</em>, which is whatever was spread wide.</p>
     </div>
     <!-- Source mode: the analysis is offline, so it has a button and a bar. -->
     <div class="aud-sep hidden" id="aud-sep">
+
+      <!-- What the three tests are. The strips below are written in the same
+           words, so a row like "held, unrepeating, centred" reads as a recipe
+           rather than as jargon. -->
+      <ol class="aud-test-list">
+        <li>
+          <span class="aud-test-q">held or hit</span>
+          <span class="aud-test-a">A held note draws a line <em>across</em> the spectrogram and a hit draws one <em>down</em> it, so a median along time keeps one and a median along frequency keeps the other.</span>
+        </li>
+        <li>
+          <span class="aud-test-q">repeats or not</span>
+          <span class="aud-test-a">The loop is found from how much the track sounds like itself a few seconds later. Take the median across every turn of it and the band survives; the singer, doing something different each time, does not.</span>
+        </li>
+        <li>
+          <span class="aud-test-q">centred or not</span>
+          <span class="aud-test-a">Sweep a gain and watch the two channels cancel. Where they go quiet is where that sound is panned &mdash; a voice cancels in the middle, a guitar at nine o&rsquo;clock does not.</span>
+        </li>
+      </ol>
+      <p class="aud-test-foot">Each answer is a weight rather than a yes or no, and the four weights add to one at every point. That is what makes the four stems add back to the recording.</p>
+
       <div class="aud-params">
         <label class="aud-param">
-          <span class="aud-param-name">Focus</span>
-          <input type="range" id="aud-sep-width" min="0.12" max="0.8" value="0.35" step="0.01">
-          <span class="aud-param-val" id="aud-sep-width-val">0.35</span>
+          <span class="aud-param-name">Centre is</span>
+          <input type="range" id="aud-sep-width" min="1" max="6" value="3" step="0.1">
+          <span class="aud-param-val" id="aud-sep-width-val">&plusmn;3.0 dB</span>
         </label>
+        <p class="aud-sep-hint">How far off centre a sound may be panned and still count as a voice. Narrower turns away more of the band, and some of the voice with it.</p>
         <label class="aud-param">
-          <span class="aud-param-name">Voice</span>
+          <span class="aud-param-name">Vocal pull</span>
           <input type="range" id="aud-sep-voice" min="0.3" max="1.6" value="1" step="0.05">
-          <span class="aud-param-val" id="aud-sep-voice-val">1.00</span>
+          <span class="aud-param-val" id="aud-sep-voice-val">1.00&times;</span>
         </label>
+        <p class="aud-sep-hint">How hard to pull the voice out of what the three tests agreed on. More of it gets the whole voice and some of the band with it; less is cleaner and thinner.</p>
       </div>
+
       <div class="aud-sep-run">
         <button class="aud-btn aud-btn-primary" id="aud-sep-go" type="button">Separate</button>
         <span class="aud-sep-status" id="aud-sep-status">Takes a few seconds, and holds the stems in memory while they play.</span>

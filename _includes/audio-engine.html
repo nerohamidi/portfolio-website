@@ -83,11 +83,13 @@
   // It is offline because two of the three cues need the whole track: a median
   // over four hundred milliseconds cannot be taken causally, and a model of what
   // repeats cannot be built before the repeats have happened.
+  // Written in the same words as the three tests above them, so a row reads as a
+  // recipe rather than as a claim.
   var SOURCE_STEMS = [
-    { code: 'vx', name: 'Vocals', what: 'harmonic, unrepeating, centred, in a voice\u2019s range' },
-    { code: 'dr', name: 'Drums',  what: 'whatever is smooth across frequency rather than across time' },
-    { code: 'bs', name: 'Bass',   what: 'the harmonic part below the crossover' },
-    { code: 'ot', name: 'Other',  what: 'the rest \u2014 the track minus the other three, exactly' }
+    { code: 'vx', name: 'Vocals', what: 'held \u00b7 does not repeat \u00b7 centred \u00b7 above the bass' },
+    { code: 'dr', name: 'Drums',  what: 'hit rather than held' },
+    { code: 'bs', name: 'Bass',   what: 'held \u00b7 below the crossover' },
+    { code: 'ot', name: 'Other',  what: 'what none of the other three claimed \u2014 the track minus them, exactly' }
   ];
   // Four channels of float at the track's own rate, held for as long as the
   // stems are loaded. Long enough and that is more memory than a phone will give
@@ -2320,6 +2322,8 @@
     sepStatus(why);
   }
 
+  // Decibels of pan either side of the middle, which is what the label says and
+  // now also what the sweep measures.
   function sepWidth() { return parseFloat(el['aud-sep-width'].value); }
   function sepVoice() { return parseFloat(el['aud-sep-voice'].value); }
 
@@ -2352,7 +2356,7 @@
       left: left.buffer, right: right.buffer,
       sampleRate: audioBuffer.sampleRate,
       bassHz: filterSliderToFreq(split.f1Pos),
-      width: sepWidth(), voice: sepVoice()
+      widthDb: sepWidth(), voice: sepVoice()
     }, [left.buffer, right.buffer]);
   }
 
@@ -2405,10 +2409,10 @@
   el['aud-sep-go'].addEventListener('click', sepStart);
 
   wireParam('aud-sep-width', function() {
-    el['aud-sep-width-val'].textContent = sepWidth().toFixed(2);
+    el['aud-sep-width-val'].textContent = '\u00b1' + sepWidth().toFixed(1) + ' dB';
   });
   wireParam('aud-sep-voice', function() {
-    el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2);
+    el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2) + '\u00d7';
   });
 
   // Both knobs are read when the analysis runs, not while it plays, so moving
@@ -2469,8 +2473,8 @@
     el['aud-stem-foot'].classList.toggle('hidden', !split.on);
 
     el['aud-split-note'].innerHTML = sources
-      ? 'Held notes against hits, what repeats against what does not, and where each bin cancels between the speakers. Nothing learned, nothing guessed \u2014 and the four sum back to the recording exactly.'
-      : 'Two crossovers and a mid/side matrix &mdash; nothing learned, nothing guessed. All four up is the track again, level for level.';
+      ? 'Four stems, told apart by what a sound <em>is</em>. Nothing learned, nothing guessed \u2014 three measurements, and the four sum back to the recording exactly.'
+      : 'Four stems, told apart by where a sound <em>sits</em>: two crossover frequencies, then the middle split from the sides. All four up is the track again, level for level.';
 
     if (sources && !sepReady() && !sepBusy) sepStatus(sepIdleText());
     renderTargets();
@@ -2682,7 +2686,9 @@
         add('sp-hpm', 'm<sub>perc</sub> = P²/(H²+P²) &nbsp;→&nbsp; drums');
         add('sp-rep', 'W(f, t mod p) = median over repetitions of |X|');
         add('sp-repm', 'm<sub>rep</sub> = min(W,|X|)²/|X|², p from the beat spectrum');
-        add('sp-az', 'd* = argmin<sub>d</sub> |L − dR|, c = how near d* is to 1');
+        add('sp-az', 'd* = argmin<sub>d</sub> |L − dR|, pan = 20 log₁₀ d*');
+        add('sp-azw', 'c = 1 where |pan| < ' + (sepWidth() / 3).toFixed(1) +
+          ' dB, 0 beyond ' + sepWidth().toFixed(1) + ' dB');
         add('sp-vox', 'm<sub>vox</sub> = (1−m<sub>perc</sub>)(1−m<sub>bass</sub>)(1−m<sub>rep</sub>)&middot;c&middot;v(f)');
         add('sp-sum2', 'Σ m = 1 in every bin, and the masks are real');
         add('sp-exact', 'so all four up is the recording, sample for sample');
@@ -4372,8 +4378,8 @@
   nameStems();
   syncSplitLabels();
   syncSplitUi();
-  el['aud-sep-width-val'].textContent = sepWidth().toFixed(2);
-  el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2);
+  el['aud-sep-width-val'].textContent = '\u00b1' + sepWidth().toFixed(1) + ' dB';
+  el['aud-sep-voice-val'].textContent = sepVoice().toFixed(2) + '\u00d7';
   // The math panel starts closed on every visit. It is not remembered, and it
   // is not carried in a link.
   mathOn = false;

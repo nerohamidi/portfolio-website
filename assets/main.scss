@@ -3417,3 +3417,73 @@ body.light-mode {
     i { background: #2a7ae2; }
   }
 }
+
+// --- what the three tests are ---
+//
+// Sits above the controls in source mode, because the controls are meaningless
+// without it: "centre is ±3 dB" only means something once you know that centre
+// is measured by sweeping a gain until the two channels cancel.
+
+.aud-test-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 2px solid #3a3a3a;
+  padding-left: 14px;
+
+  li {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+
+    @media screen and (max-width: 600px) {
+      flex-direction: column;
+      gap: 2px;
+    }
+  }
+}
+
+.aud-test-q {
+  flex: none;
+  width: 108px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #6cb6ff;
+}
+
+.aud-test-a {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #999;
+
+  em { color: #ccc; font-style: normal; font-weight: 600; }
+}
+
+.aud-test-foot {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #777;
+}
+
+// The line under a control, saying which way to move it and what that costs.
+.aud-sep-hint {
+  margin: -4px 0 6px 90px;
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+
+  @media screen and (max-width: 600px) { margin-left: 0; }
+}
+
+body.light-mode {
+  .aud-test-list { border-left-color: #e0e0e0; }
+  .aud-test-q { color: #2a7ae2; }
+  .aud-test-a { color: #555; em { color: #111; } }
+  .aud-test-foot, .aud-sep-hint { color: #666; }
+}

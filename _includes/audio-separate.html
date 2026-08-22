@@ -45,7 +45,11 @@ for (var wi = 0; wi < N; wi++) WIN[wi] = Math.sin(Math.PI * (wi + 0.5) / N);
 
 var MED_T = 17;               // frames of median for the harmonic estimate, ~400 ms
 var MED_F = 17;               // bins for the percussive one, ~370 Hz
-var AZ_STEPS = 32;            // resolution of the azimuth sweep
+// Resolution of the azimuth sweep. Sixty-four steps over the range puts them
+// about a quarter of a decibel apart in the middle, which is finer than the
+// narrowest centre window the panel offers -- so the control has something to
+// move through rather than snapping between two steps.
+var AZ_STEPS = 64;
 var AZ_TOP_HZ = 9000;         // above which panning stops telling you much
 var REPET_WIN_SEC = 24;       // REPET is re-fitted this often, so the loop may change
 var REPET_MIN_LAG = 0.7;      // seconds; shorter than this is a beat, not a bar
@@ -187,18 +191,50 @@ Median.prototype.push = function(v) {
 // signal. A plain mid/side takes the sum, and a guitar at nine o'clock
 // contributes to the sum every bit as much as a voice does.
 
-function azimuth(lr, li, rr, ri, near0, near1) {
-  var peak = 0, best = Infinity, bestAt = 0;
+var azScratch = new Float64Array(AZ_STEPS + 1);
+
+function azimuth(lr, li, rr, ri, softDb, hardDb) {
+  var peak = 0, best = Infinity, bestG = 0;
   for (var g = 0; g <= AZ_STEPS; g++) {
     var d = (2 * g) / AZ_STEPS;            // 0 .. 2, so the middle lands on a step
     var dr = lr - d * rr, di = li - d * ri;
     var v = Math.sqrt(dr * dr + di * di);
+    azScratch[g] = v;
     if (v > peak) peak = v;
-    if (v < best) { best = v; bestAt = d; }
+    if (v < best) { best = v; bestG = g; }
   }
   if (peak <= EPS) return 0;
-  var off = Math.abs(bestAt - 1);
-  var near = off <= near0 ? 1 : (off >= near1 ? 0 : (near1 - off) / (near1 - near0));
+
+  // Where the null actually falls, between the steps.
+  //
+  // The sweep is linear in the gain ratio, so its steps are a third of a decibel
+  // apart below the middle and a fifth above it -- and taking the lowest step as
+  // the answer would make the window lopsided by exactly that much, on a control
+  // whose whole point is now that it reads in decibels. |L - dR| is a V, though,
+  // so the two samples either side of the bottom pin the crossing exactly: with
+  // equal and opposite slopes it sits at the pair's weighted midpoint.
+  var step = 2 / AZ_STEPS;
+  var bestAt = bestG * step;
+  var lo = bestG > 0 ? azScratch[bestG - 1] : Infinity;
+  var hi = bestG < AZ_STEPS ? azScratch[bestG + 1] : Infinity;
+  if (lo < hi && isFinite(lo)) {
+    if (lo + best > EPS) bestAt = (bestAt - step) + step * lo / (lo + best);
+  } else if (isFinite(hi)) {
+    if (best + hi > EPS) bestAt = bestAt + step * best / (best + hi);
+  }
+
+  // No null anywhere, or one at the very end of the sweep: nothing centred here.
+  if (bestAt <= 0) return 0;
+
+  // Where the null fell, read as a pan in decibels rather than as a position on
+  // the sweep. The sweep is linear in the gain ratio, and a window measured
+  // there is lopsided -- 0.35 either side of 1 is 2.6 dB on one side and 3.7 on
+  // the other -- which is both wrong and impossible to put a number on in the
+  // panel. Decibels are symmetric about the middle and are what the control says.
+  // The sweep runs to d = 2, which is 6.02 dB, so that is as wide as a centre
+  // window can be asked for and the panel's slider stops there.
+  var pan = Math.abs(20 * Math.log(bestAt) / Math.LN10);
+  var near = pan <= softDb ? 1 : (pan >= hardDb ? 0 : (hardDb - pan) / (hardDb - softDb));
   if (near <= 0) return 0;
   var depth = (peak - best) / peak;
   var c = near * depth;
@@ -215,8 +251,8 @@ function azimuth(lr, li, rr, ri, near0, near1) {
 // can hear.
 
 function analyse(left, right, sampleRate, opts, report) {
-  var near1 = opts.width;
-  var near0 = near1 / 3;
+  var hardDb = opts.widthDb;
+  var softDb = hardDb / 3;      // full credit inside a third of the window
   var len = left.length;
   var frames = Math.max(1, Math.ceil(len / HOP) + 1);
   var fft = makeFft(N);
@@ -241,7 +277,7 @@ function analyse(left, right, sampleRate, opts, report) {
       var mr = (u.lr + u.rr) * 0.5, mi = (u.li + u.ri) * 0.5;
       midMag[off + k] = Math.sqrt(mr * mr + mi * mi);
       centre[off + k] = k <= azTop
-        ? Math.round(255 * azimuth(u.lr, u.li, u.rr, u.ri, near0, near1))
+        ? Math.round(255 * azimuth(u.lr, u.li, u.rr, u.ri, softDb, hardDb))
         : 0;
     }
     if ((t & 127) === 0) report('Reading the spectrum', t / frames);
@@ -575,9 +611,10 @@ onmessage = function(ev) {
     var opts = {
       bassHz: msg.bassHz || 200,
       voice: msg.voice === undefined ? 1 : msg.voice,
-      // How far off centre a null may fall and still count as the middle. A
-      // narrow window rejects more and takes some of the voice with it.
-      width: msg.width === undefined ? 0.35 : msg.width,
+      // How far off centre a null may fall and still count as the middle, in
+      // decibels of pan. A narrow window rejects more and takes some of the
+      // voice with it.
+      widthDb: msg.widthDb === undefined ? 3 : msg.widthDb,
       left: left, right: right
     };
 

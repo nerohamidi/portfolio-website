@@ -103,15 +103,19 @@ const fft = W.makeFft(W.N);
 }
 
 // --- 3. azimuth ---------------------------------------------------------------
-const az = (l, r) => W.azimuth(l, 0, r, 0, 0.35 / 3, 0.35);
+const az = (l, r) => W.azimuth(l, 0, r, 0, 1, 3);   // a 3 dB centre window
 check('a centred bin reads as centred', az(1, 1) > 0.99, String(az(1, 1)));
 check('a hard-left bin does not', az(1, 0) < 0.01, String(az(1, 0)));
 check('nor does one panned three quarters over', az(0.25, 1) < 0.01, String(az(0.25, 1)));
+// A decibel is a decibel either side of the middle now, which the old window
+// measured on the gain ratio and so did not manage.
 check('a nudge off centre still counts', az(1, 1.1) > 0.6, String(az(1, 1.1)));
+check('and the window is symmetric about the middle',
+  Math.abs(az(1, 1.4) - az(1.4, 1)) < 0.02, az(1, 1.4).toFixed(3) + ' vs ' + az(1.4, 1).toFixed(3));
 // Two sources in one bin leave a shallow floor rather than a null, and a shallow
 // floor is not evidence of anything.
-check('and a bin with no null at all scores low', az(1, 1) > az(1, 1) * 0 + 0.99 && W.azimuth(1, 0.9, 1, -0.9, 0.35 / 3, 0.35) < 0.9,
-  String(W.azimuth(1, 0.9, 1, -0.9, 0.35 / 3, 0.35)));
+check('and a bin with no null at all scores low', az(1, 1) > az(1, 1) * 0 + 0.99 && W.azimuth(1, 0.9, 1, -0.9, 1, 3) < 0.9,
+  String(W.azimuth(1, 0.9, 1, -0.9, 1, 3)));
 
 // --- 4. a mix whose parts are known -----------------------------------------
 //

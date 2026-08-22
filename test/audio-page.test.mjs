@@ -1865,8 +1865,23 @@ check('pressing separate sends the track to the worker', w.__worker.sent.length 
   w.__worker.sent[0].type === 'separate');
 const sent = w.__worker.sent[0];
 check('with both channels', sent.left instanceof w.ArrayBuffer || sent.left.byteLength > 0);
-check('and the knobs it needs', sent.width > 0 && sent.voice > 0 && sent.bassHz > 0,
-  JSON.stringify({ width: sent.width, voice: sent.voice, bassHz: Math.round(sent.bassHz) }));
+check('and the knobs it needs, in the units the panel shows',
+  sent.widthDb >= 1 && sent.widthDb <= 6 && sent.voice > 0 && sent.bassHz > 0,
+  JSON.stringify({ widthDb: sent.widthDb, voice: sent.voice, bassHz: Math.round(sent.bassHz) }));
+check('and the readouts carry those units', /dB$/.test(w.document.getElementById('aud-sep-width-val').textContent) &&
+  /×$/.test(w.document.getElementById('aud-sep-voice-val').textContent),
+  w.document.getElementById('aud-sep-width-val').textContent + ' / ' +
+  w.document.getElementById('aud-sep-voice-val').textContent);
+check('the three tests are spelled out before the knobs',
+  w.document.querySelectorAll('.aud-test-list li').length === 3);
+// Both cuts explain themselves; neither is left as a pair of unlabelled sliders.
+check('and the band cut explains its own middle step',
+  /L\+R/.test(w.document.getElementById('aud-split-params').textContent),
+  w.document.getElementById('aud-split-params').textContent.slice(-90));
+check('and the strips are written in the same words',
+  /held/.test(rowsOf(w)[0].querySelector('.aud-stem-what').textContent) &&
+  /hit/.test(rowsOf(w)[1].querySelector('.aud-stem-what').textContent),
+  rowsOf(w)[0].querySelector('.aud-stem-what').textContent);
 check('the button says what it is doing', w.document.getElementById('aud-sep-go').disabled === true);
 
 w.__worker.onmessage({ data: { type: 'progress', stage: 'Finding what repeats', frac: 0.5, loop: 3.9 } });
