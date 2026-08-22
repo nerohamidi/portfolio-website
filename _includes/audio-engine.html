@@ -39,6 +39,7 @@
   var filterNode = null;
   var analyser = null;
   var audioEl = null;
+  var sourceEl = null;   // the element `source` was created from
   var filterType = null;
   var playing = false;
   var showWave = true;
@@ -104,13 +105,14 @@
   }
 
   function loadSrc(src, name) {
-    ensureCtx();
-
     if (audioEl) {
       audioEl.pause();
-      audioEl.src = '';
+      audioEl.removeAttribute('src');
+      audioEl.load();
     }
     if (source) { try { source.disconnect(); } catch (e) {} }
+    source = null;
+    sourceEl = null;
 
     audioName = name;
     el['aud-name'].textContent = name;
@@ -118,27 +120,58 @@
     el['aud-player'].classList.remove('hidden');
     el['aud-shape'].classList.remove('hidden');
     el['aud-share'].classList.remove('hidden');
+    el['aud-duration'].textContent = '0:00';
+    el['aud-current'].textContent = '0:00';
+    el['aud-seek'].value = 0;
 
     audioEl = new Audio();
-    audioEl.crossOrigin = 'anonymous';
+    audioEl.playsInline = true;
+    audioEl.preload = 'auto';
+    // Only the R2 clip is cross-origin, and only it needs a CORS-readable stream for
+    // the analyser. On a blob: or same-origin URL the attribute buys nothing, and
+    // Safari fails the load outright when it is set on a blob.
+    if (/^https?:/i.test(src)) audioEl.crossOrigin = 'anonymous';
     audioEl.src = src;
 
     audioEl.addEventListener('loadedmetadata', function() {
-      el['aud-duration'].textContent = formatTime(audioEl.duration);
-      el['aud-seek'].max = audioEl.duration;
-    });
-    audioEl.addEventListener('ended', function() { setPlaying(false); });
-    audioEl.addEventListener('error', function() {
-      el['aud-name'].textContent = audioRef && audioRef.indexOf('clip:') === 0
-        ? 'This clip has expired'
-        : 'Could not load that track';
+      if (isFinite(audioEl.duration)) {
+        el['aud-duration'].textContent = formatTime(audioEl.duration);
+        el['aud-seek'].max = audioEl.duration;
+      }
     });
 
-    source = audioCtx.createMediaElementSource(audioEl);
-    source.connect(gainNode);
-    gainNode.gain.value = parseFloat(el['aud-volume'].value);
+    // The transport mirrors the element rather than guessing. If playback fails or
+    // the browser pauses us, the button says so instead of lying about the state.
+    audioEl.addEventListener('play', function() { setPlaying(true); });
+    audioEl.addEventListener('playing', function() { setPlaying(true); });
+    audioEl.addEventListener('pause', function() { setPlaying(false); });
+    audioEl.addEventListener('ended', function() { setPlaying(false); });
+
+    audioEl.addEventListener('error', function() {
+      var code = audioEl.error ? audioEl.error.code : 0;
+      var why = code === 4 ? 'This browser cannot play that file'
+              : code === 3 ? 'That file could not be decoded'
+              : audioRef && audioRef.indexOf('clip:') === 0 ? 'This clip has expired'
+              : 'Could not load that track';
+      el['aud-name'].textContent = why;
+      el['aud-share-status'].textContent = 'Try a different MP3 or WAV.';
+    });
+
     applyPitch();
     setPlaying(false);
+  }
+
+  // Built on the first press of play, never at load time. Creating an AudioContext
+  // outside a user gesture leaves it suspended, and on iOS a media element already
+  // routed into a suspended graph stays silent even after the context resumes.
+  function connectGraph() {
+    if (!audioEl || sourceEl === audioEl) return;
+    ensureCtx();
+    if (source) { try { source.disconnect(); } catch (e) {} }
+    source = audioCtx.createMediaElementSource(audioEl);
+    sourceEl = audioEl;
+    source.connect(gainNode);
+    gainNode.gain.value = parseFloat(el['aud-volume'].value);
   }
 
   function setPlaying(on) {
@@ -346,15 +379,13 @@
 
   el['aud-play'].addEventListener('click', function() {
     if (!audioEl) return;
-    ensureCtx();
-    if (playing) {
-      audioEl.pause();
-      setPlaying(false);
+    if (audioEl.paused) {
+      connectGraph();
+      ensureCtx();
+      var p = audioEl.play();
+      if (p && p.catch) p.catch(function() { setPlaying(false); });
     } else {
-      // Flipped before the promise settles. play() resolves a tick or more later,
-      // and a transport button that lags the press feels broken.
-      setPlaying(true);
-      audioEl.play().catch(function() { setPlaying(false); });
+      audioEl.pause();
     }
   });
 
@@ -374,6 +405,7 @@
   el['aud-volume'].addEventListener('input', function() {
     var v = parseFloat(el['aud-volume'].value);
     if (gainNode) gainNode.gain.value = v;
+    if (audioEl && !sourceEl) audioEl.volume = v;   // before the graph exists
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
   });
 
