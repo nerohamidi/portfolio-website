@@ -2,18 +2,18 @@
 
   <header class="aud-head">
     <h1 class="aud-title">Signal Share</h1>
-    <p class="aud-sub">Load a track, shape it with a filter, then send someone a link that opens on exactly what you built.</p>
+    <p class="aud-sub">Load a track, stack filters, echo and reverb on it, then send someone a link that opens on exactly what you built.</p>
   </header>
 
   <ol class="aud-steps">
     <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
-    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Filter it, watch the spectrum, read it back</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Stack effects, watch the spectrum, read the maths</span></li>
     <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">Whole playlist, your settings</span></li>
   </ol>
 
   <div class="aud-note aud-note-shared hidden" id="aud-shared-note">
     <strong id="aud-shared-title">Someone shared this with you.</strong>
-    <span id="aud-shared-detail">Press play to hear it with their filter settings.</span>
+    <span id="aud-shared-detail">Press play to hear it with their effect settings.</span>
     <span class="aud-shared-msg hidden" id="aud-shared-msg"></span>
   </div>
 
@@ -96,7 +96,7 @@
   <section class="aud-panel aud-queue hidden" id="aud-queue" aria-label="Playlist">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Playlist</h2>
-      <p class="aud-panel-hint">Tracks play in order, and one share link carries the whole list. The filter, pitch and volume below apply to whichever track is playing.</p>
+      <p class="aud-panel-hint">Tracks play in order, and one share link carries the whole list. The effects, pitch and volume below apply to whichever track is playing.</p>
     </div>
     <ol class="aud-q-list" id="aud-q-list"></ol>
     <div class="aud-q-foot">
@@ -112,8 +112,14 @@
   </section>
 
   <!-- Controls -->
-  <section class="aud-panel hidden" id="aud-shape" aria-label="Filter">
+  <section class="aud-panel hidden" id="aud-shape" aria-label="Effects">
     <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Effects</h2>
+      <p class="aud-panel-hint">Switch on as many as you like &mdash; they stack, and the signal runs through them in this order.</p>
+    </div>
+    <p class="aud-chain" id="aud-chain"></p>
+
+    <div class="aud-panel-head aud-panel-head-sep">
       <h2 class="aud-panel-title">Filter</h2>
       <p class="aud-panel-hint">Pick one to cut part of the spectrum. Tap it again to switch it off.</p>
     </div>
@@ -135,6 +141,58 @@
         <input type="range" id="aud-filter-q" min="0.1" max="20" value="1" step="0.1">
         <span class="aud-param-val" id="aud-filter-q-val">1.0</span>
       </label>
+    </div>
+
+    <div class="aud-panel-head aud-panel-head-sep">
+      <h2 class="aud-panel-title">Echo</h2>
+      <p class="aud-panel-hint">A delayed copy of the track fed back into its own delay, so every repeat is a fixed fraction of the one before it.</p>
+    </div>
+    <div class="aud-chips">
+      <button class="aud-chip" id="aud-echo-on" type="button" aria-pressed="false">Echo</button>
+    </div>
+    <div class="aud-params hidden" id="aud-echo-params">
+      <label class="aud-param">
+        <span class="aud-param-name">Delay</span>
+        <input type="range" id="aud-echo-time" min="20" max="1500" value="320" step="5">
+        <span class="aud-param-val" id="aud-echo-time-val">320 ms</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Feedback</span>
+        <input type="range" id="aud-echo-fb" min="0" max="0.9" value="0.35" step="0.01">
+        <span class="aud-param-val" id="aud-echo-fb-val">0.35</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Mix</span>
+        <input type="range" id="aud-echo-mix" min="0" max="1" value="0.35" step="0.01">
+        <span class="aud-param-val" id="aud-echo-mix-val">35%</span>
+      </label>
+      <p class="aud-param-note" id="aud-echo-tail">&nbsp;</p>
+    </div>
+
+    <div class="aud-panel-head aud-panel-head-sep">
+      <h2 class="aud-panel-title">Reverb</h2>
+      <p class="aud-panel-hint">Convolution with a decaying noise tail, which is what a room does to a sound: thousands of reflections instead of a handful of repeats.</p>
+    </div>
+    <div class="aud-chips">
+      <button class="aud-chip" id="aud-rev-on" type="button" aria-pressed="false">Reverb</button>
+    </div>
+    <div class="aud-params hidden" id="aud-rev-params">
+      <label class="aud-param">
+        <span class="aud-param-name">Size</span>
+        <input type="range" id="aud-rev-decay" min="0.2" max="6" value="2.2" step="0.1">
+        <span class="aud-param-val" id="aud-rev-decay-val">2.2 s</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Pre-delay</span>
+        <input type="range" id="aud-rev-pre" min="0" max="200" value="20" step="1">
+        <span class="aud-param-val" id="aud-rev-pre-val">20 ms</span>
+      </label>
+      <label class="aud-param">
+        <span class="aud-param-name">Mix</span>
+        <input type="range" id="aud-rev-mix" min="0" max="1" value="0.3" step="0.01">
+        <span class="aud-param-val" id="aud-rev-mix-val">30%</span>
+      </label>
+      <p class="aud-param-note" id="aud-rev-taps">&nbsp;</p>
     </div>
 
     <div class="aud-panel-head aud-panel-head-sep">
@@ -160,13 +218,25 @@
       <button class="aud-chip is-on" id="aud-view-wave" type="button">Waveform</button>
       <button class="aud-chip is-on" id="aud-view-freq" type="button">Spectrum</button>
     </div>
+
+    <div class="aud-panel-head aud-panel-head-sep">
+      <h2 class="aud-panel-title">Under the hood</h2>
+    </div>
+    <div class="aud-math-bar">
+      <label class="aud-check">
+        <input type="checkbox" id="aud-math-on">
+        <span>Show the maths</span>
+      </label>
+      <span class="aud-math-tip">every equation below is running on the numbers you set, live</span>
+    </div>
+    <div class="aud-math hidden" id="aud-math"></div>
   </section>
 
   <!-- Share -->
   <section class="aud-panel aud-share hidden" id="aud-share" aria-label="Share">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Share</h2>
-      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this playlist with your filter and volume already set. Your files are uploaded only when you press the button.</p>
+      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this playlist with your effects and volume already set. Your files are uploaded only when you press the button.</p>
     </div>
     <div class="aud-fields">
       <label class="aud-field">

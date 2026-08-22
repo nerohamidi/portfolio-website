@@ -60,6 +60,12 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     state: function() {
       return { queue: queue, current: current, txSegments: txSegments, txNext: txNext, txDone: txDone, txOn: txOn };
     },
+    effects: function() {
+      return { echoOn: echoOn, revOn: revOn, mathOn: mathOn };
+    },
+    graph: function() {
+      return { ctx: audioCtx, gain: gainNode, filter: filterNode, echo: echoNodes, rev: revNodes, analyser: analyser };
+    },
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
   };
   sizeCanvas();
@@ -76,7 +82,15 @@ function boot(hash, fetchImpl) {
 
   // --- Web Audio, reduced to what the engine touches ---
   const param = (v) => ({ value: v, setValueAtTime() {} });
-  const node = () => ({ connect() { return this; }, disconnect() {} });
+  // Connections are recorded rather than thrown away: whether the stages are
+  // wired in the right order, and whether a stage that was switched off is
+  // really out of the path, is the whole question the stacking tests ask.
+  const node = (kind) => ({
+    kind,
+    out: [],
+    connect(to) { this.out.push(to); return to; },
+    disconnect() { this.out.length = 0; },
+  });
   const buffer = (duration) => ({
     duration, sampleRate: 44100, numberOfChannels: 1,
     getChannelData: () => decay(Math.round(duration * 44100)),
@@ -85,23 +99,36 @@ function boot(hash, fetchImpl) {
     this.currentTime = 0;
     this.sampleRate = 44100;
     this.state = 'running';
-    this.destination = node();
+    this.destination = node('destination');
     this.resume = () => {};
-    this.createGain = () => Object.assign(node(), { gain: param(1) });
-    this.createBiquadFilter = () => Object.assign(node(), { type: 'lowpass', frequency: param(350), Q: param(1) });
-    this.createAnalyser = () => Object.assign(node(), {
+    this.createGain = () => Object.assign(node('gain'), { gain: param(1) });
+    this.createBiquadFilter = () => Object.assign(node('biquad'), {
+      type: 'lowpass', frequency: param(350), Q: param(1),
+      // Whatever the engine asks for, answered with -3 dB, so the row that
+      // reports a measured response has something to report.
+      getFrequencyResponse(freqs, mag, phase) {
+        for (let i = 0; i < freqs.length; i++) { mag[i] = Math.SQRT1_2; phase[i] = 0; }
+      },
+    });
+    this.createDelay = (max) => Object.assign(node('delay'), { maxDelayTime: max, delayTime: param(0) });
+    this.createConvolver = () => Object.assign(node('convolver'), { buffer: null, normalize: true });
+    this.createBuffer = (channels, length, rate) => {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { numberOfChannels: channels, length, sampleRate: rate, getChannelData: (c) => data[c] };
+    };
+    this.createAnalyser = () => Object.assign(node('analyser'), {
       fftSize: 2048, frequencyBinCount: 1024,
       getByteTimeDomainData() {}, getByteFrequencyData() {}, getFloatTimeDomainData() {},
     });
-    this.createBufferSource = () => Object.assign(node(), {
+    this.createBufferSource = () => Object.assign(node('source'), {
       buffer: null, playbackRate: param(1), onended: null,
       start() { this.started = true; }, stop() {},
     });
     this.decodeAudioData = (bytes, ok) => { const b = buffer(120); if (ok) ok(b); return Promise.resolve(b); };
   };
   w.OfflineAudioContext = function (channels, frames, rate) {
-    this.destination = node();
-    this.createBufferSource = () => Object.assign(node(), { buffer: null, playbackRate: param(1), start() {} });
+    this.destination = node('destination');
+    this.createBufferSource = () => Object.assign(node('source'), { buffer: null, playbackRate: param(1), start() {} });
     this.startRendering = () => Promise.resolve({
       duration: frames / rate, sampleRate: rate, numberOfChannels: 1,
       getChannelData: () => new Float32Array(frames),
@@ -885,6 +912,122 @@ w.__probe.addTracks(Array.from({ length: 20 }, (_, i) => w.__probe.newEntry({ re
 st = w.__probe.state();
 check('the queue stops at the cap', st.queue.length === 10, String(st.queue.length));
 check('the overflow is explained', /did not fit/.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
+
+// --- 9. stacking effects -----------------------------------------------------
+//
+// The claim the panel makes is that the stages chain rather than replace one
+// another, so these tests read the graph itself: who is connected to whom, in
+// what order, and what is left dangling when a stage is switched off.
+
+const live = (win) => Array.from(win.document.querySelectorAll('.aud-chain-node.is-on:not(.is-fixed)'))
+  .map((n) => n.textContent).join(',');
+const press = (win, id) => win.document.getElementById(id).click();
+
+w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+let g = w.__probe.graph();
+
+check('a filter alone is the only stage in the path', g.gain.out.length === 1 && g.gain.out[0] === g.filter && g.filter.out[0] === g.analyser);
+check('the chain strip names it', live(w) === 'Low Pass', live(w));
+check('echo and reverb start off', !w.__probe.effects().echoOn && !w.__probe.effects().revOn);
+check('their sliders stay folded away', w.document.getElementById('aud-echo-params').classList.contains('hidden') &&
+  w.document.getElementById('aud-rev-params').classList.contains('hidden'));
+
+press(w, 'aud-echo-on');
+g = w.__probe.graph();
+check('echo switches on', w.__probe.effects().echoOn && !w.document.getElementById('aud-echo-params').classList.contains('hidden'));
+check('and lands after the filter, not instead of it', g.filter.out.length === 1 && g.filter.out[0] === g.echo.input && g.echo.output.out[0] === g.analyser);
+check('its delay feeds itself, which is what makes the repeats', g.echo.delay.out.indexOf(g.echo.fb) >= 0 && g.echo.fb.out.indexOf(g.echo.delay) >= 0);
+check('and it keeps a dry path alongside the wet one', g.echo.dry.gain.value === 0.65 && g.echo.wet.gain.value === 0.35);
+
+press(w, 'aud-rev-on');
+g = w.__probe.graph();
+check('reverb stacks on top of both', live(w) === 'Low Pass,Echo,Reverb', live(w));
+check('three stages run in order', g.gain.out[0] === g.filter && g.filter.out[0] === g.echo.input &&
+  g.echo.output.out[0] === g.rev.input && g.rev.output.out[0] === g.analyser && g.analyser.out[0] === g.ctx.destination);
+check('the pre-delay sits before the convolver', g.rev.pre.out[0] === g.rev.conv && g.rev.conv.out[0] === g.rev.wet);
+check('an impulse response was built to the size asked for', g.rev.conv.buffer &&
+  g.rev.conv.buffer.length === Math.round(2.2 * 44100) && g.rev.conv.buffer.numberOfChannels === 2,
+  String(g.rev.conv.buffer && g.rev.conv.buffer.length));
+
+hash = w.__probe.encodeState();
+check('a stacked link carries the echo', /(^|&)ec=320,0.35,0.35(&|$)/.test(hash), hash);
+check('and the reverb', /(^|&)rv=2.2,20,0.3(&|$)/.test(hash), hash);
+check('and stays a v3 link, so an older page still restores the playlist', /(^|&)v=3(&|$)/.test(hash), hash);
+
+press(w, 'aud-echo-on');
+g = w.__probe.graph();
+check('switching echo off closes the gap it left', g.filter.out.length === 1 && g.filter.out[0] === g.rev.input, String(g.filter.out.length));
+check('the dropped stage stops feeding the analyser', g.echo.output.out.length === 0);
+check('and drops out of the link', !/(^|&)ec=/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+// A link that arrives with both of them set.
+w = boot(`#v=3&flt=off,500,1&ec=500,0.6,0.5&rv=4.5,60,0.45&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+g = w.__probe.graph();
+check('a shared link restores both effects', w.__probe.effects().echoOn && w.__probe.effects().revOn);
+check('with the numbers the sender set', w.document.getElementById('aud-echo-time-val').textContent === '500 ms' &&
+  w.document.getElementById('aud-echo-fb-val').textContent === '0.60' &&
+  w.document.getElementById('aud-rev-mix-val').textContent === '45%',
+  w.document.getElementById('aud-echo-time-val').textContent + ' / ' + w.document.getElementById('aud-echo-fb-val').textContent);
+check('and with no filter in front of them', live(w) === 'Echo,Reverb' && g.gain.out[0] === g.echo.input, live(w));
+
+w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('a link from before the effects existed leaves them off', !w.__probe.effects().echoOn && !w.__probe.effects().revOn);
+
+// --- 10. the maths panel -----------------------------------------------------
+
+w = boot(`#v=3&flt=lp,500,1&ec=320,0.35,0.35&rv=2.2,20,0.3&p=5&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+const maths = () => w.document.getElementById('aud-math');
+const tick = (win, id, on) => {
+  const box = win.document.getElementById(id);
+  box.checked = on;
+  box.dispatchEvent(new win.Event('change'));
+};
+
+check('the maths is off on arrival', maths().classList.contains('hidden') && !w.__probe.effects().mathOn);
+check('and nothing is rendered until it is asked for', maths().textContent === '', maths().textContent.slice(0, 40));
+check('the running figures under the sliders are there anyway',
+  /D = 14 112 samples/.test(w.document.getElementById('aud-echo-tail').textContent),
+  w.document.getElementById('aud-echo-tail').textContent);
+
+tick(w, 'aud-math-on', true);
+let mathText = maths().textContent;
+check('ticking it opens the panel', !maths().classList.contains('hidden') && w.__probe.effects().mathOn);
+check('every running stage gets a block', /The chain/.test(mathText) && /Filter — one biquad/.test(mathText) &&
+  /Echo — a feedback comb/.test(mathText) && /Reverb — convolution with a room/.test(mathText));
+check('stacking is stated as a product of transfer functions',
+  /H<sub>filter<\/sub>\(z\) · H<sub>echo<\/sub>\(z\) · H<sub>reverb<\/sub>\(z\)/.test(maths().innerHTML), '');
+check('the echo delay is worked out in samples', /14 112 samples of delay line/.test(mathText), '');
+check('and its tail is counted in repeats', /7, so about 2\.2 s of tail/.test(mathText), '');
+check('the reverb tap count follows the size', /97 020 taps/.test(mathText), '');
+check('the biquad reports the browser\'s own response', /−3\.0 dB, measured on the node itself/.test(mathText), '');
+check('a pitch shift gets its own block', /Pitch — resampling/.test(mathText) && /1\.3348/.test(mathText), '');
+check('the sample rate is the one the context is running at', /44 100 Hz/.test(mathText), '');
+
+// Moving a slider re-runs the arithmetic rather than leaving the old answer up.
+const fb = w.document.getElementById('aud-echo-fb');
+fb.value = '0.7';
+fb.dispatchEvent(new w.Event('input', { bubbles: true }));
+check('the numbers follow the sliders', /20, so about 6\.4 s of tail/.test(maths().textContent),
+  (maths().textContent.match(/[\d.]+ s of tail/) || [''])[0]);
+check('and so does the graph', w.__probe.graph().echo.fb.gain.value === 0.7);
+
+check('the maths never rides in a link', !/(^|&)m=/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+tick(w, 'aud-math-on', false);
+check('unticking closes it', maths().classList.contains('hidden'));
+check('and clears it out rather than hiding stale numbers', maths().textContent === '');
+
+// With nothing switched on it says so, rather than showing an empty panel.
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+tick(w, 'aud-math-on', true);
+mathText = w.document.getElementById('aud-math').textContent;
+check('a clean chain still explains itself', /Nothing is switched on/.test(mathText) && /y\[n\] = x\[n\]/.test(mathText), '');
+check('and offers no block for a stage that is off', !/feedback comb/.test(mathText) && !/one biquad/.test(mathText));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

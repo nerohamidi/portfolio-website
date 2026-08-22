@@ -2717,3 +2717,179 @@ body.light-mode {
   .aud-tx-status { color: #666; }
   .aud-tx-tip { color: #888; }
 }
+
+// ---------------------------------------------------------------------------
+// Signal Share: the effect chain and the maths panel
+// ---------------------------------------------------------------------------
+
+// Every stage is drawn whether or not it is on, so the order is legible before
+// anything is pressed and switching one off reads as a gap rather than a
+// disappearance.
+.aud-chain {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.aud-chain-node {
+  border: 1px dashed #444;
+  border-radius: 999px;
+  padding: 4px 12px;
+  color: #666;
+  letter-spacing: 0.03em;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+  &.is-on {
+    border-style: solid;
+    border-color: #6cb6ff;
+    background: rgba(108, 182, 255, 0.14);
+    color: #6cb6ff;
+  }
+
+  // The two ends are always there, so they are drawn as scenery rather than as
+  // something that was switched on.
+  &.is-fixed {
+    border: 1px solid #4a4a4a;
+    background: none;
+    color: #999;
+  }
+}
+
+.aud-chain-arrow {
+  color: #555;
+  font-size: 13px;
+}
+
+// The running figures under an effect's sliders: on whether or not the maths
+// panel is, because they are what a slider is worth knowing while it moves.
+.aud-param-note {
+  margin: 2px 0 0;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #777;
+}
+
+.aud-math-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.aud-math-tip {
+  margin-left: auto;
+  font-size: 11px;
+  color: #777;
+
+  @media screen and (max-width: 600px) {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+}
+
+.aud-math {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 4px;
+}
+
+.aud-math-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aud-math-h {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.aud-math-p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #999;
+}
+
+// Formulas scroll inside their own box rather than wrapping: a broken line of
+// algebra is harder to read than one that runs off the edge.
+.aud-math-eq {
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #e0a040;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid rgba(224, 160, 64, 0.5);
+  border-radius: 0 6px 6px 0;
+  padding: 7px 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+
+  sub, sup { font-size: 0.75em; }
+}
+
+.aud-math-nums {
+  margin: 2px 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  font-size: 12.5px;
+
+  dt {
+    font-family: monospace;
+    color: #6cb6ff;
+    sub, sup { font-size: 0.8em; }
+  }
+
+  dd {
+    margin: 0;
+    color: #999;
+    line-height: 1.5;
+  }
+
+  @media screen and (max-width: 560px) {
+    grid-template-columns: 1fr;
+    gap: 2px;
+
+    dd { margin-bottom: 8px; }
+  }
+}
+
+body.light-mode {
+  .aud-chain-node {
+    border-color: #d5d5d5;
+    color: #999;
+
+    &.is-on {
+      border-color: #2a7ae2;
+      background: rgba(42, 122, 226, 0.1);
+      color: #2a7ae2;
+    }
+
+    &.is-fixed { border: 1px solid #ddd; color: #777; }
+  }
+  .aud-chain-arrow { color: #bbb; }
+
+  .aud-param-note { color: #888; }
+  .aud-math-tip { color: #888; }
+  .aud-math-h { color: #333; }
+  .aud-math-p { color: #666; }
+
+  .aud-math-eq {
+    color: #a06a12;
+    background: rgba(0, 0, 0, 0.03);
+    border-left-color: rgba(184, 121, 26, 0.45);
+  }
+
+  .aud-math-nums {
+    dt { color: #2a7ae2; }
+    dd { color: #666; }
+  }
+}

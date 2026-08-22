@@ -13,6 +13,24 @@
   var FILTER_TYPES = { lp: 'lowpass', hp: 'highpass', bp: 'bandpass', bs: 'notch-wide', nt: 'notch-narrow' };
   // The two notch presets only differ by the Q they arrive with.
   var FILTER_DEFAULT_Q = { 'notch-wide': 0.5, 'notch-narrow': 10 };
+  var FILTER_LABELS = {
+    lowpass: 'Low Pass', highpass: 'High Pass', bandpass: 'Band Pass',
+    'notch-wide': 'Band Stop', 'notch-narrow': 'Notch'
+  };
+
+  // The delay line is allocated once at its longest, and the slider moves a
+  // read pointer inside it. A DelayNode cannot grow after it is made.
+  // A shade over what the sliders can ask for: delayTime is clamped to the
+  // ceiling the line was built with, and a slider sitting exactly on it is one
+  // rounding error away from being quietly shortened.
+  var ECHO_MAX_SEC = 1.6;
+  var REV_MAX_PRE = 0.25;
+  // -60 dB is the conventional end of a tail, and 10^(-60/20) = 1/1000. Every
+  // decay figure on this page is measured to that point.
+  var DECAY_LN = Math.log(1000);
+  // Building a stereo impulse response is a few hundred thousand random numbers,
+  // which is fine once and jank if it happens on every pixel of a drag.
+  var IR_REBUILD_MS = 90;
 
   // A share uploads every local file in the queue, one request each, and the
   // Worker rate-limits uploads per minute. Ten keeps a full playlist inside one
@@ -47,6 +65,11 @@
     'aud-volume', 'aud-vol-val', 'aud-shape', 'aud-filters', 'aud-params',
     'aud-filter-freq', 'aud-filter-freq-val', 'aud-filter-q', 'aud-filter-q-val',
     'aud-pitch', 'aud-pitch-val', 'aud-pitch-rate', 'aud-pitch-reset',
+    'aud-chain', 'aud-math', 'aud-math-on',
+    'aud-echo-on', 'aud-echo-params', 'aud-echo-time', 'aud-echo-time-val',
+    'aud-echo-fb', 'aud-echo-fb-val', 'aud-echo-mix', 'aud-echo-mix-val', 'aud-echo-tail',
+    'aud-rev-on', 'aud-rev-params', 'aud-rev-decay', 'aud-rev-decay-val',
+    'aud-rev-pre', 'aud-rev-pre-val', 'aud-rev-mix', 'aud-rev-mix-val', 'aud-rev-taps',
     'aud-note-name', 'aud-note-hz', 'aud-note-cents',
     'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
     'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
@@ -69,6 +92,17 @@
   var filterNode = null;
   var analyser = null;
   var filterType = null;
+  // Every effect is its own stage with its own on switch, and the stages chain
+  // rather than replace one another. All of them are linear and time invariant,
+  // so the whole chain is one filter whose transfer function is the product of
+  // theirs; the maths panel says so, and it is why the fixed order costs nothing.
+  var echoOn = false;
+  var revOn = false;
+  var echoNodes = null;    // built on first use, then kept and rewired
+  var revNodes = null;
+  var irKey = '';          // the size and rate the current impulse response was built for
+  var irTimer = null;
+  var mathOn = false;
   var showWave = true;
   var showFreq = true;
   var semitones = 0;
@@ -138,23 +172,154 @@
     return audioCtx;
   }
 
-  function rebuildChain() {
-    if (!audioCtx) return;
-    try { gainNode.disconnect(); } catch (e) {}
-    if (filterNode) { try { filterNode.disconnect(); } catch (e) {} }
-    try { analyser.disconnect(); } catch (e) {}
+  // --- the effect stages -----------------------------------------------------
+  //
+  // Each stage is a little subgraph with one input node and one output node, so
+  // the chain builder does not have to know what is inside it. The wiring within
+  // a stage is made once and left alone; only the connections between stages are
+  // torn down and remade when something is switched on or off.
 
-    var head = analyser;
+  function echoStage() {
+    if (echoNodes || !audioCtx) return echoNodes;
+    var input = audioCtx.createGain();
+    var out = audioCtx.createGain();
+    var dry = audioCtx.createGain();
+    var wet = audioCtx.createGain();
+    var delay = audioCtx.createDelay(ECHO_MAX_SEC);
+    var fb = audioCtx.createGain();
+
+    input.connect(dry);
+    dry.connect(out);
+    input.connect(delay);
+    // The delay feeding its own input is the whole effect: one tap that comes
+    // round again at g times its own level, forever, until g^k stops mattering.
+    delay.connect(fb);
+    fb.connect(delay);
+    delay.connect(wet);
+    wet.connect(out);
+
+    echoNodes = { input: input, output: out, dry: dry, wet: wet, delay: delay, fb: fb };
+    applyEcho();
+    return echoNodes;
+  }
+
+  // Noise that dies away exponentially. A real room's impulse response has early
+  // reflections with structure, then a diffuse tail; this only models the tail,
+  // which is the part that reads as a room.
+  //
+  //   h[k] = r[k] * exp(-k * ln(1000) / (T * fs)),  r uniform in [-1, 1]
+  //
+  // The constant is what puts the amplitude exactly 60 dB down at k = T * fs.
+  // Each channel gets its own noise, which is what makes the tail wide rather
+  // than a single point between the speakers.
+  function impulseResponse(seconds) {
+    var sr = audioCtx.sampleRate;
+    var n = Math.max(1, Math.round(seconds * sr));
+    var ir = audioCtx.createBuffer(2, n, sr);
+    var k = DECAY_LN / (seconds * sr);
+    for (var c = 0; c < 2; c++) {
+      var data = ir.getChannelData(c);
+      for (var i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-k * i);
+    }
+    return ir;
+  }
+
+  function reverbStage() {
+    if (revNodes || !audioCtx) return revNodes;
+    var input = audioCtx.createGain();
+    var out = audioCtx.createGain();
+    var dry = audioCtx.createGain();
+    var wet = audioCtx.createGain();
+    var pre = audioCtx.createDelay(REV_MAX_PRE);
+    var conv = audioCtx.createConvolver();
+
+    input.connect(dry);
+    dry.connect(out);
+    // Pre-delay before the convolver, not baked into the impulse response: it is
+    // the gap between the sound and the room answering, and holding it separate
+    // means moving it does not cost a new response.
+    input.connect(pre);
+    pre.connect(conv);
+    conv.connect(wet);
+    wet.connect(out);
+
+    revNodes = { input: input, output: out, dry: dry, wet: wet, pre: pre, conv: conv };
+    refreshIr(true);
+    applyReverb();
+    return revNodes;
+  }
+
+  function echoTime() { return parseFloat(el['aud-echo-time'].value) / 1000; }
+  function echoFeedback() { return parseFloat(el['aud-echo-fb'].value); }
+  function echoMix() { return parseFloat(el['aud-echo-mix'].value); }
+  function revDecay() { return parseFloat(el['aud-rev-decay'].value); }
+  function revPre() { return parseFloat(el['aud-rev-pre'].value) / 1000; }
+  function revMix() { return parseFloat(el['aud-rev-mix'].value); }
+
+  function applyEcho() {
+    if (!echoNodes) return;
+    echoNodes.delay.delayTime.value = echoTime();
+    echoNodes.fb.gain.value = echoFeedback();
+    // A straight crossfade, so the two paths always sum to unity gain and the
+    // track does not get louder as the effect is dialled in.
+    echoNodes.wet.gain.value = echoMix();
+    echoNodes.dry.gain.value = 1 - echoMix();
+  }
+
+  function applyReverb() {
+    if (!revNodes) return;
+    revNodes.pre.delayTime.value = revPre();
+    revNodes.wet.gain.value = revMix();
+    revNodes.dry.gain.value = 1 - revMix();
+  }
+
+  // Rebuilt only when the size actually changed, and never more than once every
+  // IR_REBUILD_MS while a slider is moving.
+  function refreshIr(now) {
+    if (!revNodes || !audioCtx) return;
+    var want = revDecay().toFixed(1) + '@' + audioCtx.sampleRate;
+    if (want === irKey) return;
+    if (irTimer) { clearTimeout(irTimer); irTimer = null; }
+    if (!now) { irTimer = setTimeout(function() { irTimer = null; refreshIr(true); }, IR_REBUILD_MS); return; }
+    irKey = want;
+    try { revNodes.conv.buffer = impulseResponse(revDecay()); } catch (e) {}
+  }
+
+  function rebuildChain() {
+    // The chain strip and the maths are drawn from the switches, not from the
+    // graph, so they are still right on a page where nothing has been loaded yet.
+    if (!audioCtx) { renderChain(); renderMath(); return; }
+
+    var stages = [];
     if (filterType) {
       if (!filterNode) filterNode = audioCtx.createBiquadFilter();
       filterNode.type = filterType.replace('-wide', '').replace('-narrow', '');
       filterNode.frequency.value = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
       filterNode.Q.value = parseFloat(el['aud-filter-q'].value);
-      filterNode.connect(analyser);
-      head = filterNode;
+      stages.push({ input: filterNode, output: filterNode });
     }
-    gainNode.connect(head);
+    if (echoOn) stages.push(echoStage());
+    if (revOn) stages.push(reverbStage());
+
+    // Everything that could be feeding the next stage, whether or not it is in
+    // the chain this time round. A node left connected from a previous shape
+    // would keep pouring into the analyser after its switch was turned off.
+    [gainNode, filterNode, echoNodes && echoNodes.output, revNodes && revNodes.output, analyser]
+      .forEach(function(node) { if (node) { try { node.disconnect(); } catch (e) {} } });
+
+    var head = gainNode;
+    stages.forEach(function(stage) {
+      if (!stage) return;
+      head.connect(stage.input);
+      head = stage.output;
+    });
+    // The analyser sits at the end, so the spectrum and the note readout report
+    // what is actually leaving the page rather than what went into the effects.
+    head.connect(analyser);
     analyser.connect(audioCtx.destination);
+
+    renderChain();
+    renderMath();
   }
 
   // --- loading ---------------------------------------------------------------
@@ -400,6 +565,7 @@
     el['aud-pitch-val'].textContent = (semitones > 0 ? '+' : '') + semitones + ' st';
     el['aud-pitch-rate'].textContent = r.toFixed(2) + '\u00d7 speed';
     if (bufSource) bufSource.playbackRate.value = r;
+    renderMath();
   }
 
   // The rebase has to happen while `semitones` still holds the old value, because
@@ -581,12 +747,14 @@
     var hz = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
     el['aud-filter-freq-val'].textContent = formatFilterFreq(hz);
     if (filterNode) filterNode.frequency.value = hz;
+    renderMath();
   });
 
   el['aud-filter-q'].addEventListener('input', function() {
     var q = parseFloat(el['aud-filter-q'].value);
     el['aud-filter-q-val'].textContent = q.toFixed(1);
     if (filterNode) filterNode.Q.value = q;
+    renderMath();
   });
 
   el['aud-view-wave'].addEventListener('click', function() {
@@ -597,6 +765,395 @@
   el['aud-view-freq'].addEventListener('click', function() {
     showFreq = !showFreq;
     el['aud-view-freq'].classList.toggle('is-on', showFreq);
+  });
+
+  // --- echo and reverb controls ----------------------------------------------
+
+  function setEcho(on) {
+    echoOn = on;
+    el['aud-echo-on'].classList.toggle('is-on', echoOn);
+    el['aud-echo-on'].setAttribute('aria-pressed', echoOn ? 'true' : 'false');
+    el['aud-echo-params'].classList.toggle('hidden', !echoOn);
+    rebuildChain();
+  }
+
+  function setReverb(on) {
+    revOn = on;
+    el['aud-rev-on'].classList.toggle('is-on', revOn);
+    el['aud-rev-on'].setAttribute('aria-pressed', revOn ? 'true' : 'false');
+    el['aud-rev-params'].classList.toggle('hidden', !revOn);
+    rebuildChain();
+  }
+
+  el['aud-echo-on'].addEventListener('click', function() { setEcho(!echoOn); });
+  el['aud-rev-on'].addEventListener('click', function() { setReverb(!revOn); });
+
+  // Every effect slider does the same three things: relabel itself, push the
+  // value at the graph, and let the readouts catch up.
+  function wireParam(id, apply) {
+    el[id].addEventListener('input', function() {
+      apply();
+      renderMath();
+    });
+  }
+
+  wireParam('aud-echo-time', function() {
+    el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
+    applyEcho();
+  });
+  wireParam('aud-echo-fb', function() {
+    el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);
+    applyEcho();
+  });
+  wireParam('aud-echo-mix', function() {
+    el['aud-echo-mix-val'].textContent = Math.round(echoMix() * 100) + '%';
+    applyEcho();
+  });
+  wireParam('aud-rev-decay', function() {
+    el['aud-rev-decay-val'].textContent = revDecay().toFixed(1) + ' s';
+    refreshIr(false);
+  });
+  wireParam('aud-rev-pre', function() {
+    el['aud-rev-pre-val'].textContent = Math.round(revPre() * 1000) + ' ms';
+    applyReverb();
+  });
+  wireParam('aud-rev-mix', function() {
+    el['aud-rev-mix-val'].textContent = Math.round(revMix() * 100) + '%';
+    applyReverb();
+  });
+
+  // --- the chain strip -------------------------------------------------------
+  //
+  // Every stage is drawn whether or not it is switched on, so the order is
+  // visible before anything is pressed and a stage that is off reads as a gap in
+  // a chain rather than as an absence.
+
+  function renderChain() {
+    var row = el['aud-chain'];
+    if (!row) return;
+    var stages = [
+      { name: 'Track', on: true, fixed: true },
+      { name: filterType ? FILTER_LABELS[filterType] : 'Filter', on: Boolean(filterType) },
+      { name: 'Echo', on: echoOn },
+      { name: 'Reverb', on: revOn },
+      { name: 'Out', on: true, fixed: true }
+    ];
+
+    row.textContent = '';
+    stages.forEach(function(stage, i) {
+      if (i) {
+        var arrow = document.createElement('span');
+        arrow.className = 'aud-chain-arrow';
+        arrow.textContent = '→';
+        row.appendChild(arrow);
+      }
+      var node = document.createElement('span');
+      node.className = 'aud-chain-node' +
+        (stage.on ? ' is-on' : '') + (stage.fixed ? ' is-fixed' : '');
+      node.textContent = stage.name;
+      row.appendChild(node);
+    });
+  }
+
+  // --- the maths -------------------------------------------------------------
+  //
+  // Off by default and never carried in a share link: it is a reading aid for
+  // whoever opened the page, not part of the sound, and a recipient should get
+  // what the sender built rather than how they were looking at it.
+  //
+  // Everything here is derived from the same slider values the graph is running
+  // on, so it cannot drift from what is being heard. Where the browser is the
+  // authority on a number rather than a formula, the browser is asked: the
+  // filter's response comes from the node itself.
+
+  function sampleRate() { return audioCtx ? audioCtx.sampleRate : 44100; }
+
+  // Thin spaces between the thousands: these are counts to be read at a glance,
+  // and a comma inside a number sitting next to a comma between two of them is
+  // a number misread.
+  function grouped(n) {
+    return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');
+  }
+
+  function signed(v, digits) {
+    return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(digits);
+  }
+
+  // The cookbook the Web Audio biquad is specified in terms of. Q is read as
+  // decibels for the low and high pass and as a plain ratio everywhere else,
+  // which is a quirk of the original WebKit implementation that the spec kept.
+  function biquad(type, f0, q, fs) {
+    var w0 = 2 * Math.PI * f0 / fs;
+    var cw = Math.cos(w0);
+    var sw = Math.sin(w0);
+    var dB = (type === 'lowpass' || type === 'highpass');
+    var qLin = dB ? Math.pow(10, q / 20) : q;
+    var alpha = sw / (2 * qLin);
+    var b0, b1, b2;
+    var a0 = 1 + alpha, a1 = -2 * cw, a2 = 1 - alpha;
+
+    if (type === 'lowpass') { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = b0; }
+    else if (type === 'highpass') { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = b0; }
+    else if (type === 'bandpass') { b0 = alpha; b1 = 0; b2 = -alpha; }
+    else { b0 = 1; b1 = -2 * cw; b2 = 1; }
+
+    return {
+      w0: w0, alpha: alpha, qLin: qLin, qIsDb: dB,
+      // Divided through by a0, which is the form the difference equation runs in.
+      b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0
+    };
+  }
+
+  // Ground truth, straight out of the node that is actually filtering the audio.
+  function responseDb(hz) {
+    if (!filterNode || !filterNode.getFrequencyResponse) return null;
+    try {
+      var f = new Float32Array([hz]);
+      var mag = new Float32Array(1);
+      var phase = new Float32Array(1);
+      filterNode.getFrequencyResponse(f, mag, phase);
+      if (!isFinite(mag[0]) || mag[0] <= 0) return null;
+      return 20 * Math.log(mag[0]) / Math.LN10;
+    } catch (e) { return null; }
+  }
+
+  // How many repeats of an echo are left above -60 dB. g^k = 10^-3 solves to
+  // k = 3 / log10(1/g), and a feedback of zero means the one tap and nothing after.
+  function echoRepeats(g) {
+    if (g <= 0) return 1;
+    if (g >= 1) return Infinity;
+    return Math.ceil(3 / (Math.log(1 / g) / Math.LN10));
+  }
+
+  function mathBlock(title, lead, eqs, nums) {
+    var wrap = document.createElement('section');
+    wrap.className = 'aud-math-block';
+
+    var h = document.createElement('h3');
+    h.className = 'aud-math-h';
+    h.textContent = title;
+    wrap.appendChild(h);
+
+    if (lead) {
+      var p = document.createElement('p');
+      p.className = 'aud-math-p';
+      // Everything in here is written above, never typed in or arrived in a link,
+      // so the markup in the formulas is ours.
+      p.innerHTML = lead;
+      wrap.appendChild(p);
+    }
+
+    (eqs || []).forEach(function(eq) {
+      if (!eq) return;
+      var d = document.createElement('div');
+      d.className = 'aud-math-eq';
+      d.innerHTML = eq;
+      wrap.appendChild(d);
+    });
+
+    if (nums && nums.length) {
+      var dl = document.createElement('dl');
+      dl.className = 'aud-math-nums';
+      nums.forEach(function(pair) {
+        if (!pair) return;
+        var dt = document.createElement('dt');
+        dt.innerHTML = pair[0];
+        var dd = document.createElement('dd');
+        dd.innerHTML = pair[1];
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      });
+      wrap.appendChild(dl);
+    }
+    return wrap;
+  }
+
+  function chainBlock(fs) {
+    var on = [];
+    if (filterType) on.push('filter');
+    if (echoOn) on.push('echo');
+    if (revOn) on.push('reverb');
+
+    var eqs = on.length
+      ? [
+        'h<sub>total</sub> = ' + on.map(function(n) { return 'h<sub>' + n + '</sub>'; }).join(' &lowast; '),
+        'H<sub>total</sub>(z) = ' + on.map(function(n) { return 'H<sub>' + n + '</sub>(z)'; }).join(' &middot; ')
+      ]
+      : ['y[n] = x[n]'];
+
+    return mathBlock(
+      'The chain',
+      on.length
+        ? 'Each stage is linear and time invariant: the answer to a sum of two signals is the sum of the two answers, and the same input a second later gives the same output a second later. That is enough to collapse the whole chain into one filter. Its impulse responses convolve and its transfer functions multiply, which is also why the fixed order above costs nothing &mdash; the product commutes.'
+        : 'Nothing is switched on, so every sample comes out the way it went in.',
+      eqs,
+      [
+        ['f<sub>s</sub>', grouped(fs) + ' Hz'],
+        ['Nyquist', grouped(fs / 2) + ' Hz &mdash; nothing above this exists in the file'],
+        ['Stages running', on.length ? String(on.length) : 'none']
+      ]
+    );
+  }
+
+  function filterBlock(fs) {
+    var type = filterType.replace('-wide', '').replace('-narrow', '');
+    var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+    var q = parseFloat(el['aud-filter-q'].value);
+    var c = biquad(type, f0, q, fs);
+    var atCut = responseDb(f0);
+
+    var lead = 'Two samples of the input remembered and two of the output fed back: one second-order ' +
+      'section, five coefficients. All five chips are the same structure with different numbers in it.';
+    if (c.qIsDb) {
+      lead += ' Web&nbsp;Audio reads Q in decibels for the low and high pass and as a plain ratio ' +
+        'everywhere else, so the &alpha; below divides by 10<sup>Q/20</sup> = ' + c.qLin.toFixed(3) + '.';
+    }
+
+    // The cookbook row this chip picks. Only the numerator changes between them;
+    // the denominator is the same three terms every time.
+    var rows = {
+      lowpass: 'b = [ (1−cos &omega;<sub>0</sub>)/2,  1−cos &omega;<sub>0</sub>,  (1−cos &omega;<sub>0</sub>)/2 ]',
+      highpass: 'b = [ (1+cos &omega;<sub>0</sub>)/2,  −(1+cos &omega;<sub>0</sub>),  (1+cos &omega;<sub>0</sub>)/2 ]',
+      bandpass: 'b = [ &alpha;,  0,  −&alpha; ]',
+      notch: 'b = [ 1,  −2cos &omega;<sub>0</sub>,  1 ]'
+    };
+
+    return mathBlock('Filter — one biquad', lead, [
+      'y[n] = b<sub>0</sub>x[n] + b<sub>1</sub>x[n−1] + b<sub>2</sub>x[n−2] − a<sub>1</sub>y[n−1] − a<sub>2</sub>y[n−2]',
+      'H(z) = (b<sub>0</sub> + b<sub>1</sub>z<sup>−1</sup> + b<sub>2</sub>z<sup>−2</sup>) / (1 + a<sub>1</sub>z<sup>−1</sup> + a<sub>2</sub>z<sup>−2</sup>)',
+      '&omega;<sub>0</sub> = 2&pi;f<sub>0</sub>/f<sub>s</sub> = ' + c.w0.toFixed(5) + ' rad/sample',
+      '&alpha; = sin &omega;<sub>0</sub> / ' +
+        (c.qIsDb ? '(2&middot;10<sup>Q/20</sup>)' : '2Q') + ' = ' + c.alpha.toFixed(5),
+      rows[type] + ',   a = [ 1+&alpha;,  −2cos &omega;<sub>0</sub>,  1−&alpha; ]'
+    ], [
+      ['f<sub>0</sub>', formatFilterFreq(f0)],
+      ['Q', q.toFixed(1) + (c.qIsDb ? ' dB → ' + c.qLin.toFixed(3) : '')],
+      ['b<sub>0</sub>, b<sub>1</sub>, b<sub>2</sub>',
+        [c.b0, c.b1, c.b2].map(function(v) { return signed(v, 6); }).join(', ')],
+      ['a<sub>1</sub>, a<sub>2</sub>',
+        [c.a1, c.a2].map(function(v) { return signed(v, 6); }).join(', ')],
+      atCut === null ? null : ['|H(f<sub>0</sub>)|', signed(atCut, 1) + ' dB, measured on the node itself']
+    ]);
+  }
+
+  function echoBlock(fs) {
+    var tau = echoTime();
+    var g = echoFeedback();
+    var m = echoMix();
+    var d = Math.round(tau * fs);
+    var repeats = echoRepeats(g);
+
+    return mathBlock(
+      'Echo — a feedback comb',
+      'One delayed copy, wired back into its own input. Nothing here ever truly stops: the tail is a ' +
+      'geometric series, and it only stops mattering once g<sup>k</sup> falls under the noise.',
+      [
+        'w[n] = x[n−D] + g&middot;w[n−D]',
+        'y[n] = (1−m)&middot;x[n] + m&middot;w[n]',
+        'H<sub>echo</sub>(z) = (1−m) + m&middot;z<sup>−D</sup> / (1 − g&middot;z<sup>−D</sup>)',
+        'repeat k lands at k&tau;, at g<sup>k</sup> of the original'
+      ],
+      [
+        ['&tau;', Math.round(tau * 1000) + ' ms'],
+        ['D = round(&tau;f<sub>s</sub>)', grouped(d) + ' samples of delay line'],
+        ['g', g.toFixed(2) + (g >= 1 ? ' — at or above 1 it would never decay' : '')],
+        ['m', m.toFixed(2) + ' wet, ' + (1 - m).toFixed(2) + ' dry, summing to unity'],
+        ['Repeats above −60 dB', g <= 0
+          ? 'one, and silence after it'
+          : grouped(repeats) + ', so about ' + (repeats * tau).toFixed(1) + ' s of tail'],
+        ['Comb spacing', 'a tooth every 1/&tau; = ' + (1 / tau).toFixed(2) + ' Hz across the spectrum']
+      ]
+    );
+  }
+
+  function reverbBlock(fs) {
+    var t = revDecay();
+    var pre = revPre();
+    var m = revMix();
+    var n = Math.round(t * fs);
+    var ops = n * fs;
+
+    return mathBlock(
+      'Reverb — convolution with a room',
+      'Not a handful of repeats but every one of them at once. The track is convolved with an impulse ' +
+      'response: what a room would do to a single click. This one is noise dying away exponentially, ' +
+      'which is the diffuse tail of a real room without its early reflections.',
+      [
+        'h[k] = r[k]&middot;e<sup>−k&middot;ln(1000)/(T&middot;f<sub>s</sub>)</sup>,&nbsp;&nbsp; r[k] uniform on [−1, 1]',
+        'y[n] = (1−m)&middot;x[n] + m&middot;&Sigma;<sub>k=0</sub><sup>N−1</sup> h[k]&middot;x[n−k−P]'
+      ],
+      [
+        ['T', t.toFixed(1) + ' s to −60 dB, which is what ln(1000) in the exponent buys'],
+        ['N = T&middot;f<sub>s</sub>', grouped(n) + ' taps, per channel, each with its own noise'],
+        ['P = round(pre&middot;f<sub>s</sub>)', grouped(Math.round(pre * fs)) + ' samples (' +
+          Math.round(pre * 1000) + ' ms before the room answers)'],
+        ['m', m.toFixed(2) + ' wet, ' + (1 - m).toFixed(2) + ' dry'],
+        ['Cost of that sum', (ops / 1e9).toFixed(1) + ' billion multiply–adds a second &mdash; ' +
+          'which is why the browser does it by FFT overlap–add and not the way it is written'],
+        ['Level', 'the response is normalised before use, so a bigger room moves the tail and not the volume']
+      ]
+    );
+  }
+
+  function pitchBlock() {
+    var r = Math.pow(2, semitones / 12);
+    return mathBlock(
+      'Pitch — resampling',
+      'No phase vocoder: the samples are read out faster or slower, so pitch and tempo move together, ' +
+      'the way varispeed does on tape.',
+      ['r = 2<sup>n/12</sup> = ' + r.toFixed(4)],
+      [
+        ['n', (semitones > 0 ? '+' : '') + semitones + ' semitones'],
+        ['Every partial', 'f → ' + r.toFixed(4) + '&middot;f'],
+        ['Running time', audioBuffer
+          ? formatTime(audioBuffer.duration) + ' → ' + formatTime(audioBuffer.duration / r)
+          : 'duration / ' + r.toFixed(4)]
+      ]
+    );
+  }
+
+  // The one-line summaries under each effect's sliders. These are on whether or
+  // not the maths panel is, because they are the numbers a slider is worth
+  // knowing about while it is being moved.
+  function renderEffectNotes() {
+    var fs = sampleRate();
+
+    var g = echoFeedback();
+    var tau = echoTime();
+    var repeats = echoRepeats(g);
+    el['aud-echo-tail'].textContent = 'D = ' + grouped(tau * fs) + ' samples · ' +
+      (g <= 0
+        ? 'one repeat, nothing after it'
+        : repeats + ' repeats before −60 dB · ' + (repeats * tau).toFixed(1) + ' s of tail');
+
+    var t = revDecay();
+    el['aud-rev-taps'].textContent = 'N = ' + grouped(t * fs) + ' taps per channel · ' +
+      '60 dB down after ' + t.toFixed(1) + ' s · ' +
+      Math.round(revPre() * 1000) + ' ms of pre-delay';
+  }
+
+  function renderMath() {
+    var host = el['aud-math'];
+    if (!host) return;
+    renderEffectNotes();
+
+    host.classList.toggle('hidden', !mathOn);
+    // Emptied rather than merely hidden, so a closed panel is not sitting on a
+    // stale set of numbers that would flash before the next rebuild.
+    if (!mathOn) { host.textContent = ''; return; }
+
+    var fs = sampleRate();
+    host.textContent = '';
+    host.appendChild(chainBlock(fs));
+    if (filterType) host.appendChild(filterBlock(fs));
+    if (echoOn) host.appendChild(echoBlock(fs));
+    if (revOn) host.appendChild(reverbBlock(fs));
+    if (semitones) host.appendChild(pitchBlock());
+  }
+
+  el['aud-math-on'].addEventListener('change', function() {
+    mathOn = el['aud-math-on'].checked;
+    renderMath();
   });
 
   // --- the queue -------------------------------------------------------------
@@ -1429,6 +1986,13 @@
 
   // v3 replaces v2's single `a=<ref>` with `t=`, the whole queue, and `i=`, which
   // track it opens on. v2 links are still read; see applyState.
+  //
+  // Echo and reverb arrived after v3 and did not take the version with them. They
+  // are extra keys, written only when the effect is on, and a reader that has
+  // never heard of them ignores them and restores everything else. A bump would
+  // have made an older cached page throw the whole link away — and a playlist
+  // that opens without its reverb is a better failure than a playlist that does
+  // not open.
   function encodeState() {
     var parts = ['v=3'];
     function bit(b) { return b ? '1' : '0'; }
@@ -1437,6 +2001,14 @@
       el['aud-filter-freq'].value,
       el['aud-filter-q'].value
     ].join(','));
+    if (echoOn) {
+      parts.push('ec=' + [el['aud-echo-time'].value, el['aud-echo-fb'].value,
+        el['aud-echo-mix'].value].join(','));
+    }
+    if (revOn) {
+      parts.push('rv=' + [el['aud-rev-decay'].value, el['aud-rev-pre'].value,
+        el['aud-rev-mix'].value].join(','));
+    }
     parts.push('viz=' + [bit(showWave), bit(showFreq)].join(','));
     parts.push('vol=' + el['aud-volume'].value);
     if (semitones) parts.push('p=' + semitones);
@@ -1501,6 +2073,24 @@
       // After the type: the notch presets write their own Q on the way in.
       setSlider(el['aud-filter-freq'], flt[1]);
       setSlider(el['aud-filter-q'], flt[2]);
+    }
+
+    // Present only when the sender had the effect on, so absence is the off
+    // switch and there is nothing to encode for it.
+    var ec = (s.ec || '').split(',');
+    if (s.ec && ec.length >= 3) {
+      setSlider(el['aud-echo-time'], ec[0]);
+      setSlider(el['aud-echo-fb'], ec[1]);
+      setSlider(el['aud-echo-mix'], ec[2]);
+      setEcho(true);
+    }
+
+    var rv = (s.rv || '').split(',');
+    if (s.rv && rv.length >= 3) {
+      setSlider(el['aud-rev-decay'], rv[0]);
+      setSlider(el['aud-rev-pre'], rv[1]);
+      setSlider(el['aud-rev-mix'], rv[2]);
+      setReverb(true);
     }
 
     var viz = (s.viz || '').split(',');
@@ -1911,6 +2501,18 @@
   el['aud-vol-val'].textContent = Math.round(parseFloat(el['aud-volume'].value) * 100) + '%';
   el['aud-filter-freq-val'].textContent =
     formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
+  el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
+  el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);
+  el['aud-echo-mix-val'].textContent = Math.round(echoMix() * 100) + '%';
+  el['aud-rev-decay-val'].textContent = revDecay().toFixed(1) + ' s';
+  el['aud-rev-pre-val'].textContent = Math.round(revPre() * 1000) + ' ms';
+  el['aud-rev-mix-val'].textContent = Math.round(revMix() * 100) + '%';
+  // The maths panel starts closed on every visit. It is not remembered, and it
+  // is not carried in a link.
+  mathOn = false;
+  el['aud-math-on'].checked = false;
+  renderChain();
+  renderMath();
   playThrough = el['aud-q-through'].checked;
 
   try {
