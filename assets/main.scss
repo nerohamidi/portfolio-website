@@ -2719,7 +2719,8 @@ body.light-mode {
 }
 
 // ---------------------------------------------------------------------------
-// Signal Share: the effect chain and the maths panel
+// ---------------------------------------------------------------------------
+// Signal Share: the effect chain and the math panel
 // ---------------------------------------------------------------------------
 
 // Every stage is drawn whether or not it is on, so the order is legible before
@@ -2730,16 +2731,17 @@ body.light-mode {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 12px;
 }
 
 .aud-chain-node {
   border: 1px dashed #444;
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 4px 11px;
   color: #666;
   letter-spacing: 0.03em;
+  white-space: nowrap;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 
   &.is-on {
@@ -2763,103 +2765,99 @@ body.light-mode {
   font-size: 13px;
 }
 
-// The running figures under an effect's sliders: on whether or not the maths
-// panel is, because they are what a slider is worth knowing while it moves.
-.aud-param-note {
-  margin: 2px 0 0;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.6;
-  color: #777;
-}
-
 .aud-math-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
 }
 
 .aud-math-tip {
   margin-left: auto;
   font-size: 11px;
   color: #777;
-
-  @media screen and (max-width: 600px) {
-    margin-left: 0;
-    flex-basis: 100%;
-  }
 }
 
+// Built to read like the caption under the visualiser rather than like a paper:
+// short centred lines, arriving a token at a time.
 .aud-math {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 3px;
   padding-top: 4px;
 }
 
-.aud-math-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.aud-math-h {
+.aud-math-line {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: #ddd;
-}
-
-.aud-math-p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #999;
-}
-
-// Formulas scroll inside their own box rather than wrapping: a broken line of
-// algebra is harder to read than one that runs off the edge.
-.aud-math-eq {
   font-family: monospace;
   font-size: 13px;
-  line-height: 1.9;
+  line-height: 1.85;
   color: #e0a040;
-  background: rgba(255, 255, 255, 0.03);
-  border-left: 2px solid rgba(224, 160, 64, 0.5);
-  border-radius: 0 6px 6px 0;
-  padding: 7px 12px;
+  text-align: center;
+  // A long difference equation scrolls in its own line rather than wrapping:
+  // algebra broken across two rows is harder to read than algebra that runs off
+  // the edge, and on a phone every one of these would break.
   overflow-x: auto;
   white-space: nowrap;
+  // Room for the scrollbar on the platforms that reserve it, so the lines that
+  // do not overflow still sit on the same rhythm.
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar { display: none; }
 
   sub, sup { font-size: 0.75em; }
+
+  // A stage heading. Small, quiet, and out of the way of the algebra.
+  &.is-tag {
+    margin-top: 12px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #777;
+
+    &:first-child { margin-top: 0; }
+  }
 }
 
-.aud-math-nums {
-  margin: 2px 0 0;
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
-  font-size: 12.5px;
+// The caption's trick, reused: every token holds its place from the moment the
+// line is built and only fades in when its turn comes, so nothing already on
+// screen moves as the rest arrives.
+.aud-math-w {
+  opacity: 0;
+  transition: opacity 0.22s ease-out, color 0.3s;
 
-  dt {
-    font-family: monospace;
-    color: #6cb6ff;
-    sub, sup { font-size: 0.8em; }
+  &.is-in { opacity: 1; }
+
+  // A number that changed under a moving slider is lit rather than re-faded:
+  // re-running the entrance on every input event would make a drag strobe.
+  &.is-hot { color: #6cb6ff; }
+}
+
+// --- effect sliders on a phone ---------------------------------------------
+//
+// The name and the value are pinned to the ends of their own row and the slider
+// gets the full width underneath, rather than three things fighting over 320px
+// with the slider losing.
+@media screen and (max-width: 600px) {
+  .aud-param {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+
+    input[type="range"] {
+      flex-basis: 100%;
+      order: 3;
+    }
   }
 
-  dd {
-    margin: 0;
-    color: #999;
-    line-height: 1.5;
-  }
+  .aud-param-name { min-width: 0; flex: 1; }
+  .aud-param-val { min-width: 0; }
 
-  @media screen and (max-width: 560px) {
-    grid-template-columns: 1fr;
-    gap: 2px;
-
-    dd { margin-bottom: 8px; }
-  }
+  .aud-math-tip { margin-left: 0; flex-basis: 100%; }
+  .aud-math-line { font-size: 12px; }
+  .aud-chain { font-size: 11px; }
+  .aud-chain-node { padding: 3px 9px; }
 }
 
 body.light-mode {
@@ -2877,19 +2875,8 @@ body.light-mode {
   }
   .aud-chain-arrow { color: #bbb; }
 
-  .aud-param-note { color: #888; }
   .aud-math-tip { color: #888; }
-  .aud-math-h { color: #333; }
-  .aud-math-p { color: #666; }
-
-  .aud-math-eq {
-    color: #a06a12;
-    background: rgba(0, 0, 0, 0.03);
-    border-left-color: rgba(184, 121, 26, 0.45);
-  }
-
-  .aud-math-nums {
-    dt { color: #2a7ae2; }
-    dd { color: #666; }
-  }
+  .aud-math-line { color: #a06a12; }
+  .aud-math-line.is-tag { color: #999; }
+  .aud-math-w.is-hot { color: #2a7ae2; }
 }

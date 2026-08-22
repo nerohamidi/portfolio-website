@@ -2,12 +2,12 @@
 
   <header class="aud-head">
     <h1 class="aud-title">Signal Share</h1>
-    <p class="aud-sub">Load a track, stack filters, echo and reverb on it, then send someone a link that opens on exactly what you built.</p>
+    <p class="aud-sub">Load a track, stack effects on it, then send someone a link that opens on exactly what you built.</p>
   </header>
 
   <ol class="aud-steps">
     <li><span class="aud-step-n">1</span><span class="aud-step-t">Load a track</span><span class="aud-step-d">Your file, or the demo</span></li>
-    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Stack effects, watch the spectrum, read the maths</span></li>
+    <li><span class="aud-step-n">2</span><span class="aud-step-t">Shape it</span><span class="aud-step-d">Stack effects, watch the spectrum</span></li>
     <li><span class="aud-step-n">3</span><span class="aud-step-t">Share the link</span><span class="aud-step-d">Whole playlist, your settings</span></li>
   </ol>
 
@@ -32,6 +32,12 @@
     </div>
     <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB each &middot; drop several to build a playlist &middot; nothing leaves your browser until you make a link or turn on the transcript</p>
   </div>
+
+  <!-- The transport that takes over when the page is hidden. iOS Safari
+       interrupts an AudioContext the moment Safari is backgrounded, so Web
+       Audio cannot keep playing there; a bare media element can, because it is
+       the platform's own audio session rather than ours. -->
+  <audio id="aud-bg" preload="auto" playsinline></audio>
 
   <!-- Player -->
   <section class="aud-player hidden" id="aud-player" aria-label="Player">
@@ -96,7 +102,7 @@
   <section class="aud-panel aud-queue hidden" id="aud-queue" aria-label="Playlist">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Playlist</h2>
-      <p class="aud-panel-hint">Tracks play in order, and one share link carries the whole list. The effects, pitch and volume below apply to whichever track is playing.</p>
+      <p class="aud-panel-hint">Tracks play in order, and one link carries the list.</p>
     </div>
     <ol class="aud-q-list" id="aud-q-list"></ol>
     <div class="aud-q-foot">
@@ -115,13 +121,13 @@
   <section class="aud-panel hidden" id="aud-shape" aria-label="Effects">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Effects</h2>
-      <p class="aud-panel-hint">Switch on as many as you like &mdash; they stack, and the signal runs through them in this order.</p>
+      <p class="aud-panel-hint">They stack, in this order.</p>
     </div>
     <p class="aud-chain" id="aud-chain"></p>
 
     <div class="aud-panel-head aud-panel-head-sep">
       <h2 class="aud-panel-title">Filter</h2>
-      <p class="aud-panel-hint">Pick one to cut part of the spectrum. Tap it again to switch it off.</p>
+      <p class="aud-panel-hint">Cuts part of the spectrum. Tap again for off.</p>
     </div>
     <div class="aud-chips" id="aud-filters">
       <button class="aud-chip" data-filter="lowpass" type="button">Low Pass</button>
@@ -137,7 +143,7 @@
         <span class="aud-param-val" id="aud-filter-freq-val">1.0 kHz</span>
       </label>
       <label class="aud-param">
-        <span class="aud-param-name">Resonance</span>
+        <span class="aud-param-name">Q</span>
         <input type="range" id="aud-filter-q" min="0.1" max="20" value="1" step="0.1">
         <span class="aud-param-val" id="aud-filter-q-val">1.0</span>
       </label>
@@ -145,7 +151,7 @@
 
     <div class="aud-panel-head aud-panel-head-sep">
       <h2 class="aud-panel-title">Echo</h2>
-      <p class="aud-panel-hint">A delayed copy of the track fed back into its own delay, so every repeat is a fixed fraction of the one before it.</p>
+      <p class="aud-panel-hint">A delay fed back into itself.</p>
     </div>
     <div class="aud-chips">
       <button class="aud-chip" id="aud-echo-on" type="button" aria-pressed="false">Echo</button>
@@ -166,12 +172,11 @@
         <input type="range" id="aud-echo-mix" min="0" max="1" value="0.35" step="0.01">
         <span class="aud-param-val" id="aud-echo-mix-val">35%</span>
       </label>
-      <p class="aud-param-note" id="aud-echo-tail">&nbsp;</p>
     </div>
 
     <div class="aud-panel-head aud-panel-head-sep">
       <h2 class="aud-panel-title">Reverb</h2>
-      <p class="aud-panel-hint">Convolution with a decaying noise tail, which is what a room does to a sound: thousands of reflections instead of a handful of repeats.</p>
+      <p class="aud-panel-hint">Convolution with a room.</p>
     </div>
     <div class="aud-chips">
       <button class="aud-chip" id="aud-rev-on" type="button" aria-pressed="false">Reverb</button>
@@ -183,7 +188,7 @@
         <span class="aud-param-val" id="aud-rev-decay-val">2.2 s</span>
       </label>
       <label class="aud-param">
-        <span class="aud-param-name">Pre-delay</span>
+        <span class="aud-param-name">Pre</span>
         <input type="range" id="aud-rev-pre" min="0" max="200" value="20" step="1">
         <span class="aud-param-val" id="aud-rev-pre-val">20 ms</span>
       </label>
@@ -192,12 +197,11 @@
         <input type="range" id="aud-rev-mix" min="0" max="1" value="0.3" step="0.01">
         <span class="aud-param-val" id="aud-rev-mix-val">30%</span>
       </label>
-      <p class="aud-param-note" id="aud-rev-taps">&nbsp;</p>
     </div>
 
     <div class="aud-panel-head aud-panel-head-sep">
       <h2 class="aud-panel-title">Pitch</h2>
-      <p class="aud-panel-hint">Resamples the track, so it speeds up as it rises and slows as it falls, the way varispeed works on tape.</p>
+      <p class="aud-panel-hint">Resamples, so speed moves with it.</p>
     </div>
     <div class="aud-params">
       <label class="aud-param">
@@ -225,9 +229,9 @@
     <div class="aud-math-bar">
       <label class="aud-check">
         <input type="checkbox" id="aud-math-on">
-        <span>Show the maths</span>
+        <span>Show the math</span>
       </label>
-      <span class="aud-math-tip">every equation below is running on the numbers you set, live</span>
+      <span class="aud-math-tip">live, on your numbers</span>
     </div>
     <div class="aud-math hidden" id="aud-math"></div>
   </section>
@@ -236,7 +240,7 @@
   <section class="aud-panel aud-share hidden" id="aud-share" aria-label="Share">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Share</h2>
-      <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this playlist with your effects and volume already set. Your files are uploaded only when you press the button.</p>
+      <p class="aud-panel-hint" id="aud-share-hint">A link that opens on your effects and volume. Files upload only when you press the button.</p>
     </div>
     <div class="aud-fields">
       <label class="aud-field">

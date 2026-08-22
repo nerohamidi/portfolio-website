@@ -58,8 +58,10 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     txPump: txPump,
     txCut: txCut,
     state: function() {
-      return { queue: queue, current: current, txSegments: txSegments, txNext: txNext, txDone: txDone, txOn: txOn };
+      return { queue: queue, current: current, txSegments: txSegments, txNext: txNext, txDone: txDone,
+        txOn: txOn, playing: playing, offsetSec: offsetSec, bgActive: bgActive };
     },
+    seekTo: seekTo,
     effects: function() {
       return { echoOn: echoOn, revOn: revOn, mathOn: mathOn };
     },
@@ -134,7 +136,27 @@ function boot(hash, fetchImpl) {
       getChannelData: () => new Float32Array(frames),
     });
   };
-  w.requestAnimationFrame = () => 0;
+  // jsdom implements no media element, and the engine's handoff path touches
+  // one. Stubbed so it is inert and quiet, and recorded so the handoff tests can
+  // see what it was asked to do.
+  Object.defineProperty(w.document, 'hidden', { value: false, configurable: true });
+  w.HTMLMediaElement.prototype.play = function () { this.playing = true; return Promise.resolve(); };
+  w.HTMLMediaElement.prototype.pause = function () { this.playing = false; };
+  w.HTMLMediaElement.prototype.load = function () {};
+  // Real browsers carry this, and the engine only switches it off where it finds
+  // it, so the mock has to have it for that path to be exercised at all.
+  w.HTMLMediaElement.prototype.preservesPitch = true;
+  Object.defineProperty(w.HTMLMediaElement.prototype, 'readyState', { get() { return 4; }, configurable: true });
+  // currentTime is a no-op setter in jsdom, so it is made real here.
+  Object.defineProperty(w.HTMLMediaElement.prototype, 'currentTime', {
+    get() { return this._t || 0; },
+    set(v) { this._t = v; },
+    configurable: true,
+  });
+  // The math panel stages its entrance one frame after it builds, so rAF has to
+  // really run. draw() re-registers itself every frame, though, and letting that
+  // loop would spin the run forever, so it alone is left un-scheduled.
+  w.requestAnimationFrame = (fn) => { if (fn.name !== 'draw') setTimeout(() => fn(0), 0); return 0; };
   w.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => () => ({}) });
   w.fetch = fetchImpl || (() => Promise.reject(new Error('no fetch in this test')));
   w.URL.createObjectURL = () => 'blob:x';
@@ -976,58 +998,133 @@ w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
 check('a link from before the effects existed leaves them off', !w.__probe.effects().echoOn && !w.__probe.effects().revOn);
 
-// --- 10. the maths panel -----------------------------------------------------
+// --- 10. the math panel ------------------------------------------------------
+//
+// It reads like the caption under the visualiser: short lines, each arriving a
+// token at a time. What matters here is that it starts closed, that it stages
+// its entrance, and that a moving slider patches the numbers rather than
+// re-running that entrance on every input event.
 
 w = boot(`#v=3&flt=lp,500,1&ec=320,0.35,0.35&rv=2.2,20,0.3&p=5&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
-const maths = () => w.document.getElementById('aud-math');
+const math = () => w.document.getElementById('aud-math');
+const mathRows = () => [...w.document.querySelectorAll('.aud-math-line')].map((n) => n.textContent);
 const tick = (win, id, on) => {
   const box = win.document.getElementById(id);
   box.checked = on;
   box.dispatchEvent(new win.Event('change'));
 };
 
-check('the maths is off on arrival', maths().classList.contains('hidden') && !w.__probe.effects().mathOn);
-check('and nothing is rendered until it is asked for', maths().textContent === '', maths().textContent.slice(0, 40));
-check('the running figures under the sliders are there anyway',
-  /D = 14 112 samples/.test(w.document.getElementById('aud-echo-tail').textContent),
-  w.document.getElementById('aud-echo-tail').textContent);
+check('the math is off on arrival', math().classList.contains('hidden') && !w.__probe.effects().mathOn);
+check('and nothing is rendered until it is asked for', math().textContent === '', math().textContent.slice(0, 40));
 
 tick(w, 'aud-math-on', true);
-let mathText = maths().textContent;
-check('ticking it opens the panel', !maths().classList.contains('hidden') && w.__probe.effects().mathOn);
-check('every running stage gets a block', /The chain/.test(mathText) && /Filter — one biquad/.test(mathText) &&
-  /Echo — a feedback comb/.test(mathText) && /Reverb — convolution with a room/.test(mathText));
+let rows = mathRows();
+let mathText = rows.join(' | ');
+check('ticking it opens the panel', !math().classList.contains('hidden') && w.__probe.effects().mathOn);
+check('it is lines, not paragraphs', rows.length > 6 && rows.every((r) => r.length < 80),
+  'longest ' + Math.max(...rows.map((r) => r.length)));
+check('every running stage gets a heading', /Low Pass/.test(mathText) && /Echo/.test(mathText) &&
+  /Reverb/.test(mathText) && /Pitch/.test(mathText));
 check('stacking is stated as a product of transfer functions',
-  /H<sub>filter<\/sub>\(z\) · H<sub>echo<\/sub>\(z\) · H<sub>reverb<\/sub>\(z\)/.test(maths().innerHTML), '');
-check('the echo delay is worked out in samples', /14 112 samples of delay line/.test(mathText), '');
-check('and its tail is counted in repeats', /7, so about 2\.2 s of tail/.test(mathText), '');
-check('the reverb tap count follows the size', /97 020 taps/.test(mathText), '');
-check('the biquad reports the browser\'s own response', /−3\.0 dB, measured on the node itself/.test(mathText), '');
-check('a pitch shift gets its own block', /Pitch — resampling/.test(mathText) && /1\.3348/.test(mathText), '');
-check('the sample rate is the one the context is running at', /44 100 Hz/.test(mathText), '');
+  /H\(z\) = Hflt\(z\) · Hecho\(z\) · Hrev\(z\)/.test(mathText), mathText.slice(0, 60));
+check('the echo delay is worked out in samples', /D = τfs = 14\u2009112 samples/.test(mathText), mathText);
+check('and its tail is counted in repeats', /−60 dB after 7 repeats, 2\.2 s/.test(mathText), '');
+check('the reverb tap count follows the size', /N = Tfs = 97\u2009020 taps/.test(mathText), '');
+check('the biquad reports the browser\'s own response', /\|H\(f0\)\| = −3\.0 dB/.test(mathText), '');
+check('a pitch shift gets a line', /r = 2n\/12 = 1\.3348/.test(mathText), '');
+check('the sample rate is the one the context is running at', /fs = 44\u2009100 Hz/.test(mathText), '');
 
-// Moving a slider re-runs the arithmetic rather than leaving the old answer up.
+// The entrance: every token is laid out at once and inked on a stagger, which is
+// what keeps the lines from reflowing as the rest of them arrive.
+const words = () => [...w.document.querySelectorAll('.aud-math-w')];
+check('every token is laid out before any is shown', words().length > 30, String(words().length));
+check('and each is given its turn', words()[10].style.transitionDelay !== words()[0].style.transitionDelay,
+  words()[0].style.transitionDelay + ' vs ' + words()[10].style.transitionDelay);
+check('the ink is held back for a frame', words().every((n) => !n.classList.contains('is-in')));
+await settle();
+check('then it arrives', words().every((n) => n.classList.contains('is-in')));
+
+// Moving a slider re-runs the arithmetic, but patches it in rather than making
+// the whole panel strobe through its entrance again.
+const before = words()[0];
 const fb = w.document.getElementById('aud-echo-fb');
 fb.value = '0.7';
 fb.dispatchEvent(new w.Event('input', { bubbles: true }));
-check('the numbers follow the sliders', /20, so about 6\.4 s of tail/.test(maths().textContent),
-  (maths().textContent.match(/[\d.]+ s of tail/) || [''])[0]);
+check('the numbers follow the sliders', /−60 dB after 20 repeats, 6\.4 s/.test(mathRows().join(' | ')),
+  (mathRows().join(' | ').match(/after \d+ repeats, [\d.]+ s/) || [''])[0]);
 check('and so does the graph', w.__probe.graph().echo.fb.gain.value === 0.7);
+check('the panel is patched, not rebuilt', words()[0] === before);
+check('so nothing fades back in under a moving slider', words().every((n) => n.classList.contains('is-in')));
+check('the number that moved is lit', [...w.document.querySelectorAll('.aud-math-w.is-hot')].length > 0,
+  String([...w.document.querySelectorAll('.aud-math-w.is-hot')].length));
 
-check('the maths never rides in a link', !/(^|&)m=/.test(w.__probe.encodeState()), w.__probe.encodeState());
+// Switching a stage on is a different shape, so that one does rebuild.
+press(w, 'aud-rev-on');
+check('switching a stage off rebuilds the panel', words()[0] !== before && !/Reverb/.test(mathRows().join(' | ')));
+
+check('the math never rides in a link', !/(^|&)m=/.test(w.__probe.encodeState()), w.__probe.encodeState());
 
 tick(w, 'aud-math-on', false);
-check('unticking closes it', maths().classList.contains('hidden'));
-check('and clears it out rather than hiding stale numbers', maths().textContent === '');
+check('unticking closes it', math().classList.contains('hidden'));
+check('and clears it out rather than hiding stale numbers', math().textContent === '');
 
 // With nothing switched on it says so, rather than showing an empty panel.
 w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
 tick(w, 'aud-math-on', true);
-mathText = w.document.getElementById('aud-math').textContent;
-check('a clean chain still explains itself', /Nothing is switched on/.test(mathText) && /y\[n\] = x\[n\]/.test(mathText), '');
-check('and offers no block for a stage that is off', !/feedback comb/.test(mathText) && !/one biquad/.test(mathText));
+mathText = mathRows().join(' | ');
+check('a clean chain still says what it is doing', /y\[n\] = x\[n\]/.test(mathText), mathText);
+check('and offers no line for a stage that is off', !/Echo/.test(mathText) && !/Reverb/.test(mathText));
+
+// --- 11. leaving the page ----------------------------------------------------
+//
+// iOS Safari interrupts an AudioContext the moment Safari is backgrounded, so
+// Web Audio cannot play there and a media element has to take the track over.
+// These drive the handoff in both directions.
+
+const hide = (win, hidden) => {
+  Object.defineProperty(win.document, 'hidden', { value: hidden, configurable: true });
+  win.document.dispatchEvent(new win.Event('visibilitychange'));
+};
+
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+let bg = w.document.getElementById('aud-bg');
+
+check('the track is also kept as bytes an element can play', /^blob:/.test(bg.src), bg.src);
+w.document.getElementById('aud-play').click();
+check('playing starts on the graph while the page is visible', w.__probe.graph().gain.out.length > 0 && !bg.playing);
+
+w.__probe.seekTo(30);
+hide(w, true);
+check('leaving the page hands the track to the element', bg.playing === true);
+check('at the position the graph had reached', Math.abs(bg.currentTime - 30) < 0.5, String(bg.currentTime));
+check('and the page still reads as playing', w.__probe.state().playing === true);
+
+bg.currentTime = 42;
+hide(w, false);
+check('coming back takes it off the element', bg.playing === false);
+check('and picks the graph up where the element got to', Math.abs(w.__probe.state().offsetSec - 42) < 0.5,
+  String(w.__probe.state().offsetSec));
+check('still playing', w.__probe.state().playing === true);
+
+// A paused page is left paused: nothing here starts audio nobody asked for.
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+bg = w.document.getElementById('aud-bg');
+hide(w, true);
+check('leaving a paused page starts nothing', bg.playing !== true && w.__probe.state().playing === false);
+
+// The element carries the volume and the varispeed across with it.
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.4&p=7&t=d`, () => res({ chunks: [] }));
+await settle();
+bg = w.document.getElementById('aud-bg');
+w.document.getElementById('aud-play').click();
+hide(w, true);
+check('the element takes the volume with it', Math.abs(bg.volume - 0.4) < 0.001, String(bg.volume));
+check('and the pitch shift, as a rate', Math.abs(bg.playbackRate - Math.pow(2, 7 / 12)) < 0.001, String(bg.playbackRate));
+check('with pitch preservation off, so it varispeeds like the buffer source', bg.preservesPitch === false);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

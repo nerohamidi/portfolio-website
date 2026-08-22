@@ -67,9 +67,9 @@
     'aud-pitch', 'aud-pitch-val', 'aud-pitch-rate', 'aud-pitch-reset',
     'aud-chain', 'aud-math', 'aud-math-on',
     'aud-echo-on', 'aud-echo-params', 'aud-echo-time', 'aud-echo-time-val',
-    'aud-echo-fb', 'aud-echo-fb-val', 'aud-echo-mix', 'aud-echo-mix-val', 'aud-echo-tail',
+    'aud-echo-fb', 'aud-echo-fb-val', 'aud-echo-mix', 'aud-echo-mix-val',
     'aud-rev-on', 'aud-rev-params', 'aud-rev-decay', 'aud-rev-decay-val',
-    'aud-rev-pre', 'aud-rev-pre-val', 'aud-rev-mix', 'aud-rev-mix-val', 'aud-rev-taps',
+    'aud-rev-pre', 'aud-rev-pre-val', 'aud-rev-mix', 'aud-rev-mix-val',
     'aud-note-name', 'aud-note-hz', 'aud-note-cents',
     'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
     'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
@@ -78,7 +78,7 @@
     'aud-key', 'aud-danger', 'aud-del-btn', 'aud-del-note', 'aud-del-pass',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
-    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy'
+    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -95,7 +95,7 @@
   // Every effect is its own stage with its own on switch, and the stages chain
   // rather than replace one another. All of them are linear and time invariant,
   // so the whole chain is one filter whose transfer function is the product of
-  // theirs; the maths panel says so, and it is why the fixed order costs nothing.
+  // theirs; the math panel says so, and it is why the fixed order costs nothing.
   var echoOn = false;
   var revOn = false;
   var echoNodes = null;    // built on first use, then kept and rewired
@@ -122,6 +122,24 @@
   var startedAt = 0;        // audioCtx.currentTime when the current source started
   var playing = false;
   var loadToken = 0;        // guards against a slow load finishing after a newer one
+
+  // The same track, a second time, as bytes a media element can play.
+  //
+  // iOS Safari moves an AudioContext to `interrupted` the moment Safari is
+  // backgrounded or the screen locks: the spec has a state for it, and there is
+  // no flag that turns it off. Web Audio therefore cannot play while the page is
+  // hidden, no matter how the graph is built. A plain <audio> element can,
+  // because it runs on the platform's own audio session.
+  //
+  // So the track is handed over at the door. Going out, the buffer source stops
+  // and the element picks the track up at the same instant, unrouted, straight
+  // to the hardware. Coming back, the element pauses and Web Audio takes it
+  // again from wherever the element reached. The effects and the spectrum drop
+  // out while the page is hidden, which costs nothing anyone can see or hear:
+  // the context they live in is suspended either way, and the alternative is
+  // silence.
+  var bgUrl = null;         // object URL for the current track, or null
+  var bgActive = false;     // the element, not the graph, is the one playing
 
   var PLAY_PATH = 'M8 5.5v13l11-6.5z';
   var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
@@ -286,7 +304,7 @@
   }
 
   function rebuildChain() {
-    // The chain strip and the maths are drawn from the switches, not from the
+    // The chain strip and the math are drawn from the switches, not from the
     // graph, so they are still right on a page where nothing has been loaded yet.
     if (!audioCtx) { renderChain(); renderMath(); return; }
 
@@ -344,6 +362,7 @@
   function loadBytes(get, name, label, autostart) {
     var token = ++loadToken;
     stopSource();
+    bgRelease();
     audioBuffer = null;
     offsetSec = 0;
     setPlaying(false);
@@ -353,11 +372,13 @@
 
     ensureCtx();
 
-    get().then(function(bytes) {
+    get().then(function(got) {
       if (token !== loadToken) return null;
+      // Before the decode, which detaches the buffer it is given.
+      bgAdopt(got.bytes, got.type);
       return new Promise(function(resolve, reject) {
         // Callback form kept as well: older Safari never returned a promise here.
-        var ret = audioCtx.decodeAudioData(bytes, resolve, reject);
+        var ret = audioCtx.decodeAudioData(got.bytes, resolve, reject);
         if (ret && ret.then) ret.then(resolve, reject);
       });
     }).then(function(buf) {
@@ -369,7 +390,11 @@
       el['aud-seek'].max = buf.duration;
       el['aud-seek'].step = 0.01;
       txAdopt(buf.duration);
-      if (autostart) startAt(0);
+      nowPlaying();
+      // Through whichever transport suits where the page is: a track that ends
+      // while Safari is in the background hands the next one straight to the
+      // element rather than waking a context that cannot run.
+      if (autostart) startPlayback(0);
     }).catch(function() {
       if (token !== loadToken) return;
       el['aud-name'].textContent = label === 'clip'
@@ -382,10 +407,13 @@
 
   function loadFile(file, autostart) {
     loadBytes(function() {
-      if (file.arrayBuffer) return file.arrayBuffer();
+      var type = file.type || '';
+      if (file.arrayBuffer) {
+        return file.arrayBuffer().then(function(bytes) { return { bytes: bytes, type: type }; });
+      }
       return new Promise(function(resolve, reject) {
         var fr = new FileReader();
-        fr.onload = function() { resolve(fr.result); };
+        fr.onload = function() { resolve({ bytes: fr.result, type: type }); };
         fr.onerror = function() { reject(fr.error); };
         fr.readAsArrayBuffer(file);
       });
@@ -408,7 +436,8 @@
           loading.locked = true;
           syncDanger();
         }
-        return r.arrayBuffer();
+        var type = r.headers.get('Content-Type') || '';
+        return r.arrayBuffer().then(function(bytes) { return { bytes: bytes, type: type }; });
       });
     }, name, label, autostart);
   }
@@ -419,9 +448,90 @@
 
   function position() {
     if (!audioBuffer) return 0;
+    // While the element has the track, it is the clock.
+    if (bgActive) return el['aud-bg'].currentTime || 0;
     if (!playing || !audioCtx) return offsetSec;
     var p = offsetSec + (audioCtx.currentTime - startedAt) * rate();
     return p < 0 ? 0 : (p > audioBuffer.duration ? audioBuffer.duration : p);
+  }
+
+  // --- handing the track to the element and back -----------------------------
+
+  function bgRelease() {
+    bgActive = false;
+    var node = el['aud-bg'];
+    try { node.pause(); } catch (e) {}
+    try { node.removeAttribute('src'); node.load(); } catch (e) {}
+    if (bgUrl) {
+      try { URL.revokeObjectURL(bgUrl); } catch (e) {}
+      bgUrl = null;
+    }
+  }
+
+  // Called before decodeAudioData, which detaches the ArrayBuffer it is handed:
+  // the Blob has to be taken from the bytes while they are still there.
+  function bgAdopt(bytes, type) {
+    bgRelease();
+    try {
+      bgUrl = URL.createObjectURL(new Blob([bytes], { type: type || 'audio/mpeg' }));
+      el['aud-bg'].src = bgUrl;
+    } catch (e) { bgUrl = null; }
+  }
+
+  function bgSync() {
+    var node = el['aud-bg'];
+    try {
+      node.volume = parseFloat(el['aud-volume'].value);
+      node.playbackRate = rate();
+      // Both spellings: pitch has to move with the rate, the way the buffer
+      // source does it, and browsers default to preserving it.
+      if ('preservesPitch' in node) node.preservesPitch = false;
+      if ('webkitPreservesPitch' in node) node.webkitPreservesPitch = false;
+    } catch (e) {}
+  }
+
+  function bgStart(sec) {
+    if (!bgUrl) return false;
+    var node = el['aud-bg'];
+    bgActive = true;
+    bgSync();
+
+    // A refused play leaves the page claiming to be playing something that is
+    // not, so it is unwound rather than swallowed: the position it was asked
+    // for becomes the paused position, which is where the graph resumes from.
+    var failed = function() {
+      bgActive = false;
+      offsetSec = Math.max(0, sec || 0);
+      setPlaying(false);
+    };
+    var go = function() {
+      try { node.currentTime = Math.max(0, sec || 0); } catch (e) {}
+      try {
+        var p = node.play();
+        if (p && p.catch) p.catch(failed);
+      } catch (e) { failed(); }
+    };
+    // A blob source is already in memory, but readiness is still not instant.
+    if (node.readyState >= 1) go();
+    else node.addEventListener('loadedmetadata', go, { once: true });
+
+    setPlaying(true);
+    return true;
+  }
+
+  function bgStop() {
+    if (!bgActive) return 0;
+    var at = el['aud-bg'].currentTime || 0;
+    bgActive = false;
+    try { el['aud-bg'].pause(); } catch (e) {}
+    return at;
+  }
+
+  // The one entry point the rest of the transport calls: Web Audio while the
+  // page is on screen, the element while it is not.
+  function startPlayback(sec) {
+    if (document.hidden && bgUrl) { bgStart(sec); return; }
+    startAt(sec);
   }
 
   function stopSource() {
@@ -461,17 +571,101 @@
   function pausePlayback() {
     if (!playing) return;
     offsetSec = position();
-    stopSource();
+    if (bgActive) bgStop();
+    else stopSource();
     setPlaying(false);
   }
 
   function setPlaying(on) {
     playing = on;
     if (!on) clearNote();
+    try {
+      if (navigator.mediaSession) navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
+    } catch (e) {}
     el['aud-play-icon'].setAttribute('d', on ? PAUSE_PATH : PLAY_PATH);
     el['aud-play'].setAttribute('aria-label', on ? 'Pause' : 'Play');
     el['aud-play'].classList.toggle('is-on', on);
   }
+
+  // --- the lock screen and the door ------------------------------------------
+
+  // What the phone shows while the page is not the thing being looked at: the
+  // track's name on the lock screen, and controls that reach this transport.
+  // Also how iOS is told there is a media session here at all, which is the
+  // difference between backgrounded audio and audio that is quietly stopped.
+  function nowPlaying() {
+    var ms = navigator.mediaSession;
+    if (!ms) return;
+    try {
+      if (window.MediaMetadata) {
+        ms.metadata = new window.MediaMetadata({
+          title: audioName || 'Signal Share',
+          artist: queue.length > 1
+            ? 'Track ' + (current + 1) + ' of ' + queue.length
+            : 'Signal Share'
+        });
+      }
+    } catch (e) {}
+
+    // Wrapped one at a time: a browser that knows the API can still refuse an
+    // individual action, and one refusal should not cost the others.
+    function on(action, run) {
+      try { ms.setActionHandler(action, run); } catch (e) {}
+    }
+    on('play', function() { if (!playing) togglePlay(); });
+    on('pause', function() { if (playing) pausePlayback(); });
+    on('stop', stopPlayback);
+    on('previoustrack', queue.length > 1 && current > 0
+      ? function() { playIndex(current - 1, playing); } : null);
+    on('nexttrack', queue.length > 1 && current < queue.length - 1
+      ? function() { playIndex(current + 1, playing); } : null);
+  }
+
+  // The track ran out while the element had it. Play-through still applies, and
+  // the next track will be handed straight back to the element, because
+  // startPlayback asks where the page is rather than assuming.
+  el['aud-bg'].addEventListener('ended', function() {
+    if (!bgActive) return;
+    bgActive = false;
+    offsetSec = 0;
+    setPlaying(false);
+    if (playThrough && current >= 0 && current < queue.length - 1) playIndex(current + 1, true);
+  });
+
+  // The door. Going out: the graph stops and the element picks the track up at
+  // the same instant. Coming back: the element stops and the graph takes it from
+  // wherever the element reached.
+  //
+  // Nothing here starts audio that was not already playing. Leaving a paused
+  // page leaves it paused.
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      if (!playing || bgActive || !bgUrl) return;
+      var at = position();
+      stopSource();
+      // setPlaying is left alone on purpose: the transport is changing hands,
+      // not stopping, and the button should read the same when the page returns.
+      if (!bgStart(at)) {
+        // No element to hand it to. Better to stop cleanly than to leave the
+        // page claiming to play something that no longer is.
+        offsetSec = at;
+        setPlaying(false);
+      }
+      return;
+    }
+
+    if (!bgActive) {
+      // Came back to a context iOS interrupted while nothing was handed over.
+      if (audioCtx && audioCtx.state !== 'running' && audioCtx.resume) {
+        try { audioCtx.resume(); } catch (e) {}
+      }
+      return;
+    }
+
+    var back = bgStop();
+    offsetSec = back;
+    if (playing) startAt(back);
+  });
 
   // --- visualiser ------------------------------------------------------------
 
@@ -565,6 +759,7 @@
     el['aud-pitch-val'].textContent = (semitones > 0 ? '+' : '') + semitones + ' st';
     el['aud-pitch-rate'].textContent = r.toFixed(2) + '\u00d7 speed';
     if (bufSource) bufSource.playbackRate.value = r;
+    bgSync();
     renderMath();
   }
 
@@ -681,30 +876,35 @@
 
   // --- transport -------------------------------------------------------------
 
-  el['aud-play'].addEventListener('click', function() {
+  function togglePlay() {
     if (!audioBuffer) return;
     ensureCtx();
     if (playing) {
       pausePlayback();
     } else {
-      startAt(offsetSec >= audioBuffer.duration - 0.02 ? 0 : offsetSec);
+      startPlayback(offsetSec >= audioBuffer.duration - 0.02 ? 0 : offsetSec);
     }
-  });
+  }
 
-  el['aud-stop'].addEventListener('click', function() {
-    stopSource();
+  el['aud-play'].addEventListener('click', togglePlay);
+
+  function stopPlayback() {
+    if (bgActive) bgStop();
+    else stopSource();
     offsetSec = 0;
     setPlaying(false);
     el['aud-seek'].value = 0;
     el['aud-current'].textContent = '0:00';
-  });
+  }
+
+  el['aud-stop'].addEventListener('click', stopPlayback);
 
   function seekTo(sec) {
     if (!audioBuffer) return;
     var to = Math.max(0, Math.min(sec, audioBuffer.duration));
     el['aud-seek'].value = to;
     el['aud-current'].textContent = formatTime(to);
-    if (playing) startAt(to);
+    if (playing) startPlayback(to);
     else offsetSec = to;
   }
 
@@ -715,6 +915,7 @@
   el['aud-volume'].addEventListener('input', function() {
     var v = parseFloat(el['aud-volume'].value);
     if (gainNode) gainNode.gain.value = v;
+    bgSync();
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
   });
 
@@ -855,16 +1056,18 @@
     });
   }
 
-  // --- the maths -------------------------------------------------------------
+  // --- the math --------------------------------------------------------------
   //
   // Off by default and never carried in a share link: it is a reading aid for
   // whoever opened the page, not part of the sound, and a recipient should get
   // what the sender built rather than how they were looking at it.
   //
-  // Everything here is derived from the same slider values the graph is running
-  // on, so it cannot drift from what is being heard. Where the browser is the
-  // authority on a number rather than a formula, the browser is asked: the
-  // filter's response comes from the node itself.
+  // It reads like the caption under the visualiser rather than like a paper. One
+  // short line per idea, each arriving a token at a time, because a panel that
+  // drops six paragraphs of prose on a phone is a panel nobody reads. Everything
+  // is derived from the same slider values the graph is running on, so it cannot
+  // drift from what is being heard. Where the browser is the authority on a
+  // number rather than a formula, the browser is asked.
 
   function sampleRate() { return audioCtx ? audioCtx.sampleRate : 44100; }
 
@@ -872,7 +1075,7 @@
   // and a comma inside a number sitting next to a comma between two of them is
   // a number misread.
   function grouped(n) {
-    return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');
+    return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   }
 
   function signed(v, digits) {
@@ -925,236 +1128,184 @@
     return Math.ceil(3 / (Math.log(1 / g) / Math.LN10));
   }
 
-  function mathBlock(title, lead, eqs, nums) {
-    var wrap = document.createElement('section');
-    wrap.className = 'aud-math-block';
-
-    var h = document.createElement('h3');
-    h.className = 'aud-math-h';
-    h.textContent = title;
-    wrap.appendChild(h);
-
-    if (lead) {
-      var p = document.createElement('p');
-      p.className = 'aud-math-p';
-      // Everything in here is written above, never typed in or arrived in a link,
-      // so the markup in the formulas is ours.
-      p.innerHTML = lead;
-      wrap.appendChild(p);
-    }
-
-    (eqs || []).forEach(function(eq) {
-      if (!eq) return;
-      var d = document.createElement('div');
-      d.className = 'aud-math-eq';
-      d.innerHTML = eq;
-      wrap.appendChild(d);
-    });
-
-    if (nums && nums.length) {
-      var dl = document.createElement('dl');
-      dl.className = 'aud-math-nums';
-      nums.forEach(function(pair) {
-        if (!pair) return;
-        var dt = document.createElement('dt');
-        dt.innerHTML = pair[0];
-        var dd = document.createElement('dd');
-        dd.innerHTML = pair[1];
-        dl.appendChild(dt);
-        dl.appendChild(dd);
-      });
-      wrap.appendChild(dl);
-    }
-    return wrap;
-  }
-
-  function chainBlock(fs) {
-    var on = [];
-    if (filterType) on.push('filter');
-    if (echoOn) on.push('echo');
-    if (revOn) on.push('reverb');
-
-    var eqs = on.length
-      ? [
-        'h<sub>total</sub> = ' + on.map(function(n) { return 'h<sub>' + n + '</sub>'; }).join(' &lowast; '),
-        'H<sub>total</sub>(z) = ' + on.map(function(n) { return 'H<sub>' + n + '</sub>(z)'; }).join(' &middot; ')
-      ]
-      : ['y[n] = x[n]'];
-
-    return mathBlock(
-      'The chain',
-      on.length
-        ? 'Each stage is linear and time invariant: the answer to a sum of two signals is the sum of the two answers, and the same input a second later gives the same output a second later. That is enough to collapse the whole chain into one filter. Its impulse responses convolve and its transfer functions multiply, which is also why the fixed order above costs nothing &mdash; the product commutes.'
-        : 'Nothing is switched on, so every sample comes out the way it went in.',
-      eqs,
-      [
-        ['f<sub>s</sub>', grouped(fs) + ' Hz'],
-        ['Nyquist', grouped(fs / 2) + ' Hz &mdash; nothing above this exists in the file'],
-        ['Stages running', on.length ? String(on.length) : 'none']
-      ]
-    );
-  }
-
-  function filterBlock(fs) {
-    var type = filterType.replace('-wide', '').replace('-narrow', '');
-    var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
-    var q = parseFloat(el['aud-filter-q'].value);
-    var c = biquad(type, f0, q, fs);
-    var atCut = responseDb(f0);
-
-    var lead = 'Two samples of the input remembered and two of the output fed back: one second-order ' +
-      'section, five coefficients. All five chips are the same structure with different numbers in it.';
-    if (c.qIsDb) {
-      lead += ' Web&nbsp;Audio reads Q in decibels for the low and high pass and as a plain ratio ' +
-        'everywhere else, so the &alpha; below divides by 10<sup>Q/20</sup> = ' + c.qLin.toFixed(3) + '.';
-    }
-
-    // The cookbook row this chip picks. Only the numerator changes between them;
-    // the denominator is the same three terms every time.
-    var rows = {
-      lowpass: 'b = [ (1−cos &omega;<sub>0</sub>)/2,  1−cos &omega;<sub>0</sub>,  (1−cos &omega;<sub>0</sub>)/2 ]',
-      highpass: 'b = [ (1+cos &omega;<sub>0</sub>)/2,  −(1+cos &omega;<sub>0</sub>),  (1+cos &omega;<sub>0</sub>)/2 ]',
-      bandpass: 'b = [ &alpha;,  0,  −&alpha; ]',
-      notch: 'b = [ 1,  −2cos &omega;<sub>0</sub>,  1 ]'
-    };
-
-    return mathBlock('Filter — one biquad', lead, [
-      'y[n] = b<sub>0</sub>x[n] + b<sub>1</sub>x[n−1] + b<sub>2</sub>x[n−2] − a<sub>1</sub>y[n−1] − a<sub>2</sub>y[n−2]',
-      'H(z) = (b<sub>0</sub> + b<sub>1</sub>z<sup>−1</sup> + b<sub>2</sub>z<sup>−2</sup>) / (1 + a<sub>1</sub>z<sup>−1</sup> + a<sub>2</sub>z<sup>−2</sup>)',
-      '&omega;<sub>0</sub> = 2&pi;f<sub>0</sub>/f<sub>s</sub> = ' + c.w0.toFixed(5) + ' rad/sample',
-      '&alpha; = sin &omega;<sub>0</sub> / ' +
-        (c.qIsDb ? '(2&middot;10<sup>Q/20</sup>)' : '2Q') + ' = ' + c.alpha.toFixed(5),
-      rows[type] + ',   a = [ 1+&alpha;,  −2cos &omega;<sub>0</sub>,  1−&alpha; ]'
-    ], [
-      ['f<sub>0</sub>', formatFilterFreq(f0)],
-      ['Q', q.toFixed(1) + (c.qIsDb ? ' dB → ' + c.qLin.toFixed(3) : '')],
-      ['b<sub>0</sub>, b<sub>1</sub>, b<sub>2</sub>',
-        [c.b0, c.b1, c.b2].map(function(v) { return signed(v, 6); }).join(', ')],
-      ['a<sub>1</sub>, a<sub>2</sub>',
-        [c.a1, c.a2].map(function(v) { return signed(v, 6); }).join(', ')],
-      atCut === null ? null : ['|H(f<sub>0</sub>)|', signed(atCut, 1) + ' dB, measured on the node itself']
-    ]);
-  }
-
-  function echoBlock(fs) {
-    var tau = echoTime();
-    var g = echoFeedback();
-    var m = echoMix();
-    var d = Math.round(tau * fs);
-    var repeats = echoRepeats(g);
-
-    return mathBlock(
-      'Echo — a feedback comb',
-      'One delayed copy, wired back into its own input. Nothing here ever truly stops: the tail is a ' +
-      'geometric series, and it only stops mattering once g<sup>k</sup> falls under the noise.',
-      [
-        'w[n] = x[n−D] + g&middot;w[n−D]',
-        'y[n] = (1−m)&middot;x[n] + m&middot;w[n]',
-        'H<sub>echo</sub>(z) = (1−m) + m&middot;z<sup>−D</sup> / (1 − g&middot;z<sup>−D</sup>)',
-        'repeat k lands at k&tau;, at g<sup>k</sup> of the original'
-      ],
-      [
-        ['&tau;', Math.round(tau * 1000) + ' ms'],
-        ['D = round(&tau;f<sub>s</sub>)', grouped(d) + ' samples of delay line'],
-        ['g', g.toFixed(2) + (g >= 1 ? ' — at or above 1 it would never decay' : '')],
-        ['m', m.toFixed(2) + ' wet, ' + (1 - m).toFixed(2) + ' dry, summing to unity'],
-        ['Repeats above −60 dB', g <= 0
-          ? 'one, and silence after it'
-          : grouped(repeats) + ', so about ' + (repeats * tau).toFixed(1) + ' s of tail'],
-        ['Comb spacing', 'a tooth every 1/&tau; = ' + (1 / tau).toFixed(2) + ' Hz across the spectrum']
-      ]
-    );
-  }
-
-  function reverbBlock(fs) {
-    var t = revDecay();
-    var pre = revPre();
-    var m = revMix();
-    var n = Math.round(t * fs);
-    var ops = n * fs;
-
-    return mathBlock(
-      'Reverb — convolution with a room',
-      'Not a handful of repeats but every one of them at once. The track is convolved with an impulse ' +
-      'response: what a room would do to a single click. This one is noise dying away exponentially, ' +
-      'which is the diffuse tail of a real room without its early reflections.',
-      [
-        'h[k] = r[k]&middot;e<sup>−k&middot;ln(1000)/(T&middot;f<sub>s</sub>)</sup>,&nbsp;&nbsp; r[k] uniform on [−1, 1]',
-        'y[n] = (1−m)&middot;x[n] + m&middot;&Sigma;<sub>k=0</sub><sup>N−1</sup> h[k]&middot;x[n−k−P]'
-      ],
-      [
-        ['T', t.toFixed(1) + ' s to −60 dB, which is what ln(1000) in the exponent buys'],
-        ['N = T&middot;f<sub>s</sub>', grouped(n) + ' taps, per channel, each with its own noise'],
-        ['P = round(pre&middot;f<sub>s</sub>)', grouped(Math.round(pre * fs)) + ' samples (' +
-          Math.round(pre * 1000) + ' ms before the room answers)'],
-        ['m', m.toFixed(2) + ' wet, ' + (1 - m).toFixed(2) + ' dry'],
-        ['Cost of that sum', (ops / 1e9).toFixed(1) + ' billion multiply–adds a second &mdash; ' +
-          'which is why the browser does it by FFT overlap–add and not the way it is written'],
-        ['Level', 'the response is normalised before use, so a bigger room moves the tail and not the volume']
-      ]
-    );
-  }
-
-  function pitchBlock() {
-    var r = Math.pow(2, semitones / 12);
-    return mathBlock(
-      'Pitch — resampling',
-      'No phase vocoder: the samples are read out faster or slower, so pitch and tempo move together, ' +
-      'the way varispeed does on tape.',
-      ['r = 2<sup>n/12</sup> = ' + r.toFixed(4)],
-      [
-        ['n', (semitones > 0 ? '+' : '') + semitones + ' semitones'],
-        ['Every partial', 'f → ' + r.toFixed(4) + '&middot;f'],
-        ['Running time', audioBuffer
-          ? formatTime(audioBuffer.duration) + ' → ' + formatTime(audioBuffer.duration / r)
-          : 'duration / ' + r.toFixed(4)]
-      ]
-    );
-  }
-
-  // The one-line summaries under each effect's sliders. These are on whether or
-  // not the maths panel is, because they are the numbers a slider is worth
-  // knowing about while it is being moved.
-  function renderEffectNotes() {
+  // The whole panel, as a flat list of short lines. A `tag` line is a stage
+  // heading; everything else is one statement. Keys are stable across renders,
+  // which is what lets a slider update the numbers in place rather than making
+  // the panel flicker through its whole entrance again on every frame of a drag.
+  function mathLines() {
     var fs = sampleRate();
+    var lines = [];
+    function add(key, text, tag) { lines.push({ key: key, text: text, tag: Boolean(tag) }); }
 
-    var g = echoFeedback();
-    var tau = echoTime();
-    var repeats = echoRepeats(g);
-    el['aud-echo-tail'].textContent = 'D = ' + grouped(tau * fs) + ' samples · ' +
-      (g <= 0
-        ? 'one repeat, nothing after it'
-        : repeats + ' repeats before −60 dB · ' + (repeats * tau).toFixed(1) + ' s of tail');
+    var on = [];
+    if (filterType) on.push('H<sub>flt</sub>(z)');
+    if (echoOn) on.push('H<sub>echo</sub>(z)');
+    if (revOn) on.push('H<sub>rev</sub>(z)');
 
-    var t = revDecay();
-    el['aud-rev-taps'].textContent = 'N = ' + grouped(t * fs) + ' taps per channel · ' +
-      '60 dB down after ' + t.toFixed(1) + ' s · ' +
-      Math.round(revPre() * 1000) + ' ms of pre-delay';
+    if (!on.length) {
+      add('idle', 'y[n] = x[n]');
+      add('fs', 'f<sub>s</sub> = ' + grouped(fs) + ' Hz');
+      return lines;
+    }
+
+    // Stacking, stated once: every stage is linear and time invariant, so the
+    // chain is one filter and the order it is wired in cannot matter.
+    add('chain', 'H(z) = ' + on.join(' &middot; '));
+    add('fs', 'f<sub>s</sub> = ' + grouped(fs) + ' Hz');
+
+    if (filterType) {
+      var type = filterType.replace('-wide', '').replace('-narrow', '');
+      var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+      var q = parseFloat(el['aud-filter-q'].value);
+      var c = biquad(type, f0, q, fs);
+      var atCut = responseDb(f0);
+
+      add('t-flt', FILTER_LABELS[filterType], true);
+      add('flt-y', 'y[n] = b<sub>0</sub>x[n] + b<sub>1</sub>x[n−1] + b<sub>2</sub>x[n−2] − a<sub>1</sub>y[n−1] − a<sub>2</sub>y[n−2]');
+      add('flt-w', 'ω<sub>0</sub> = 2πf<sub>0</sub>/f<sub>s</sub> = ' + c.w0.toFixed(5));
+      add('flt-a', 'α = sin ω<sub>0</sub> / ' +
+        (c.qIsDb ? '2&middot;10<sup>Q/20</sup>' : '2Q') + ' = ' + c.alpha.toFixed(5));
+      add('flt-b', 'b = [ ' + [c.b0, c.b1, c.b2].map(function(v) { return signed(v, 5); }).join(', ') + ' ]');
+      add('flt-ab', 'a = [ +1.00000, ' + [c.a1, c.a2].map(function(v) { return signed(v, 5); }).join(', ') + ' ]');
+      if (atCut !== null) add('flt-h', '|H(f<sub>0</sub>)| = ' + signed(atCut, 1) + ' dB');
+    }
+
+    if (echoOn) {
+      var tau = echoTime();
+      var g = echoFeedback();
+      var m = echoMix();
+      var repeats = echoRepeats(g);
+
+      add('t-echo', 'Echo', true);
+      add('echo-w', 'w[n] = x[n−D] + g&middot;w[n−D]');
+      add('echo-y', 'y[n] = (1−m)x[n] + m&middot;w[n]');
+      add('echo-d', 'D = τf<sub>s</sub> = ' + grouped(tau * fs) + ' samples');
+      add('echo-g', 'g = ' + g.toFixed(2) + ', m = ' + m.toFixed(2));
+      add('echo-t', g <= 0
+        ? 'one repeat, then nothing'
+        : 'g<sup>k</sup> &lt; −60 dB after ' + repeats + ' repeats, ' + (repeats * tau).toFixed(1) + ' s');
+      add('echo-c', 'comb teeth every 1/τ = ' + (1 / tau).toFixed(2) + ' Hz');
+    }
+
+    if (revOn) {
+      var t = revDecay();
+      var pre = revPre();
+      var rm = revMix();
+      var n = t * fs;
+
+      add('t-rev', 'Reverb', true);
+      add('rev-h', 'h[k] = r[k]&middot;e<sup>−k&middot;ln1000/Tf<sub>s</sub></sup>');
+      add('rev-y', 'y[n] = (1−m)x[n] + m&middot;Σ h[k]x[n−k−P]');
+      add('rev-n', 'N = Tf<sub>s</sub> = ' + grouped(n) + ' taps');
+      add('rev-p', 'P = ' + grouped(pre * fs) + ' samples, m = ' + rm.toFixed(2));
+      add('rev-c', (n * fs / 1e9).toFixed(1) + ' billion mul–adds a second, so: FFT');
+    }
+
+    if (semitones) {
+      var r = Math.pow(2, semitones / 12);
+      add('t-pitch', 'Pitch', true);
+      add('pitch-r', 'r = 2<sup>n/12</sup> = ' + r.toFixed(4));
+      add('pitch-f', 'f → ' + r.toFixed(4) + 'f, and the clock with it');
+    }
+
+    return lines;
+  }
+
+  // What is on screen, so the next render can tell a new line from a line whose
+  // numbers moved.
+  var mathShown = [];
+
+  // Split on plain spaces only, and never inside a tag: the markup carries
+  // subscripts, and half of a <sub> is not a token. \s is deliberately not used
+  // here -- it matches the thin space that groups the thousands, which would cut
+  // 14 112 into two tokens and reveal a number in halves.
+  function mathTokens(html) {
+    return html.split(/ +(?![^<]*>)/).filter(function(t) { return t; });
+  }
+
+  function mathLineEl(line, at) {
+    var row = document.createElement('p');
+    row.className = line.tag ? 'aud-math-line is-tag' : 'aud-math-line';
+
+    mathTokens(line.text).forEach(function(tok, k) {
+      var span = document.createElement('span');
+      span.className = 'aud-math-w';
+      span.innerHTML = (k ? ' ' : '') + tok;
+      // Staggered the way the caption stages its words, by delaying the ink
+      // rather than the element: every line is laid out at once, so nothing
+      // reflows as the rest of it arrives.
+      span.style.transitionDelay = Math.min(at * 55 + k * 24, 1400) + 'ms';
+      row.appendChild(span);
+    });
+    return row;
+  }
+
+  // A slider moved but the shape of the panel did not, so only the tokens whose
+  // text actually changed are rewritten, and they are lit briefly instead of
+  // being faded in from nothing. Re-running the entrance on every input event
+  // would make a drag strobe.
+  function mathPatch(row, line) {
+    var spans = row.querySelectorAll('.aud-math-w');
+    var toks = mathTokens(line.text);
+    if (spans.length !== toks.length) return false;
+
+    for (var i = 0; i < toks.length; i++) {
+      var want = (i ? ' ' : '') + toks[i];
+      if (spans[i].innerHTML === want) continue;
+      spans[i].innerHTML = want;
+      (function(node) {
+        node.classList.add('is-hot');
+        setTimeout(function() { node.classList.remove('is-hot'); }, 320);
+      })(spans[i]);
+    }
+    return true;
   }
 
   function renderMath() {
     var host = el['aud-math'];
     if (!host) return;
-    renderEffectNotes();
 
     host.classList.toggle('hidden', !mathOn);
     // Emptied rather than merely hidden, so a closed panel is not sitting on a
     // stale set of numbers that would flash before the next rebuild.
-    if (!mathOn) { host.textContent = ''; return; }
+    if (!mathOn) { host.textContent = ''; mathShown = []; return; }
 
-    var fs = sampleRate();
+    var lines = mathLines();
+    var rows = host.querySelectorAll('.aud-math-line');
+
+    // Same lines in the same order: patch the numbers where they moved.
+    var same = rows.length === lines.length && mathShown.length === lines.length;
+    for (var i = 0; same && i < lines.length; i++) {
+      if (mathShown[i].key !== lines[i].key) same = false;
+    }
+    if (same) {
+      for (var j = 0; j < lines.length; j++) {
+        if (!mathPatch(rows[j], lines[j])) { same = false; break; }
+      }
+      if (same) { mathShown = lines; return; }
+    }
+
     host.textContent = '';
-    host.appendChild(chainBlock(fs));
-    if (filterType) host.appendChild(filterBlock(fs));
-    if (echoOn) host.appendChild(echoBlock(fs));
-    if (revOn) host.appendChild(reverbBlock(fs));
-    if (semitones) host.appendChild(pitchBlock());
+    lines.forEach(function(line, at) { host.appendChild(mathLineEl(line, at)); });
+    mathShown = lines;
+
+    // One frame later, so the browser has the un-inked state to transition from.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function() {
+        var fresh = host.querySelectorAll('.aud-math-w');
+        for (var k = 0; k < fresh.length; k++) fresh[k].classList.add('is-in');
+      });
+    } else {
+      var fresh = host.querySelectorAll('.aud-math-w');
+      for (var k = 0; k < fresh.length; k++) fresh[k].classList.add('is-in');
+    }
   }
 
   el['aud-math-on'].addEventListener('change', function() {
     mathOn = el['aud-math-on'].checked;
     renderMath();
   });
+
 
   // --- the queue -------------------------------------------------------------
   //
@@ -1277,6 +1428,7 @@
 
   function resetToEmpty() {
     stopSource();
+    bgRelease();
     audioBuffer = null;
     offsetSec = 0;
     setPlaying(false);
@@ -2507,7 +2659,7 @@
   el['aud-rev-decay-val'].textContent = revDecay().toFixed(1) + ' s';
   el['aud-rev-pre-val'].textContent = Math.round(revPre() * 1000) + ' ms';
   el['aud-rev-mix-val'].textContent = Math.round(revMix() * 100) + '%';
-  // The maths panel starts closed on every visit. It is not remembered, and it
+  // The math panel starts closed on every visit. It is not remembered, and it
   // is not carried in a link.
   mathOn = false;
   el['aud-math-on'].checked = false;
