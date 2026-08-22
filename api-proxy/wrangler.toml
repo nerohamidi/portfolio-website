@@ -2,11 +2,6 @@ name = "nero-chatbot-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
-# Whisper for Signal Share's live transcription. Workers AI always runs remotely,
-# including under `wrangler dev`.
-[ai]
-binding = "AI"
-
 # Audio clips uploaded from the signal playground. Keys are random and the bucket
 # stays private: the Worker is the only reader.
 [[r2_buckets]]
@@ -37,18 +32,56 @@ namespace_id = "1002"
   limit = 30
   period = 60
 
+# Share cards. One press of the share button writes one record, so this only ever
+# catches something automated.
+[[ratelimits]]
+name = "SHARE_LINKS"
+namespace_id = "1003"
+
+  [ratelimits.simple]
+  limit = 12
+  period = 60
+
+# Deleting. A person deleting a playlist sends one request per track, so ten is
+# already generous for a hand-driven delete; what this actually shapes is guessing
+# at a clip's delete password, which is checked after this limiter runs.
+[[ratelimits]]
+name = "CLIP_DELETES"
+namespace_id = "1004"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
 # Storage ceilings for the clip bucket. Lower these to tighten the cap without
 # touching code; src/clips.js carries the same numbers as fallbacks.
 # 8 GiB total, under R2's 10 GB-month free tier, with room for a clip in flight.
 [vars]
 CLIP_MAX_BYTES = "12582912"
+# What a request carrying a valid X-Clip-Key may upload instead. The upload is
+# buffered whole before it reaches R2, so this has to stay inside a Worker's 128 MB.
+# The key itself is a secret, not a var:  wrangler secret put CLIP_ADMIN_KEY
+# With no secret set there is no override, and any key sent is refused.
+CLIP_MAX_BYTES_UNLOCKED = "52428800"
 CLIP_MAX_TOTAL_BYTES = "8589934592"
 CLIP_MAX_PER_UPLOADER_BYTES = "209715200"
 CLIP_MAX_OBJECTS = "4000"
 # Must match the bucket's lifecycle rule (--expire-days), which reclaims the space.
 CLIP_TTL_DAYS = "30"
-# Workers AI gives 10,000 Neurons a day free and whisper-large-v3-turbo costs 46.63
-# of them per audio minute, so the free allocation is ~214 audio minutes. 7200s of
-# audio a day sits under that with room for the counter's undercount; see CLIPS.md.
+# PBKDF2 rounds behind a clip's delete password. Stored on each clip as it is
+# written, so raising this leaves every lock already in the bucket working.
+CLIP_LOCK_ITERATIONS = "50000"
+# Gemini bills audio at 32 tokens a second, so 7200s a day is ~230k input tokens
+# of audio across everyone. See CLIPS.md for why the counter is a floor.
 TRANSCRIBE_MAX_DAILY_SECONDS = "7200"
 TRANSCRIBE_MAX_CHUNK_SECONDS = "30"
+# The transcription model. Needs audio input; the chatbot's model is set in
+# src/index.js and is a separate choice.
+TRANSCRIBE_MODEL = "gemini-3.7-flash"
+# Where a share card sends the visitor, appended to whichever allowlisted origin
+# asked for the card. Never taken from the request body: that would make /s/<id>
+# an open redirect wearing a title its sender chose.
+SHARE_PATH = "/portfolio-website/playroom/audio/"
+SHARE_SITE_TITLE = "Signal Share"
+# Object ceiling on the share/ prefix, which the clip survey does not walk.
+SHARE_MAX_OBJECTS = "2000"

@@ -1,6 +1,7 @@
 import { SYSTEM_PROMPT } from './context.js';
-import { handleUpload, handleFetchClip } from './clips.js';
+import { handleUpload, handleFetchClip, handleDeleteClip } from './clips.js';
 import { handleTranscribe, handleFetchTranscript } from './transcribe.js';
+import { handleCreateShare, handleShareCard, handleDeleteShare } from './share.js';
 
 const ALLOWED_ORIGINS = [
   'https://nerohamidi.github.io',
@@ -23,9 +24,9 @@ const GENERATION_CONFIG = {
 function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Clip-Name, X-Clip-Prev, X-Clip-Lang, Range',
-    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, X-Clip-Name',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Clip-Name, X-Clip-Prev, X-Clip-Lang, X-Clip-Key, X-Clip-Lock, Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, X-Clip-Name, X-Clip-Locked',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
@@ -97,6 +98,15 @@ export default {
     // since before clips existed.
     const clipMatch = url.pathname.match(/^\/clip\/([^/]+)$/);
     if (clipMatch) {
+      // Open to any origin for the same reason the read is: the id in the link is
+      // the permission, and whoever was given it can take the clip down from
+      // wherever they opened it.
+      if (request.method === 'DELETE') {
+        return handleDeleteClip(request, env, clipMatch[1], {
+          ...headers,
+          'Access-Control-Allow-Origin': '*',
+        });
+      }
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         return json({ error: 'Method not allowed' }, 405, headers);
       }
@@ -106,6 +116,48 @@ export default {
         ...headers,
         'Access-Control-Allow-Origin': '*',
       });
+    }
+
+    // The share card. A link with a title or a note points here rather than
+    // straight at the page, because a static page cannot put a visitor's words in
+    // its own meta tags and a fragment never reaches a server to try. Open to
+    // everyone: this is the URL that gets forwarded around, and an unfurler sends
+    // no Origin at all.
+    const cardMatch = url.pathname.match(/^\/s\/([^/]+)$/);
+    if (cardMatch) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      return handleShareCard(request, env, cardMatch[1], {
+        ...headers,
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    const shareMatch = url.pathname.match(/^\/share\/([^/]+)$/);
+    if (shareMatch) {
+      // Open to any origin, like the clip delete: the card is taken down from
+      // wherever its link was opened, and the password on it is the real check.
+      if (request.method === 'DELETE') {
+        return handleDeleteShare(request, env, shareMatch[1], {
+          ...headers,
+          'Access-Control-Allow-Origin': '*',
+        });
+      }
+      return json({ error: 'Method not allowed' }, 405, headers);
+    }
+
+    // Origin-allowlisted, like the upload: this one writes to the bucket. The
+    // destination the card forwards to is derived from that same allowlist and
+    // never from the request body, so no caller can point a card somewhere else.
+    if (url.pathname === '/share') {
+      if (request.method !== 'POST') {
+        return json({ error: 'Method not allowed' }, 405, headers);
+      }
+      if (!allowed) {
+        return json({ error: 'Forbidden' }, 403, headers);
+      }
+      return handleCreateShare(request, env, origin, headers);
     }
 
     if (url.pathname === '/clip') {
@@ -132,7 +184,7 @@ export default {
       });
     }
 
-    // Origin-allowlisted, unlike the read above: this one spends Neurons.
+    // Origin-allowlisted, unlike the read above: this one spends model tokens.
     if (url.pathname === '/transcribe') {
       if (request.method !== 'POST') {
         return json({ error: 'Method not allowed' }, 405, headers);

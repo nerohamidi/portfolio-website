@@ -2190,6 +2190,154 @@ body.light-mode {
   min-height: 1.2em;
 }
 
+// --- what the link says about itself ---
+//
+// Title, note and delete password, all above the share button because all three
+// have to be set before the tracks go up rather than after.
+
+.aud-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aud-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.aud-field-name {
+  flex: none;
+  width: 84px;
+  padding-top: 11px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.aud-field-in {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #555;
+  border-radius: 8px;
+  color: #ddd;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px 12px;
+
+  &:focus { outline: none; border-color: #6cb6ff; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  &::placeholder { color: #666; }
+}
+
+.aud-field-area {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.5;
+}
+
+.aud-field-hint {
+  margin: -2px 0 4px 94px;
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+
+  @media screen and (max-width: 600px) { margin-left: 0; }
+}
+
+// The sender's own note, under the "someone shared this" line.
+.aud-shared-msg {
+  display: block;
+  margin-top: 6px;
+  font-style: italic;
+  // A stranger's text in a link. Long enough to need wrapping, and a single
+  // unbroken string should not push the panel sideways.
+  overflow-wrap: anywhere;
+}
+
+// Sits between the delete button and its explanation, and only when there is a
+// password to give.
+.aud-del-pass {
+  flex: none;
+  width: 180px;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+@media screen and (max-width: 600px) {
+  .aud-field { flex-wrap: wrap; }
+  .aud-field-name { width: auto; padding-top: 0; }
+  .aud-field-in { flex-basis: 100%; }
+  .aud-del-pass { width: 100%; }
+}
+
+// --- deleting, and the key that lifts the upload ceiling ---
+
+.aud-danger {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-top: 1px solid #333;
+  padding-top: 12px;
+}
+
+.aud-danger-note {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12px;
+  color: #888;
+}
+
+.aud-btn-danger {
+  border-color: #7a3a3a;
+  color: #e08080;
+
+  &:hover { border-color: #b05555; color: #ff9c9c; background: rgba(200, 70, 70, 0.12); }
+
+  // Second press does it, so the button stops looking like an offer.
+  &.is-armed {
+    border-color: #c85454;
+    background: rgba(200, 70, 70, 0.18);
+    color: #ff9c9c;
+  }
+}
+
+.aud-key {
+  border-top: 1px solid #333;
+  padding-top: 12px;
+}
+
+.aud-key-sum {
+  font-size: 12px;
+  color: #888;
+  cursor: pointer;
+
+  &:hover { color: #ccc; }
+}
+
+.aud-key-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #777;
+}
+
+.aud-key-in {
+  width: 100%;
+  margin-top: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #555;
+  border-radius: 8px;
+  color: #ddd;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+
+  &:focus { outline: none; border-color: #6cb6ff; }
+}
+
 // --- light mode ---
 
 body.light-mode {
@@ -2255,6 +2403,35 @@ body.light-mode {
   .aud-param-name { color: #555; }
   .aud-param-val { color: #b8791a; }
   .aud-param input[type="range"] { accent-color: #c08020; }
+
+  .aud-danger, .aud-key { border-top-color: #e4e4e4; }
+  .aud-danger-note, .aud-key-sum, .aud-key-hint { color: #666; }
+  .aud-key-sum:hover { color: #111; }
+
+  .aud-field-name { color: #555; }
+  .aud-field-hint { color: #666; }
+  .aud-field-in {
+    background: #fff;
+    border-color: #ccc;
+    color: #333;
+    &:focus { border-color: #2a7ae2; }
+    &::placeholder { color: #aaa; }
+  }
+
+  .aud-btn-danger {
+    border-color: #e0b4b4;
+    color: #b03a3a;
+
+    &:hover { border-color: #b03a3a; color: #8a2020; background: rgba(200, 70, 70, 0.08); }
+    &.is-armed { border-color: #b03a3a; background: rgba(200, 70, 70, 0.12); color: #8a2020; }
+  }
+
+  .aud-key-in {
+    background: #fff;
+    border-color: #ccc;
+    color: #333;
+    &:focus { border-color: #2a7ae2; }
+  }
 
   .aud-share-link {
     background: #fff;

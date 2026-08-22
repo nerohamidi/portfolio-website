@@ -1,10 +1,17 @@
 // Live transcription for the signal playground.
 //
 // The page cuts the decoded track into short windows, resamples each to 16 kHz
-// mono WAV, and posts them one at a time while the track plays. Whisper runs here
+// mono WAV, and posts them one at a time, but only once the listener has asked
+// for a transcript: nothing is sent ahead of that press. The model runs here
 // rather than in the browser because there is no way to feed the Web Speech API
 // anything but a microphone, and shipping a model to the client for a page that is
 // mostly a filter demo is not a trade worth making.
+//
+// Gemini does the transcribing, the same provider the chatbot half of this Worker
+// already talks to, so the whole thing needs one credential and no Workers AI
+// binding. It is asked for JSON against a schema rather than prose, because a
+// caption that scrolls with the audio needs timings and a free-text answer would
+// have to be parsed back out of a paragraph.
 //
 // Every chunk of a *shared* clip is cached under `tx/c/<clipId>/<n>`, so the first
 // listener pays for the transcription and everyone after them reads it back for
@@ -12,7 +19,8 @@
 
 import { ttlDays, envNum } from './clips.js';
 
-const MODEL = '@cf/openai/whisper-large-v3-turbo';
+// Overridable so the model can be moved on without a code change; see CLIPS.md.
+const MODEL = 'gemini-3.7-flash';
 const ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
 // One window. The page aims well under this; the cap is here so a hand-made
@@ -22,10 +30,10 @@ const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
 // 16 kHz mono is what the page sends, so a chunk at the ceiling is ~960 KB.
 const MAX_CHUNK_INDEX = 400;
 
-// Workers AI's free allocation is 10,000 Neurons a day and this model costs 46.63
-// Neurons per audio minute, so the free tier is worth about 214 audio minutes.
-// 120 minutes leaves room for the undercount described in `addUsage` and still
-// bills nothing.
+// Gemini bills audio at 32 tokens a second, so 7200 seconds a day is about
+// 230,000 input tokens of audio across everyone. That is the ceiling on what this
+// route can cost in a day; see the note on `addUsage` for why it is a floor
+// rather than an exact measurement.
 const MAX_DAILY_SECONDS = 7200;
 
 const MAX_PREV_CHARS = 220;
@@ -141,8 +149,10 @@ function decodeHeader(value, limit) {
   }
 }
 
-// Whisper's own timings are relative to the window it was handed. Everything the
-// page renders is in track time, so the offset is folded in here, once.
+// The model's timings are relative to the window it was handed. Everything the
+// page renders is in track time, so the offset is folded in here, once. Word
+// timings are read if they turn up and simply left empty if they do not: the page
+// spreads a line over its own span when they are missing.
 function shiftSegments(result, offset, limit) {
   const out = [];
 
@@ -153,6 +163,10 @@ function shiftSegments(result, offset, limit) {
     const start = Number(seg.start);
     const end = Number(seg.end);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    // A timing the model made up can land outside the window it was given. One
+    // past the end belongs to no part of the track and would light a caption at
+    // the wrong moment, so it is dropped rather than clamped into place.
+    if (start > limit + 0.5) continue;
     const words = [];
     if (Array.isArray(seg.words)) {
       for (const w of seg.words) {
@@ -163,21 +177,129 @@ function shiftSegments(result, offset, limit) {
         words.push({ t: wt, s: +(ws + offset).toFixed(3), e: +(we + offset).toFixed(3) });
       }
     }
+    const from = Math.max(0, start);
     out.push({
-      s: +(Math.max(0, start) + offset).toFixed(3),
-      e: +(Math.min(limit, end) + offset).toFixed(3),
+      s: +(from + offset).toFixed(3),
+      // Never before its own start, and never past the window: a caption that
+      // ends before it begins never lights at all.
+      e: +(Math.min(limit, Math.max(end, from + 0.1)) + offset).toFixed(3),
       t: text,
       w: words,
     });
   }
 
-  if (out.length) return out;
+  return out;
+}
 
-  // No segments came back but there is still text: keep the words rather than the
-  // timing, and let the whole window carry them.
-  const text = typeof result?.text === 'string' ? result.text.trim() : '';
-  if (text) return [{ s: +offset.toFixed(3), e: +(offset + limit).toFixed(3), t: text, w: [] }];
-  return [];
+// --- the model ----------------------------------------------------------------
+
+// Asked for against a schema, so the answer comes back parsed instead of as a
+// paragraph a regex has to pick timings out of. `propertyOrdering` matters more
+// than it looks: the model fills the fields in the order given, and a start and
+// an end decided before the words are written are timings for a line that does
+// not exist yet.
+const RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    language: { type: 'STRING' },
+    segments: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          start: { type: 'NUMBER' },
+          end: { type: 'NUMBER' },
+        },
+        propertyOrdering: ['text', 'start', 'end'],
+        required: ['text', 'start', 'end'],
+      },
+    },
+  },
+  propertyOrdering: ['language', 'segments'],
+  required: ['segments'],
+};
+
+const SYSTEM = [
+  'You transcribe short windows of audio for a live caption track.',
+  'Return only what is actually said, verbatim, in the language it is said in.',
+  'Split it into caption-length segments and give each one a start and an end in',
+  'seconds measured from the beginning of THIS window, never from the track.',
+  'Never translate, never summarise, never describe the audio, and never add',
+  'punctuation-only or bracketed commentary such as [music] or (inaudible).',
+  // A window can land on an instrumental break or on a passage the filter has
+  // hollowed out. A model asked to transcribe silence will write something, and
+  // invented lines are worse than a gap: they scroll past under the audio as if
+  // they were heard.
+  'If there is no intelligible speech or singing, return an empty segments array.',
+].join(' ');
+
+function model(env) {
+  return (env.TRANSCRIBE_MODEL || MODEL).trim();
+}
+
+function instruction(seconds, prev, language) {
+  const lines = [
+    `This window is ${seconds.toFixed(1)} seconds long.`,
+  ];
+  // The window was cut mid-sentence by definition. The tail of the last one is
+  // what keeps a phrase split across the boundary from being started again.
+  if (prev) {
+    lines.push(
+      `The previous window ended with: "${prev}".`,
+      'Continue from there and do not repeat any of it.',
+    );
+  }
+  // Detected once, on the first window, and echoed back by the page after that.
+  // Detecting per window lets a quiet passage flip a song into another language
+  // halfway through.
+  if (language) lines.push(`The audio is in ${language}.`);
+  return lines.join(' ');
+}
+
+// Returns the shape shiftSegments already reads: `{ segments: [{ text, start,
+// end }], language }`. Anything else that comes back — a refusal, a truncated
+// answer, a body that is not the JSON that was asked for — throws, and the caller
+// turns that into one 502 rather than a caption of error text.
+async function runModel(env, buf, { seconds, prev, language }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model(env)}:generateContent` +
+    `?key=${env.GEMINI_API_KEY}`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM }] },
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: instruction(seconds, prev, language) },
+          // 16 kHz mono PCM, exactly what the page cut. Inline rather than through
+          // the Files API: a window is under a megabyte and lives for one request,
+          // so an upload with its own lifecycle would be a second thing to clean up.
+          { inlineData: { mimeType: 'audio/wav', data: toBase64(new Uint8Array(buf)) } },
+        ],
+      }],
+      generationConfig: {
+        // Transcription, not writing. Anything above zero is invention.
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+      },
+    }),
+  });
+
+  if (!resp.ok) throw new Error('upstream ' + resp.status);
+
+  const data = await resp.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== 'string') throw new Error('no answer');
+
+  const parsed = JSON.parse(text);
+  return {
+    segments: Array.isArray(parsed?.segments) ? parsed.segments : [],
+    language: typeof parsed?.language === 'string' ? parsed.language.slice(0, 24) : '',
+  };
 }
 
 function cacheKey(clipId, index) {
@@ -185,7 +307,7 @@ function cacheKey(clipId, index) {
 }
 
 export async function handleTranscribe(request, env, ctx, headers) {
-  if (!env.AI) {
+  if (!env.GEMINI_API_KEY) {
     return json({ error: 'Transcription is not configured.' }, 503, headers);
   }
 
@@ -255,23 +377,9 @@ export async function handleTranscribe(request, env, ctx, headers) {
   const prev = decodeHeader(request.headers.get('x-clip-prev'), MAX_PREV_CHARS);
   const language = decodeHeader(request.headers.get('x-clip-lang'), 12);
 
-  const inputs = {
-    audio: toBase64(new Uint8Array(buf)),
-    task: 'transcribe',
-    // Silence is where Whisper invents text, and a filtered or quiet passage of a
-    // song is mostly silence as far as the model is concerned.
-    vad_filter: true,
-  };
-  // The window is cut mid-sentence by definition, so the tail of the previous one
-  // is what keeps a word split across the boundary from coming back twice.
-  if (prev) inputs.initial_prompt = prev;
-  // Detected once on the first window and echoed back by the page after that: per
-  // window detection lets a quiet passage flip a song into another language.
-  if (/^[a-z]{2,3}$/i.test(language)) inputs.language = language.toLowerCase();
-
   let result;
   try {
-    result = await env.AI.run(MODEL, inputs);
+    result = await runModel(env, buf, { seconds: info.seconds, prev, language });
   } catch {
     return json({ error: 'Transcription is unavailable right now.' }, 502, headers);
   }
@@ -279,7 +387,7 @@ export async function handleTranscribe(request, env, ctx, headers) {
   if (ctx) ctx.waitUntil(addUsage(env, info.seconds));
 
   const segments = shiftSegments(result, start, info.seconds);
-  const detected = result && result.transcription_info && result.transcription_info.language;
+  const detected = result && result.language;
   const payload = {
     i: index,
     start: +start.toFixed(3),

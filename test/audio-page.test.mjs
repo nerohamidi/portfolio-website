@@ -118,6 +118,13 @@ function boot(hash, fetchImpl) {
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 30));
+
+// Ticking the transcript toggle, which is the only thing that starts any of it.
+const arm = (win) => {
+  const box = win.document.getElementById('aud-tx-on');
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change'));
+};
 const res = (body, headers = {}) => Promise.resolve({
   ok: true, status: 200,
   headers: { get: (k) => headers[k.toLowerCase()] ?? null },
@@ -212,17 +219,29 @@ const cached = {
     { i: 1, start: 12, end: 24, segments: [{ s: 13, e: 15, t: 'the second line', w: [] }] },
   ],
 };
+let asked = [];
 w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=${ID_A}`, (url) => {
+  asked.push(url);
   if (url.includes('/transcript/')) return res(cached);
   return res({}, { 'x-clip-name': encodeURIComponent('talk.mp3') });
 });
 await settle();
 st = w.__probe.state();
-check('a cached transcript is adopted', st.txSegments.length === 2, JSON.stringify(st.txSegments.map((s) => s.t)));
+
+// Opening a shared link must not ask the Worker what the audio says. The lookup
+// is free, but it still names a clip to a server, and nobody has asked for it.
+check('opening a shared link fetches no transcript', !asked.some((u) => u.includes('/transcript/')), JSON.stringify(asked));
+check('and no words are held', st.txSegments.length === 0, String(st.txSegments.length));
+check('the toggle is off, since nobody asked for it', w.document.getElementById('aud-tx-on').checked === false);
+check('with nothing to copy', w.document.getElementById('aud-tx-copy').disabled === true);
+
+arm(w);
+await settle();
+st = w.__probe.state();
+check('ticking it brings back what was already transcribed', st.txSegments.length === 2, JSON.stringify(st.txSegments.map((s) => s.t)));
 check('transcription resumes where the cache stops', st.txNext === 24, String(st.txNext));
 check('a partial transcript is not marked finished', st.txDone === false);
 check('the status says the transcript came along', /already transcribed/i.test(w.document.getElementById('aud-tx-status').textContent), w.document.getElementById('aud-tx-status').textContent);
-check('the toggle stays off, since nobody asked for it', w.document.getElementById('aud-tx-on').checked === false);
 check('copying is offered as soon as there is text', w.document.getElementById('aud-tx-copy').disabled === false);
 
 // Nothing is under the playhead before the first line starts.
@@ -313,6 +332,259 @@ check('a failed upload keeps the ones before it', st.queue[0].ref === 'clip:' + 
 check('the failure is reported to the user', /full right now/.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
 check('the share button is usable again', w.document.getElementById('aud-share-btn').disabled === false);
 
+// --- 6b. the upload key ------------------------------------------------------
+
+let sentHeaders = [];
+const shareBoot = () => boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.endsWith('/clip') && init && init.method === 'POST') {
+    sentHeaders.push(init.headers);
+    return res({ id: ID_A, name: 'one.mp3', expiresInDays: 30 });
+  }
+  if (init && init.method === 'DELETE') { deletes.push(url); return res({ deleted: true }); }
+  return res({}, {});
+});
+let deletes = [];
+
+w = shareBoot();
+w.__probe.setQueue([w.__probe.newEntry({ name: 'one.mp3', file: { name: 'one.mp3' } })], 0);
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('no key means no key header', sentHeaders[0]['X-Clip-Key'] === undefined, JSON.stringify(Object.keys(sentHeaders[0])));
+
+sentHeaders = [];
+w = shareBoot();
+const keyIn = w.document.getElementById('aud-key');
+keyIn.value = '  open-sesame  ';
+keyIn.dispatchEvent(new w.Event('input'));
+check('the key is held for the session only', w.sessionStorage.getItem('aud-upload-key') === 'open-sesame', String(w.sessionStorage.getItem('aud-upload-key')));
+check('and never written to disk', w.localStorage.getItem('aud-upload-key') === null);
+
+w.__probe.setQueue([w.__probe.newEntry({ name: 'one.mp3', file: { name: 'one.mp3' } })], 0);
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('the key travels as a request header', sentHeaders[0]['X-Clip-Key'] === 'open-sesame', JSON.stringify(sentHeaders[0]));
+check('and never lands in the link', !w.__probe.encodeState().includes('sesame'), w.__probe.encodeState());
+check('nor in the box the link is copied from', !w.document.getElementById('aud-share-link').value.includes('sesame'));
+
+// Clearing the field forgets it rather than sending an empty header.
+keyIn.value = '';
+keyIn.dispatchEvent(new w.Event('input'));
+check('clearing the field forgets the key', w.sessionStorage.getItem('aud-upload-key') === null);
+
+// --- 6c. deleting from the cloud ---------------------------------------------
+
+deletes = [];
+w = shareBoot();
+check('nothing to delete before anything is uploaded', w.document.getElementById('aud-danger').classList.contains('hidden'));
+
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'one.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' }),
+  w.__probe.newEntry({ ref: 'clip:' + ID_B, name: 'two.mp3' }),
+], 0);
+check('an uploaded track offers a delete', !w.document.getElementById('aud-danger').classList.contains('hidden'));
+
+// One press arms, and only the second one acts.
+const delBtn = w.document.getElementById('aud-del-btn');
+delBtn.click();
+await settle();
+check('the first press only arms it', deletes.length === 0, String(deletes.length));
+check('and the button says what happens next', /Really delete 2 tracks\?/.test(delBtn.textContent), delBtn.textContent);
+
+delBtn.click();
+await settle();
+check('the second press deletes every uploaded track', deletes.length === 2, String(deletes.length));
+check('the demo is not one of them', deletes.every((u) => !u.includes('demo')), JSON.stringify(deletes));
+check('each goes to its own clip', deletes.some((u) => u.endsWith('/clip/' + ID_A)) && deletes.some((u) => u.endsWith('/clip/' + ID_B)), JSON.stringify(deletes));
+
+st = w.__probe.state();
+check('the refs are dropped so a stale link cannot be made', st.queue.every((e) => e.ref !== 'clip:' + ID_A && e.ref !== 'clip:' + ID_B), JSON.stringify(st.queue.map((e) => e.ref)));
+check('the tracks stay in the queue', st.queue.length === 3);
+check('the old link is taken down', w.document.getElementById('aud-share-out').classList.contains('hidden'));
+check('and the delete is no longer on offer', w.document.getElementById('aud-danger').classList.contains('hidden'));
+check('the outcome is reported', /Deleted all 2/.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
+
+// A clip the Worker says is already gone still counts as done.
+deletes = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (init && init.method === 'DELETE') {
+    deletes.push(url);
+    return Promise.resolve({ ok: false, status: 404, headers: { get: () => null }, json: () => Promise.resolve({ error: 'That clip is already gone.' }) });
+  }
+  return res({}, {});
+});
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'one.mp3' })], 0);
+w.document.getElementById('aud-del-btn').click();
+w.document.getElementById('aud-del-btn').click();
+await settle();
+check('a clip that was already gone is not an error', /Deleted\./.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
+
+// Someone who opened a shared link gets the same button: the link is the permission.
+deletes = [];
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=${ID_A}`, (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (init && init.method === 'DELETE') { deletes.push(url); return res({ deleted: true }); }
+  return res({}, { 'x-clip-name': encodeURIComponent('theirs.mp3') });
+});
+await settle();
+check('a recipient is offered the delete too', !w.document.getElementById('aud-danger').classList.contains('hidden'));
+w.document.getElementById('aud-del-btn').click();
+w.document.getElementById('aud-del-btn').click();
+await settle();
+check('and it takes down the sharer\'s clip', deletes.length === 1 && deletes[0].endsWith('/clip/' + ID_A), JSON.stringify(deletes));
+
+// --- 6d. the title, the note, and the card that previews them ----------------
+//
+// A hash never reaches a server, so a link straight at this page previews as
+// whatever the page says about itself. With a title or a note the share goes
+// through a card on the Worker instead, which carries them in its meta tags.
+
+let cards = [];
+const cardBoot = (reply) => boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.endsWith('/clip') && init && init.method === 'POST') {
+    return res({ id: ID_A, name: 'one.mp3', expiresInDays: 30, locked: Boolean(init.headers['X-Clip-Lock']) });
+  }
+  if (url.endsWith('/share') && init && init.method === 'POST') {
+    cards.push({ init, body: JSON.parse(init.body) });
+    return reply ? reply() : res({ id: ID_B, url: 'https://proxy.example/s/' + ID_B, expiresInDays: 30 });
+  }
+  if (init && init.method === 'DELETE') { deletes.push({ url, init }); return res({ deleted: true }); }
+  return res({}, {});
+});
+
+// Nothing written: the link stays the page's own URL and no card is filed.
+cards = [];
+w = cardBoot();
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('a share with nothing written files no card', cards.length === 0, String(cards.length));
+check('and hands over the page\'s own link', /\/playroom\/audio\/#v=3/.test(w.document.getElementById('aud-share-link').value), w.document.getElementById('aud-share-link').value);
+
+// With a title, the card is what gets handed over.
+cards = [];
+w = cardBoot();
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+w.document.getElementById('aud-share-title').value = 'Late night mix';
+w.document.getElementById('aud-share-note').value = 'Track 3 is the one.';
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('a title files a card', cards.length === 1, String(cards.length));
+check('and the card carries both what was written', cards[0].body.title === 'Late night mix' && cards[0].body.note === 'Track 3 is the one.', JSON.stringify(cards[0].body));
+check('and the whole hash with it', /(^|&)t=d(&|$)/.test(cards[0].body.hash), cards[0].body.hash);
+check('the link handed over is the card', w.document.getElementById('aud-share-link').value === 'https://proxy.example/s/' + ID_B, w.document.getElementById('aud-share-link').value);
+check('the address bar still shows the state', w.location.hash.includes('t=d'), w.location.hash);
+check('the words ride in the hash as well as in the card', /(^|&)ti=Late%20night%20mix(&|$)/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+// A card that cannot be filed must not cost the sender a working link.
+cards = [];
+w = cardBoot(() => Promise.resolve({
+  ok: false, status: 507, headers: { get: () => null },
+  json: () => Promise.resolve({ error: 'Too many share cards right now.' }),
+}));
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+w.document.getElementById('aud-share-title').value = 'Late night mix';
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('a failed card still hands over the plain link', /#v=3/.test(w.document.getElementById('aud-share-link').value), w.document.getElementById('aud-share-link').value);
+check('and says what was lost', /still works, without the preview/.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
+
+// Opening a link that carries them shows them, and re-sharing carries them on.
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=d&ti=Late%20night%20mix&no=Track%203%20is%20the%20one.&s=${ID_B}`, () => res({ chunks: [] }));
+await settle();
+check('a shared title is shown at the top', w.document.getElementById('aud-shared-title').textContent === 'Late night mix', w.document.getElementById('aud-shared-title').textContent);
+check('and the note under it', w.document.getElementById('aud-shared-msg').textContent === 'Track 3 is the one.', w.document.getElementById('aud-shared-msg').textContent);
+check('the note is shown rather than left hidden', !w.document.getElementById('aud-shared-msg').classList.contains('hidden'));
+check('and both are put back in the fields, so forwarding keeps them', w.document.getElementById('aud-share-title').value === 'Late night mix' && w.document.getElementById('aud-share-note').value === 'Track 3 is the one.');
+
+// --- 6e. the delete password -------------------------------------------------
+
+// Set at upload, never after: the field closes as soon as anything is up.
+let uploadHeaders = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.endsWith('/clip') && init && init.method === 'POST') {
+    uploadHeaders.push(init.headers);
+    return res({ id: ID_A, name: 'one.mp3', expiresInDays: 30, locked: Boolean(init.headers['X-Clip-Lock']) });
+  }
+  if (init && init.method === 'DELETE') { deletes.push({ url, init }); return res({ deleted: true }); }
+  return res({}, {});
+});
+w.__probe.setQueue([w.__probe.newEntry({ name: 'one.mp3', file: { name: 'one.mp3' } })], 0);
+const passIn = w.document.getElementById('aud-share-pass');
+check('the password can be set before anything is uploaded', passIn.disabled === false);
+passIn.value = 'hunter2';
+passIn.dispatchEvent(new w.Event('input'));
+check('typing one reveals where it will be asked for', !w.document.getElementById('aud-del-pass').classList.contains('hidden'));
+
+w.document.getElementById('aud-share-btn').click();
+await settle();
+check('the password travels as a request header', uploadHeaders[0]['X-Clip-Lock'] === 'hunter2', JSON.stringify(Object.keys(uploadHeaders[0])));
+check('and never lands in the link', !w.__probe.encodeState().includes('hunter2'), w.__probe.encodeState());
+check('nor in the box the link is copied from', !w.document.getElementById('aud-share-link').value.includes('hunter2'));
+check('once the track is up the password can no longer be changed', passIn.disabled === true);
+check('and the panel says the lock is now fixed', /nothing can change it/i.test(w.document.getElementById('aud-lock-hint').textContent), w.document.getElementById('aud-lock-hint').textContent);
+
+// A recipient meets the lock: the button is refused, and the field appears.
+deletes = [];
+let attempts = 0;
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=${ID_A}`, (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (init && init.method === 'DELETE') {
+    attempts++;
+    deletes.push({ url, init });
+    const given = init.headers && init.headers['X-Clip-Lock'];
+    if (given === 'hunter2') return res({ deleted: true });
+    return Promise.resolve({
+      ok: false, status: given ? 403 : 401, headers: { get: () => null },
+      json: () => Promise.resolve({ error: given ? 'That password does not match.' : 'That clip is password protected.', locked: true }),
+    });
+  }
+  return res({}, { 'x-clip-name': encodeURIComponent('theirs.mp3'), 'x-clip-locked': '1' });
+});
+await settle();
+check('a locked clip shows its password field before the button is pressed', !w.document.getElementById('aud-del-pass').classList.contains('hidden'));
+
+const delBtn2 = w.document.getElementById('aud-del-btn');
+delBtn2.click();
+delBtn2.click();
+await settle();
+st = w.__probe.state();
+check('a delete with no password is refused', attempts === 1 && st.queue[0].ref === 'clip:' + ID_A, JSON.stringify(st.queue.map((e) => e.ref)));
+check('and the refusal is passed on', /password protected/i.test(w.document.getElementById('aud-share-status').textContent), w.document.getElementById('aud-share-status').textContent);
+check('the clip is still shareable, because it is still there', !w.document.getElementById('aud-danger').classList.contains('hidden'));
+
+w.document.getElementById('aud-del-pass').value = 'wrong';
+delBtn2.click();
+delBtn2.click();
+await settle();
+check('a wrong password keeps the clip too', w.__probe.state().queue[0].ref === 'clip:' + ID_A);
+check('and says it did not match', /does not match/i.test(w.document.getElementById('aud-del-note').textContent), w.document.getElementById('aud-del-note').textContent);
+
+w.document.getElementById('aud-del-pass').value = 'hunter2';
+delBtn2.click();
+delBtn2.click();
+await settle();
+check('the right password deletes it', w.__probe.state().queue[0].ref === null, JSON.stringify(w.__probe.state().queue.map((e) => e.ref)));
+check('and the password went with the request', deletes[deletes.length - 1].init.headers['X-Clip-Lock'] === 'hunter2');
+
+// A card arriving in a link is taken down with the audio it advertises.
+deletes = [];
+w = boot(`#v=3&flt=off,500,1&viz=1,1&vol=0.7&t=${ID_A}&s=${ID_B}`, (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (init && init.method === 'DELETE') { deletes.push(url); return res({ deleted: true }); }
+  return res({}, { 'x-clip-name': encodeURIComponent('theirs.mp3') });
+});
+await settle();
+w.document.getElementById('aud-del-btn').click();
+w.document.getElementById('aud-del-btn').click();
+await settle();
+check('deleting takes the clip down', deletes.some((u) => u.endsWith('/clip/' + ID_A)), JSON.stringify(deletes));
+check('and the preview card with it', deletes.some((u) => u.endsWith('/share/' + ID_B)), JSON.stringify(deletes));
+
 // --- 7. live transcription ---------------------------------------------------
 
 import realWorker from '../api-proxy/src/index.js';
@@ -334,11 +606,6 @@ await settle();
 check('a loaded track does not transcribe itself', w.__probe.state().txOn === false);
 check('nothing is copyable yet', w.document.getElementById('aud-tx-copy').disabled === true);
 
-const arm = (win) => {
-  const box = win.document.getElementById('aud-tx-on');
-  box.checked = true;
-  box.dispatchEvent(new win.Event('change'));
-};
 arm(w);
 check('ticking the toggle starts it', w.__probe.state().txOn === true);
 
@@ -359,15 +626,26 @@ const view = new DataView(body);
 check('the page produces a RIFF header', head === 'RIFF', head);
 check('it is 16 kHz mono 16-bit', view.getUint16(22, true) === 1 && view.getUint32(24, true) === 16000 && view.getUint16(34, true) === 16);
 
-let aiSeen = [];
+// The model is an HTTPS call now, so the stand-in is global fetch. Stubbed only
+// around this one call: nothing else in this file should reach the network, and a
+// real request here would spend real tokens on a buffer of test tones.
+const realFetch = globalThis.fetch;
+let modelSeen = [];
+globalThis.fetch = async (url, init) => {
+  modelSeen.push({ url: String(url), body: JSON.parse(init.body) });
+  return new Response(JSON.stringify({
+    candidates: [{ content: { parts: [{ text: JSON.stringify({ language: 'en', segments: [] }) }] } }],
+  }), { status: 200 });
+};
 const wResp = await realWorker.fetch(new Request('https://proxy/transcribe?i=0&start=0', {
   method: 'POST', headers: { Origin: 'https://nerohamidi.github.io', 'Content-Type': 'audio/wav' }, body,
-}), {
-  AI: { run: async (m, i) => { aiSeen.push(i); return { text: 'ok', segments: [] }; } },
-}, { waitUntil() {} });
+}), { GEMINI_API_KEY: 'test-key' }, { waitUntil() {} });
 const wBody = await wResp.json();
+globalThis.fetch = realFetch;
 check('the Worker accepts the page\'s own window', wResp.status === 200, String(wResp.status));
 check('and measures it as the length the page cut', Math.abs(wBody.end - 12) < 1.5, JSON.stringify(wBody));
+check('and hands the model that same audio', modelSeen.length === 1 &&
+  modelSeen[0].body.contents[0].parts[1].inlineData.mimeType === 'audio/wav', JSON.stringify(modelSeen.length));
 
 // Second window picks up where the first stopped, and carries the tail as context.
 w.__probe.txPump();
@@ -403,7 +681,7 @@ check('the reason is passed on to the user', /daily limit/.test(w.document.getEl
 check('a cut lands near the target length', Math.abs(w.__probe.txCut(0) - 12) <= 1.3, String(w.__probe.txCut(0)));
 check('the last window runs to the end', w.__probe.txCut(119) === 120, String(w.__probe.txCut(119)));
 
-// --- 7b. the toggle, and what it remembers -----------------------------------
+// --- 7b. the toggle is the only thing that starts it -------------------------
 
 // The playhead never moves here: the opening is fetched because transcription was
 // switched on, not because anything is playing.
@@ -422,7 +700,6 @@ check('and no windows go out unasked', posts.length === 0, String(posts.length))
 
 arm(w);
 check('the toggle turns it on', w.__probe.state().txOn === true);
-check('and that is remembered', w.localStorage.getItem('aud-tx-on') === '1', String(w.localStorage.getItem('aud-tx-on')));
 check('nothing has been played', Number(w.document.getElementById('aud-seek').value) === 0);
 
 for (let i = 0; i < 8; i++) { w.__probe.txPump(); await settle(); }
@@ -436,59 +713,107 @@ const toggle = w.document.getElementById('aud-tx-on');
 toggle.checked = false;
 toggle.dispatchEvent(new w.Event('change'));
 check('the toggle stops it', w.__probe.state().txOn === false);
-check('the choice is remembered for the next track', w.localStorage.getItem('aud-tx-on') === '0', String(w.localStorage.getItem('aud-tx-on')));
 posts = [];
 for (let i = 0; i < 4; i++) { w.__probe.txPump(); await settle(); }
 check('no more windows go out', posts.length === 0, String(posts.length));
 check('the text so far is kept', w.__probe.state().txSegments.length > 0);
 check('and stays copyable', w.document.getElementById('aud-tx-copy').disabled === false);
 
-// A new track in the same session honours the choice rather than starting again.
-w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'another.mp3' })], 0);
+// Nothing about the choice is written to disk. A preference that outlived the tab
+// would start a later visit transcribing on the strength of a press from days ago.
+check('the choice is not remembered on disk', w.localStorage.getItem('aud-tx-on') === null, String(w.localStorage.getItem('aud-tx-on')));
+
+// A finished transcript used to re-tick the box the instant it was cleared:
+// the handler set the preference false, the sync put the tick back from txDone,
+// and the toggle could not be switched off at all.
+w = boot('', (url) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.includes('/transcribe')) return res({ i: 0, start: 0, end: 200, segments: [{ s: 1, e: 4, t: 'all of it', w: [] }] });
+  return res({}, {});
+});
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
-check('the next track does not start on its own', w.__probe.state().txOn === false);
-check('and the toggle still reads off', w.document.getElementById('aud-tx-on').checked === false);
-
-// Turned back on, the preference carries across tracks: a playlist is not ticked
-// one track at a time.
-posts = [];
 arm(w);
-check('turning it back on starts transcribing', w.__probe.state().txOn === true);
+// Jumped to the last few seconds, so the pump reaches the end of the track in
+// two windows rather than ten. A seek this long gives up on the gap by design.
+const bar = w.document.getElementById('aud-seek');
+bar.value = '118';
+bar.dispatchEvent(new w.Event('input'));
+for (let i = 0; i < 3; i++) { w.__probe.txPump(); await settle(); }
+check('a track can finish transcribing', w.__probe.state().txDone === true, JSON.stringify(w.__probe.state().txNext));
+check('and the toggle still reads on', w.document.getElementById('aud-tx-on').checked === true);
+
+const done = w.document.getElementById('aud-tx-on');
+done.checked = false;
+done.dispatchEvent(new w.Event('change'));
+check('a finished transcript can be switched off', done.checked === false);
+check('and it stays off', w.__probe.state().txOn === false);
+
+// A new track starts from nothing, however the last one was left.
+posts = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.includes('/transcribe')) { posts.push({ url, init }); return res(reply); }
+  return res({}, {});
+});
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' })], 0);
+w.__probe.playIndex(0, false);
+await settle();
+arm(w);
 w.__probe.txPump();
 await settle();
-check('and windows go out again', posts.length === 1, String(posts.length));
+check('the first track transcribes once it is asked to', posts.length === 1, String(posts.length));
 
-w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'third.mp3' })], 0);
+posts = [];
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'two.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
-check('the track after it picks the preference up', w.__probe.state().txOn === true);
+check('the next track does not carry the press over', w.__probe.state().txOn === false);
+check('and its toggle reads off', w.document.getElementById('aud-tx-on').checked === false);
+for (let i = 0; i < 3; i++) { w.__probe.txPump(); await settle(); }
+check('so nothing of it is sent', posts.length === 0, String(posts.length));
 
-// --- 7c. the cache still wins over a carried-over preference -----------------
+// --- 7c. the cache is looked up on the press, and only then ------------------
 
-// If the pump began before the lookup landed, txLoadCached would stand down and
-// the clip would be transcribed a second time with every word already in R2.
 let cachePosts = 0;
+let cacheLookups = 0;
 w = boot('', (url) => {
-  if (url.includes('/transcript/')) return res(cached);
+  if (url.includes('/transcript/')) { cacheLookups++; return res(cached); }
   if (url.includes('/transcribe')) { cachePosts++; return res(reply); }
   return res({}, { 'x-clip-name': encodeURIComponent('talk.mp3') });
 });
-w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'first.mp3' })], 0);
-w.__probe.playIndex(0, false);
-await settle();
-arm(w);
-
-// Now a clip that the Worker already holds a transcript for, loaded with the
-// preference already on so the auto-start and the lookup are racing.
 w.__probe.setQueue([w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'talk.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
+check('loading a clip looks up nothing', cacheLookups === 0, String(cacheLookups));
+
+arm(w);
+await settle();
 st = w.__probe.state();
-check('the cached transcript is adopted', st.txSegments.length === 2, String(st.txSegments.length));
-check('and nothing was posted before it landed', cachePosts === 0, String(cachePosts));
+check('the press is what asks for the cached transcript', cacheLookups === 1, String(cacheLookups));
+check('and it is adopted', st.txSegments.length === 2, String(st.txSegments.length));
+check('nothing was posted before it landed', cachePosts === 0, String(cachePosts));
 check('the pump picks up where the cache stops', st.txNext === 24, String(st.txNext));
 check('and carries on from there', st.txOn === true);
+
+// Leaving a track and coming back keeps its words, and the toggle with them.
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'talk.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'other.mp3' }),
+], 0);
+w.__probe.playIndex(0, false);
+await settle();
+arm(w);
+await settle();
+w.__probe.playIndex(1, false);
+await settle();
+check('moving to another track turns it off again', w.__probe.state().txOn === false);
+w.__probe.playIndex(0, false);
+await settle();
+st = w.__probe.state();
+check('coming back finds the words still there', st.txSegments.length === 2, String(st.txSegments.length));
+check('and picks the track up where it was left', st.txOn === true);
 
 // Copying hands over the whole transcript, not just the line under the playhead.
 let copied = null;

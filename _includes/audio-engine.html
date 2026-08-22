@@ -20,17 +20,25 @@
   var MAX_QUEUE = 10;
 
   // Transcription windows. Short enough that the first words land while the intro
-  // is still playing, long enough that Whisper has a sentence to work with.
+  // is still playing, long enough that the model has a sentence to work with.
   var TX_TARGET_SEC = 12;
   var TX_CUT_SEARCH = 1.2;   // how far either side of the target to hunt for a quiet cut
   var TX_LEAD_SEC = 24;      // how far ahead of the playhead to stay
   var TX_JUMP_SEC = 45;      // a seek longer than this gives up on the gap
-  var TX_RATE = 16000;       // what Whisper wants; also what keeps a window under a megabyte
+  var TX_RATE = 16000;       // plenty for speech, and what keeps a window under a megabyte
   // Fetched from wherever the pump starts even if nothing is playing, so ticking
   // the toggle before pressing play leaves words waiting. Windows are cut on
   // quiet, so it stops at the first boundary past this rather than exactly on it.
+  // Nothing here runs before the toggle is ticked; see the note above txBegin.
   var TX_PRELOAD_SEC = 30;
-  var TX_PREF_KEY = 'aud-tx-on';
+  // What a title and a note may be, matching the Worker's own ceilings. Longer
+  // than either is not a share card, it is a place to keep text.
+  var MAX_TITLE = 80;
+  var MAX_NOTE = 300;
+  // The upload key lives in sessionStorage rather than localStorage: it is a
+  // password, and a password that survives closing the tab is one that outlives
+  // the reason it was typed. Retyping it once a session is the cheaper mistake.
+  var KEY_STORE = 'aud-upload-key';
 
   var el = {};
   [
@@ -42,7 +50,9 @@
     'aud-note-name', 'aud-note-hz', 'aud-note-cents',
     'aud-view-wave', 'aud-view-freq', 'aud-share', 'aud-share-btn', 'aud-share-out',
     'aud-share-link', 'aud-share-copy', 'aud-share-status', 'aud-share-hint',
-    'aud-shared-note', 'aud-shared-detail',
+    'aud-shared-note', 'aud-shared-title', 'aud-shared-detail', 'aud-shared-msg',
+    'aud-share-title', 'aud-share-note', 'aud-share-pass', 'aud-lock-hint',
+    'aud-key', 'aud-danger', 'aud-del-btn', 'aud-del-note', 'aud-del-pass',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
     'aud-tx-on', 'aud-tx-status', 'aud-tx-copy'
@@ -228,6 +238,10 @@
         var sent = r.headers.get('X-Clip-Name');
         if (sent) {
           try { renameEntry(loading, decodeURIComponent(sent)); } catch (e) {}
+        }
+        if (loading && r.headers.get('X-Clip-Locked')) {
+          loading.locked = true;
+          syncDanger();
         }
         return r.arrayBuffer();
       });
@@ -595,6 +609,16 @@
     return entry && entry.ref && entry.ref.indexOf('clip:') === 0 ? entry.ref.slice(5) : null;
   }
 
+  // Uploaded tracks only. The demo is not a clip and has no id to delete.
+  function uploadedIds() {
+    var ids = [];
+    queue.forEach(function(entry) {
+      var id = clipIdOf(entry);
+      if (id && ids.indexOf(id) < 0) ids.push(id);
+    });
+    return ids;
+  }
+
   function srcOf(entry) {
     if (!entry) return null;
     if (entry.ref === 'demo') return DEMO_SRC;
@@ -607,6 +631,9 @@
       ref: fields.ref || null,
       name: fields.name || '',
       file: fields.file || null,
+      // Whether deleting this clip will ask for a password. Learned from the
+      // upload's own reply, or from the clip's headers on a restored playlist.
+      locked: Boolean(fields.locked),
       tx: null
     };
   }
@@ -772,6 +799,11 @@
     el['aud-next'].classList.toggle('hidden', !many);
     el['aud-prev'].disabled = current <= 0;
     el['aud-next'].disabled = current < 0 || current >= queue.length - 1;
+
+    // Offered whenever the queue holds something that is actually in the bucket,
+    // which includes a playlist someone else shared: the link is the permission,
+    // so the recipient gets the same button the sharer has.
+    syncDanger();
   }
 
   // A clip knows its own name, so a restored playlist can label every row before
@@ -780,11 +812,19 @@
   function labelClips() {
     queue.forEach(function(entry, i) {
       var id = clipIdOf(entry);
-      if (!id || entry.name) return;
-      entry.name = 'Shared track ' + (i + 1);
+      if (!id) return;
+      // The same HEAD answers both questions, so it is worth making even for a
+      // track that already has a name: whether the delete button is going to ask
+      // for a password is not something to discover by pressing it.
+      if (!entry.name) entry.name = 'Shared track ' + (i + 1);
       fetch(CLIP_API + '/clip/' + id, { method: 'HEAD' }).then(function(r) {
-        var sent = r.ok && r.headers.get('X-Clip-Name');
+        if (!r.ok) return;
+        var sent = r.headers.get('X-Clip-Name');
         if (sent) renameEntry(entry, decodeURIComponent(sent));
+        if (r.headers.get('X-Clip-Locked')) {
+          entry.locked = true;
+          syncDanger();
+        }
       }).catch(function() {});
     });
     renderQueue();
@@ -893,20 +933,29 @@
   //
   // The Web Speech API only ever listens to a microphone, so a loaded file cannot
   // be fed to it. Instead the track is cut into short windows, resampled to
-  // 16 kHz mono, and posted to the Worker, which runs Whisper. The pump stays a
-  // little ahead of the playhead, so a window is transcribed before it is heard
-  // and the words land in time with the audio rather than after it.
+  // 16 kHz mono, and posted to the Worker, which hands it to Gemini. The pump
+  // stays a little ahead of the playhead, so a window is transcribed before it is
+  // heard and the words land in time with the audio rather than after it.
+  //
+  // None of it starts on its own. The toggle is the only way in, it is off for
+  // every track and every visit, and it is not remembered anywhere: audio leaves
+  // this browser when someone asks for that and at no other time.
   //
   // Cuts land on the quietest moment near the target length. A window that ends
   // mid-word costs that word twice: once truncated here, once truncated at the
   // start of the next window.
 
   var txOn = false;
-  // Whether transcription should run. Off until it is asked for, and remembered
-  // once it has been: a track that starts transcribing on its own would send
-  // audio to the Worker that nobody asked to have sent.
+  // What the toggle reads, and the only thing that starts any of this. It is per
+  // track and per visit: not remembered across tracks, not remembered across
+  // sessions, and never set by anything but a press. A track that began
+  // transcribing on its own would be sending audio to the Worker that nobody
+  // asked to have sent, and that includes sending it on the strength of a box
+  // that was ticked for some other track yesterday.
   var txWanted = false;
-  try { txWanted = window.localStorage.getItem(TX_PREF_KEY) === '1'; } catch (e) {}
+  // Whether the cached transcript for this clip has been asked for yet. Also
+  // gated on the press: the lookup is free, but it says what someone is playing.
+  var txLookedUp = false;
   var txBusy = false;
   var txDone = false;
   var txSegments = [];
@@ -925,35 +974,43 @@
 
   function txSyncControls() {
     var box = el['aud-tx-on'];
-    // Ticked while it is running and once it has finished, so the box answers
-    // "is this track transcribed" rather than "is a request in flight". A window
-    // that was refused clears it, and the status beside it says why.
-    box.checked = txOn || txDone;
-    // Left enabled even when there is nothing more to fetch: the toggle is the
-    // preference for the next track too, not just a switch for this one.
+    // The box says what was asked for, and nothing else. It used to say
+    // `txOn || txDone`, which made a finished transcript re-tick the box the
+    // instant it was cleared: the change handler set txWanted false, this ran,
+    // and txDone put the tick straight back. The toggle could not be switched off
+    // at all on a track that had finished.
+    box.checked = txWanted;
     box.disabled = !audioBuffer;
     el['aud-tx-copy'].disabled = !txSegments.length;
   }
 
-  // Only for someone who has already asked for transcription: the preference
-  // carries across tracks so a playlist does not have to be ticked one track at a
-  // time. A first visit never reaches txBegin from here.
-  function txAuto() {
-    if (txWanted && !txDone && !txOn && audioBuffer) txBegin();
-    else txSyncControls();
-  }
-
+  // The only way in. Nothing calls this on a load, on a track change, or on a
+  // remembered preference: audio leaves the browser when someone ticks the box
+  // and at no other time.
   function txBegin() {
+    txWanted = true;
     txOn = true;
     // From the playhead, not from the top: the point is to read what is about to
     // be heard.
     if (!txSegments.length && !txNext) txNext = Math.max(0, position() - 0.5);
-    if (!txSegments.length) txStatus('Listening ahead…');
     txSyncControls();
+
+    // Whatever the Worker already holds for this clip, asked for now rather than
+    // on load. It costs nothing and saves the whole track's transcription, but it
+    // still names a clip to the Worker, so it waits for the same press.
+    var id = clipIdOf(queue[current]);
+    if (id && !txLookedUp && !txSegments.length) {
+      txLookedUp = true;
+      txLoadCached(id, txDuration);
+      return;
+    }
+    if (!txSegments.length) txStatus('Listening ahead…');
   }
 
   function txReset() {
     txOn = false;
+    txWanted = false;
+    txLookedUp = false;
     txBusy = false;
     txDone = false;
     txSegments = [];
@@ -976,46 +1033,48 @@
   function txSave() {
     if (current < 0 || !queue[current]) return;
     queue[current].tx = {
-      segments: txSegments, next: txNext, index: txIndex, lang: txLang, done: txDone
+      segments: txSegments, next: txNext, index: txIndex, lang: txLang,
+      done: txDone, wanted: txWanted, lookedUp: txLookedUp
     };
   }
 
+  // Only ever from what this browser already has. A track that was transcribed
+  // earlier in the visit comes back with its words and with the toggle in the
+  // position it was left in; a track that was not fetches nothing and shows an
+  // empty caption row until someone asks.
   function txAdopt(duration) {
     txDuration = duration;
-    txSyncControls();
 
-    var entry = queue[current];
-    var saved = entry && entry.tx;
+    var saved = queue[current] && queue[current].tx;
     if (saved && saved.segments.length) {
       txSegments = saved.segments;
       txNext = saved.next;
       txIndex = saved.index;
       txLang = saved.lang;
       txDone = saved.done;
+      txLookedUp = saved.lookedUp;
       txShowBody();
       txStatus(txDone ? 'Transcript complete.' : 'Picking up where this left off.');
-      txAuto();
+      // Resumed only for a track that was already being transcribed when it was
+      // left. The press is remembered for that track, never carried to a new one.
+      if (saved.wanted && !txDone) txBegin();
       return;
     }
 
-    var id = clipIdOf(entry);
-    // The lookup has to be given its chance first. Starting the pump here would
-    // make txLoadCached stand down, and the clip would be transcribed again at
-    // full cost with every word already sitting in the bucket.
-    if (id) txLoadCached(id, duration);
-    else txAuto();
+    txSyncControls();
   }
 
   // Whatever the Worker already holds for this clip. Someone transcribed it once
-  // and everyone the link reaches reads it back without spending anything.
+  // and everyone the link reaches reads it back without spending anything. Only
+  // ever reached from txBegin, so this too waits for the press.
   function txLoadCached(id, duration) {
     var token = loadToken;
     fetch(CLIP_API + '/transcript/' + id).then(function(r) {
       return r.ok ? r.json() : null;
     }).then(function(data) {
-      // Nothing to merge into: if the listener started transcribing while this
-      // was in flight, their own text is the one that is live.
-      if (!data || token !== loadToken || txSegments.length || txOn) return;
+      // Nothing to merge into: if the pump got a window back first, that text is
+      // the one that is live.
+      if (!data || token !== loadToken || txSegments.length) return;
       var chunks = data.chunks || [];
       if (!chunks.length) return;
 
@@ -1034,8 +1093,9 @@
       txStatus(txDone ? 'Transcript came with the link.' : 'Part of this is already transcribed.');
       txSyncControls();
     }).catch(function() {}).then(function() {
-      // Found or not, the pump takes it from here.
-      if (token === loadToken) txAuto();
+      // Found or not, the pump takes it from here; it has been running since the
+      // press. This only has to say something if the lookup came back empty.
+      if (token === loadToken && txOn && !txSegments.length) txStatus('Listening ahead…');
     });
   }
 
@@ -1227,8 +1287,13 @@
       txStatus(txNext >= txDuration - 0.2 ? 'Transcript complete.' : 'Transcribing…');
     }).catch(function(err) {
       if (token !== loadToken) return;
+      // The toggle clears with it. A refusal is something to be told about and
+      // then to retry deliberately, not a box that stays ticked over a pump that
+      // has stopped.
       txOn = false;
+      txWanted = false;
       txStatus(err && err.message ? err.message : 'Transcription failed.');
+      txSave();
       txSyncControls();
     }).then(function() {
       if (token === loadToken) txBusy = false;
@@ -1294,7 +1359,7 @@
     words.forEach(function(word, k) {
       var span = document.createElement('span');
       span.className = 'aud-cap-w';
-      // Whisper hands back tokens with their own leading space, but not always.
+      // Some models hand back tokens with their own leading space, some do not.
       span.textContent = (k && word.t.charAt(0) !== ' ' ? ' ' : '') + word.t;
       line.appendChild(span);
       txSpans.push({ node: span, s: word.s, e: word.e });
@@ -1333,15 +1398,14 @@
   }
 
   el['aud-tx-on'].addEventListener('change', function() {
-    txWanted = el['aud-tx-on'].checked;
-    try { window.localStorage.setItem(TX_PREF_KEY, txWanted ? '1' : '0'); } catch (e) {}
-
-    if (txWanted) {
-      if (audioBuffer) txBegin();
-    } else {
-      txOn = false;
-      txStatus(txSegments.length ? 'Stopped. The text so far is kept.' : '');
+    if (el['aud-tx-on'].checked && audioBuffer) {
+      txBegin();
+      return;
     }
+    txWanted = false;
+    txOn = false;
+    txStatus(txSegments.length ? 'Stopped. The text so far is kept.' : '');
+    txSave();
     txSyncControls();
   });
 
@@ -1394,8 +1458,21 @@
       // any audio has been fetched.
       if (audioName && at >= 0) parts.push('n=' + encodeURIComponent(audioName));
     }
+
+    // What the sender wrote about the link. It rides in the hash so the page can
+    // show it, and it is sent to the Worker as well so the preview card can, but
+    // the hash is the copy that survives being forwarded on after the card has
+    // expired.
+    var title = shareTitle();
+    var note = shareNote();
+    if (title) parts.push('ti=' + encodeURIComponent(title));
+    if (note) parts.push('no=' + encodeURIComponent(note));
+
     return parts.join('&');
   }
+
+  function shareTitle() { return el['aud-share-title'].value.trim().slice(0, MAX_TITLE); }
+  function shareNote() { return el['aud-share-note'].value.trim().slice(0, MAX_NOTE); }
 
   function decodeState(hash) {
     var out = {};
@@ -1445,6 +1522,35 @@
     if (s.t) restoreQueue(s.t, parseInt(s.i, 10) || 0, s.n);
     // A v2 link, from before a share could carry more than one track.
     else if (s.a) restoreQueue(s.a === 'demo' ? 'd' : s.a.replace(/^clip:/, ''), 0, s.n);
+
+    // After the queue, which is what un-hides the note this writes into. The
+    // share card adds `s=` on its way through, so a recipient can take the card
+    // down along with the audio.
+    if (s.s && CLIP_ID_RE.test(s.s)) shareId = s.s;
+    showSenderWords(s.ti, s.no);
+  }
+
+  // Set from a link, and put back into the share fields so that forwarding the
+  // page on carries them rather than quietly dropping them.
+  function showSenderWords(title, note) {
+    var clean = function(text, limit) {
+      return String(text || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+    };
+    var t = clean(title, MAX_TITLE);
+    var n = clean(note, MAX_NOTE);
+    if (!t && !n) return;
+
+    if (t) {
+      el['aud-shared-title'].textContent = t;
+      el['aud-share-title'].value = t;
+    }
+    if (n) {
+      // textContent, not innerHTML: this is a stranger's text arriving in a URL.
+      el['aud-shared-msg'].textContent = n;
+      el['aud-shared-msg'].classList.remove('hidden');
+      el['aud-share-note'].value = n;
+    }
+    el['aud-shared-note'].classList.remove('hidden');
   }
 
   function restoreQueue(list, index, name) {
@@ -1470,13 +1576,33 @@
     labelClips();
   }
 
+  function uploadKey() {
+    try { return window.sessionStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; }
+  }
+
+  function sharePassword() {
+    return el['aud-share-pass'].value;
+  }
+
   function uploadClip(file) {
+    var headers = {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-Clip-Name': encodeURIComponent(file.name)
+    };
+    // Only ever a request header. encodeState never sees it, so it cannot end up
+    // in a link that gets forwarded on.
+    var key = uploadKey();
+    if (key) headers['X-Clip-Key'] = key;
+
+    // The delete password, and the same rule: a request header, never the hash.
+    // It can only be set as the clip goes up, which is why the field is disabled
+    // once anything in the queue has been uploaded.
+    var pass = sharePassword();
+    if (pass) headers['X-Clip-Lock'] = pass;
+
     return fetch(CLIP_API + '/clip', {
       method: 'POST',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-        'X-Clip-Name': encodeURIComponent(file.name)
-      },
+      headers: headers,
       body: file
     }).then(function(resp) {
       return resp.json().catch(function() { return {}; }).then(function(data) {
@@ -1491,16 +1617,235 @@
     el['aud-share-status'].textContent = '';
   }
 
-  function showLink() {
-    var hash = encodeState();
-    el['aud-share-link'].value = location.origin + location.pathname + '#' + hash;
+  // --- deleting from the bucket ---
+  //
+  // The clip id in a share link is the whole permission. It is 128 random bits, so
+  // it cannot be arrived at by guessing, and anyone the link reached can take the
+  // tracks down. That is deliberate, and the note beside the button says so: a link
+  // handed on is a link that can delete.
+
+  var delArmed = false;
+  // The preview card wrapping the current link, if one was made or arrived in a
+  // link. Deleting takes it down with the audio: a card that outlived its tracks
+  // would keep advertising a playlist that is not there.
+  var shareId = null;
+
+  function anyLocked() {
+    for (var i = 0; i < queue.length; i++) {
+      if (clipIdOf(queue[i]) && queue[i].locked) return true;
+    }
+    return false;
+  }
+
+  function syncDanger() {
+    var any = uploadedIds().length > 0 || Boolean(shareId);
+    el['aud-danger'].classList.toggle('hidden', !any);
+
+    // Shown before the button is pressed rather than after it is refused: being
+    // told a password is needed by a failure is a worse way to learn it.
+    var locked = anyLocked() || Boolean(sharePassword());
+    el['aud-del-pass'].classList.toggle('hidden', !locked);
+
+    syncLockField();
+    if (!any) disarmDelete();
+  }
+
+  // A lock is fixed when the clip is written, so the field closes as soon as
+  // anything in the queue is up. Letting it be typed afterwards would promise a
+  // protection the next delete would not honour — and letting it be *changed*
+  // afterwards would let whoever holds the link lock the uploader out of their
+  // own clip, which is worse than the open delete it was meant to fix.
+  function syncLockField() {
+    var uploaded = uploadedIds().length > 0;
+    el['aud-share-pass'].disabled = uploaded;
+    if (!uploaded) {
+      el['aud-lock-hint'].textContent = 'Without one, anyone holding the link can take the tracks ' +
+        'down. Set it before you make the link \u2014 it cannot be added afterwards, and it cannot ' +
+        'be recovered. Either way everything expires after ' + clipTtlDays + ' days.';
+    } else if (anyLocked()) {
+      el['aud-lock-hint'].textContent = 'These tracks are password protected. Deleting them asks ' +
+        'for it, and nothing can change it now they are up.';
+    } else {
+      el['aud-lock-hint'].textContent = 'These tracks are already uploaded, so a password can no ' +
+        'longer be attached to them. Delete them and share again to set one.';
+    }
+  }
+
+  function disarmDelete() {
+    delArmed = false;
+    el['aud-del-btn'].textContent = 'Delete from the cloud';
+    el['aud-del-btn'].classList.remove('is-armed');
+  }
+
+  // Answers with why, not just whether: a delete refused for want of a password
+  // is the one failure the page can do something about, and it has to be told
+  // apart from a clip that is simply gone.
+  function deleteAt(url, pass) {
+    var headers = {};
+    if (pass) headers['X-Clip-Lock'] = pass;
+    return fetch(url, { method: 'DELETE', headers: headers }).then(function(resp) {
+      // A clip that is already gone counts as done. Someone else may have deleted
+      // it from the same link, and reporting that as a failure would only invite a
+      // pointless retry.
+      if (resp.ok || resp.status === 404) return { ok: true };
+      var locked = resp.status === 401 || resp.status === 403;
+      return resp.json().catch(function() { return {}; }).then(function(data) {
+        return { ok: false, locked: locked, error: data.error || '' };
+      });
+    }).catch(function() { return { ok: false, locked: false, error: '' }; });
+  }
+
+  function deleteClip(id, pass) {
+    return deleteAt(CLIP_API + '/clip/' + id, pass).then(function(r) {
+      r.id = id;
+      return r;
+    });
+  }
+
+  el['aud-del-btn'].addEventListener('click', function() {
+    var ids = uploadedIds();
+    if (!ids.length && !shareId) return;
+
+    // Two presses rather than a confirm() dialog, which blocks the page and cannot
+    // be styled. The button says what the second press does.
+    if (!delArmed) {
+      delArmed = true;
+      el['aud-del-btn'].textContent = ids.length
+        ? 'Really delete ' + ids.length + (ids.length === 1 ? ' track?' : ' tracks?')
+        : 'Really delete this link?';
+      el['aud-del-btn'].classList.add('is-armed');
+      el['aud-del-note'].textContent = 'This cannot be undone. Press again to confirm.';
+      return;
+    }
+
+    // Whoever made the link typed the password in the share panel a moment ago;
+    // asking them to type it a second time to undo their own work is friction for
+    // nothing. A recipient has only the field beside the button.
+    var pass = el['aud-del-pass'].value || sharePassword();
+
+    el['aud-del-btn'].disabled = true;
+    el['aud-del-btn'].textContent = 'Deleting\u2026';
+
+    var jobs = ids.map(function(id) { return deleteClip(id, pass); });
+    // The card goes with the tracks, and asks for the same password.
+    var card = shareId;
+    if (card) jobs.push(deleteAt(CLIP_API + '/share/' + card, pass));
+
+    Promise.all(jobs).then(function(results) {
+      var clips = results.slice(0, ids.length);
+      var cardResult = card ? results[results.length - 1] : null;
+      var gone = clips.filter(function(r) { return r.ok; }).length;
+      var refused = results.filter(function(r) { return r.locked; });
+
+      el['aud-del-btn'].disabled = false;
+      disarmDelete();
+
+      // Nothing moved, and the password is the whole reason. Refs are kept: the
+      // tracks are demonstrably still up, and the link still opens them.
+      if (refused.length && !gone) {
+        el['aud-del-pass'].classList.remove('hidden');
+        el['aud-del-pass'].focus();
+        el['aud-share-status'].textContent = refused[0].error || 'That link is password protected.';
+        el['aud-del-note'].textContent = pass
+          ? 'That password does not match. Everything is still up.'
+          : 'Enter the password that was set when this link was made.';
+        return;
+      }
+
+      // Refs are dropped for everything that is no longer there, whether it was
+      // deleted just now or was already gone. A ref that no longer resolves would
+      // otherwise be written into the next share link and hand out a track that
+      // is not there. A clip that refused the password keeps its ref, because it
+      // is still up and its link still works.
+      var kept = {};
+      clips.forEach(function(r) { if (!r.ok && r.locked) kept[r.id] = true; });
+      queue.forEach(function(entry) {
+        var id = clipIdOf(entry);
+        if (id && !kept[id]) { entry.ref = null; entry.file = null; entry.locked = false; }
+      });
+      if (!cardResult || cardResult.ok) shareId = null;
+
+      resetShare();
+      renderQueue();
+
+      el['aud-share-status'].textContent = !ids.length
+        ? 'That link is dead now.'
+        : (gone === ids.length
+          ? (ids.length === 1 ? 'Deleted. That link is dead now.' : 'Deleted all ' + gone + '. Those links are dead now.')
+          : 'Deleted ' + gone + ' of ' + ids.length + '. Try again for the rest.');
+      el['aud-del-note'].textContent =
+        'The tracks are still loaded here, and can be shared again.';
+    });
+  });
+
+  function showLink(url, hash) {
+    el['aud-share-link'].value = url;
     el['aud-share-out'].classList.remove('hidden');
     el['aud-share-link'].focus();
     el['aud-share-link'].select();
+    // The hash, not the card's URL: the address bar should keep showing the state
+    // this page is actually in, which is also what makes a reload survive.
     history.replaceState(null, '', '#' + hash);
   }
 
   var clipTtlDays = 30;
+
+  // The link a share hands over.
+  //
+  // With no title and no note it is this page's own URL with the state in its
+  // hash: nothing is stored, nothing expires beyond the clips themselves.
+  //
+  // With either, it is a card on the Worker instead. A fragment is never sent to
+  // a server, so a static page cannot put the sender's words into its own meta
+  // tags, and a plain link therefore previews in iMessage or Slack as whatever
+  // the page says about itself and nothing more. The card is a real document with
+  // og:title and og:description on it that forwards straight on to the same hash,
+  // so the preview is the only thing it adds.
+  //
+  // If the card cannot be made, the plain link is handed over instead. Losing the
+  // preview is worth saying; it is not worth withholding a working link over.
+  function finishShare(okText) {
+    var hash = encodeState();
+    var plain = location.origin + location.pathname + '#' + hash;
+    var title = shareTitle();
+    var note = shareNote();
+
+    if (!title && !note) {
+      shareId = null;
+      showLink(plain, hash);
+      el['aud-share-status'].textContent = okText;
+      syncDanger();
+      return;
+    }
+
+    el['aud-share-status'].textContent = 'Making the preview card\u2026';
+
+    var headers = { 'Content-Type': 'application/json' };
+    var pass = sharePassword();
+    if (pass) headers['X-Clip-Lock'] = pass;
+
+    fetch(CLIP_API + '/share', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ hash: hash, title: title, note: note })
+    }).then(function(resp) {
+      return resp.json().catch(function() { return {}; }).then(function(data) {
+        if (!resp.ok || !data.url) throw new Error(data.error || 'Could not make the preview card.');
+        return data;
+      });
+    }).then(function(data) {
+      shareId = data.id;
+      showLink(data.url, hash);
+      el['aud-share-status'].textContent = okText + ' It previews with your title and note.';
+      syncDanger();
+    }).catch(function(err) {
+      shareId = null;
+      showLink(plain, hash);
+      el['aud-share-status'].textContent = (err.message || 'Could not make the preview card.') +
+        ' The link below still works, without the preview.';
+      syncDanger();
+    });
+  }
 
   // One at a time. The upload route is rate limited per minute, and a browser
   // firing ten parallel uploads is exactly the shape that limit exists to stop.
@@ -1508,8 +1853,7 @@
     if (at >= pending.length) {
       el['aud-share-btn'].disabled = false;
       renderQueue();
-      showLink();
-      el['aud-share-status'].textContent = 'Ready. This link works for ' + clipTtlDays + ' days.';
+      finishShare('Ready. This link works for ' + clipTtlDays + ' days.');
       return;
     }
 
@@ -1520,6 +1864,7 @@
     uploadClip(pending[at].file).then(function(data) {
       pending[at].ref = 'clip:' + data.id;
       pending[at].file = null;
+      pending[at].locked = Boolean(data.locked);
       if (data.expiresInDays) clipTtlDays = data.expiresInDays;
       if (data.name) renameEntry(pending[at], data.name);
       renderQueue();
@@ -1538,12 +1883,11 @@
 
     if (!pending.length) {
       if (!queue.length) return;
-      showLink();
-      el['aud-share-status'].textContent = queue.length > 1
+      finishShare(queue.length > 1
         ? 'Anyone who opens this gets all ' + queue.length + ' tracks with your settings.'
         : (queue[0].ref === 'demo'
           ? 'Anyone who opens this hears the demo with your settings.'
-          : 'Link copied to the box below.');
+          : 'Link copied to the box below.'));
       return;
     }
 
@@ -1568,6 +1912,29 @@
   el['aud-filter-freq-val'].textContent =
     formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
   playThrough = el['aud-q-through'].checked;
+
+  try {
+    var savedKey = window.sessionStorage.getItem(KEY_STORE);
+    if (savedKey) {
+      el['aud-key'].value = savedKey;
+      // Opened rather than left collapsed, so it is obvious a key is in play and
+      // uploads are not being held to the usual ceiling.
+      el['aud-key'].parentNode.open = true;
+    }
+  } catch (e) {}
+
+  // The delete password field beside the button follows the one in the share
+  // panel, so someone who has just set a password sees where it will be asked for.
+  el['aud-share-pass'].addEventListener('input', syncDanger);
+
+  el['aud-key'].addEventListener('input', function() {
+    var v = el['aud-key'].value.trim();
+    try {
+      if (v) window.sessionStorage.setItem(KEY_STORE, v);
+      else window.sessionStorage.removeItem(KEY_STORE);
+    } catch (e) {}
+  });
+
   renderQueue();
   txSyncControls();
 

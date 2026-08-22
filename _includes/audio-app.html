@@ -12,8 +12,9 @@
   </ol>
 
   <div class="aud-note aud-note-shared hidden" id="aud-shared-note">
-    <strong>Someone shared this with you.</strong>
+    <strong id="aud-shared-title">Someone shared this with you.</strong>
     <span id="aud-shared-detail">Press play to hear it with their filter settings.</span>
+    <span class="aud-shared-msg hidden" id="aud-shared-msg"></span>
   </div>
 
   <!-- Empty state: no track yet -->
@@ -41,7 +42,7 @@
       </label>
       <button class="aud-btn aud-btn-sm" id="aud-tx-copy" type="button" disabled>Copy text</button>
       <span class="aud-tx-status" id="aud-tx-status"></span>
-      <span class="aud-tx-tip">short windows of the track go to Whisper</span>
+      <span class="aud-tx-tip">off until you tick it &middot; then short windows of the track go to Gemini</span>
     </div>
 
     <canvas class="aud-canvas" id="aud-canvas"></canvas>
@@ -167,12 +168,49 @@
       <h2 class="aud-panel-title">Share</h2>
       <p class="aud-panel-hint" id="aud-share-hint">Makes a link that opens this playlist with your filter and volume already set. Your files are uploaded only when you press the button.</p>
     </div>
+    <div class="aud-fields">
+      <label class="aud-field">
+        <span class="aud-field-name">Title</span>
+        <input type="text" id="aud-share-title" class="aud-field-in" maxlength="80"
+               autocomplete="off" placeholder="Late night mix">
+      </label>
+      <label class="aud-field">
+        <span class="aud-field-name">Note</span>
+        <textarea id="aud-share-note" class="aud-field-in aud-field-area" maxlength="300" rows="2"
+                  placeholder="Track 3 is the one. Turn it up."></textarea>
+      </label>
+      <p class="aud-field-hint">Both show at the top of the page when someone opens it, and in the
+        preview card their messaging app builds before they do.</p>
+
+      <label class="aud-field">
+        <span class="aud-field-name">Delete&nbsp;password</span>
+        <input type="password" id="aud-share-pass" class="aud-field-in" autocomplete="new-password"
+               spellcheck="false" placeholder="Optional">
+      </label>
+      <p class="aud-field-hint" id="aud-lock-hint">Without one, anyone holding the link can take the
+        tracks down. Set it before you make the link &mdash; it cannot be added afterwards, and it
+        cannot be recovered. Either way everything expires after 30&nbsp;days.</p>
+    </div>
+
     <button class="aud-btn aud-btn-primary aud-btn-wide" id="aud-share-btn" type="button">Create share link</button>
     <div class="aud-share-out hidden" id="aud-share-out">
       <input type="text" id="aud-share-link" class="aud-share-link" readonly aria-label="Share link">
       <button class="aud-btn aud-btn-primary" id="aud-share-copy" type="button">Copy</button>
     </div>
     <p class="aud-share-status" id="aud-share-status"></p>
+
+    <div class="aud-danger hidden" id="aud-danger">
+      <button class="aud-btn aud-btn-sm aud-btn-danger" id="aud-del-btn" type="button">Delete from the cloud</button>
+      <input type="password" id="aud-del-pass" class="aud-field-in aud-del-pass hidden"
+             autocomplete="off" spellcheck="false" placeholder="Delete password" aria-label="Delete password">
+      <span class="aud-danger-note" id="aud-del-note">Takes the uploaded tracks down for everyone. Anyone holding the link can do this too.</span>
+    </div>
+
+    <details class="aud-key">
+      <summary class="aud-key-sum">Upload key</summary>
+      <p class="aud-key-hint">Lifts the size limit on uploads. Held for this tab only &mdash; never written to disk, and never put in a link.</p>
+      <input type="password" id="aud-key" class="aud-key-in" autocomplete="off" spellcheck="false" placeholder="Paste your key" aria-label="Upload key">
+    </details>
   </section>
 
 </div>

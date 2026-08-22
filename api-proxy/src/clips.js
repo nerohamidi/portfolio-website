@@ -5,6 +5,10 @@
 // unguessable key is what turns "I loaded a song" into something a link can carry.
 
 const MAX_BYTES = 12 * 1024 * 1024;
+// What the override key raises the per-file cap to. It is not unlimited: the
+// upload is buffered whole before it reaches R2 (see the note in handleUpload), so
+// this has to stay well inside a Worker's memory.
+const MAX_BYTES_UNLOCKED = 50 * 1024 * 1024;
 const TTL_DAYS = 30;
 const ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
@@ -52,7 +56,122 @@ function sniffAudio(bytes) {
   return null;
 }
 
-function newId() {
+// Digests are compared rather than the keys themselves: they are always the same
+// length, so the walk below leaks nothing about how long the real key is, and it
+// finishes in the same time whether the first byte differs or the last.
+async function keyMatches(supplied, secret) {
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(supplied)),
+    crypto.subtle.digest('SHA-256', enc.encode(secret)),
+  ]);
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+// Three answers rather than a boolean. A wrong key has to be told apart from no
+// key at all: someone who typed one is expecting the larger ceiling, and silently
+// giving them the usual limit would report a 12 MB error they cannot explain.
+export async function checkUploadKey(request, env) {
+  const supplied = request.headers.get('x-clip-key');
+  if (!supplied) return 'none';
+  // No secret configured means there is no override to grant. Treating an absent
+  // secret as "anything matches" would be the worst possible way to fail.
+  if (!env.CLIP_ADMIN_KEY) return 'invalid';
+  return (await keyMatches(supplied, env.CLIP_ADMIN_KEY)) ? 'valid' : 'invalid';
+}
+
+// --- the delete password ------------------------------------------------------
+//
+// A clip id is the read permission and, on its own, the delete permission too:
+// whoever the link reaches can take the track down for everyone. That is the
+// right default for something sent to one friend and the wrong one for something
+// forwarded on, so an uploader may lock it. The lock is set once, at upload, by
+// the only person who is definitely the owner. It is never added to a clip that
+// is already up: a recipient who could lock someone else's clip could not delete
+// it, but could stop the uploader deleting it either.
+//
+// The lock bounds deletion and nothing else. The clip still expires on its own
+// after CLIP_TTL_DAYS, so a forgotten password costs a wait, never a permanent
+// object in the bucket.
+
+// PBKDF2 over a user-chosen password, salted per clip. The iteration count is
+// stored beside the hash rather than assumed, so it can be raised later without
+// invalidating every lock already written. It is deliberately modest: an attacker
+// needs the 128-bit id before a guess is even possible, the rate limiter on the
+// delete route shapes online guessing, and a Worker has a CPU budget per request
+// that a hundred thousand rounds would eat into. The stretching is here for the
+// case this cannot otherwise defend: a leak of the bucket's metadata, where a
+// password reused from somewhere else must not fall out in plaintext.
+const LOCK_ITERATIONS = 50000;
+// Bounds the work one request can ask for. Nothing legitimate is near it.
+const MAX_PASSWORD = 200;
+
+function toHex(bytes) {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+function fromHex(text) {
+  const out = new Uint8Array(Math.floor(text.length / 2));
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+async function derive(password, salt, iterations) {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256,
+  );
+  return toHex(new Uint8Array(bits));
+}
+
+function lockIterations(env) {
+  return Math.max(1000, Math.round(envNum(env && env.CLIP_LOCK_ITERATIONS, LOCK_ITERATIONS) || LOCK_ITERATIONS));
+}
+
+// The three fields a lock is made of, ready to be spread into R2 custom metadata
+// or into a share record. Both are string maps, so both store it the same way.
+export async function makeLock(password, env) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = lockIterations(env);
+  return {
+    lockSalt: toHex(salt),
+    lockIter: String(iterations),
+    lockHash: await derive(String(password).slice(0, MAX_PASSWORD), salt, iterations),
+  };
+}
+
+// Pulls the lock out of whatever it was stored on, so a clip's customMetadata
+// and a share record's own JSON can be checked by the same function.
+export function lockMeta(source) {
+  if (!source) return null;
+  if (!source.lockHash || !source.lockSalt) return null;
+  return { salt: source.lockSalt, hash: source.lockHash, iterations: Number(source.lockIter) || LOCK_ITERATIONS };
+}
+
+// Three answers, not a boolean: "no password was sent" is a different thing to
+// say than "that password is wrong", and the page shows a field for the first
+// and an error for the second.
+export async function checkLock(meta, supplied) {
+  if (!meta) return 'ok';
+  if (!supplied) return 'missing';
+  const attempt = await derive(String(supplied).slice(0, MAX_PASSWORD), fromHex(meta.salt), meta.iterations);
+  // Both sides are fixed-length hex of the same digest, so the walk leaks
+  // nothing and takes the same time whichever character differs.
+  if (attempt.length !== meta.hash.length) return 'bad';
+  let diff = 0;
+  for (let i = 0; i < attempt.length; i++) diff |= attempt.charCodeAt(i) ^ meta.hash.charCodeAt(i);
+  return diff === 0 ? 'ok' : 'bad';
+}
+
+export function newId() {
   const raw = crypto.getRandomValues(new Uint8Array(16));
   let bin = '';
   for (const b of raw) bin += String.fromCharCode(b);
@@ -147,7 +266,10 @@ export function ttlDays(env) {
   return envNum(env.CLIP_TTL_DAYS, TTL_DAYS);
 }
 
-function maxBytes(env) {
+function maxBytes(env, unlocked) {
+  if (unlocked) {
+    return envNum(env.CLIP_MAX_BYTES_UNLOCKED, MAX_BYTES_UNLOCKED) || MAX_BYTES_UNLOCKED;
+  }
   return envNum(env.CLIP_MAX_BYTES, MAX_BYTES) || MAX_BYTES;
 }
 
@@ -155,10 +277,14 @@ function tooLargeError(max) {
   return `That clip is over the ${Math.round(max / (1024 * 1024))} MB limit.`;
 }
 
-function quotaError(survey, uploader, size, limits) {
+function quotaError(survey, uploader, size, limits, unlocked) {
+  // The bucket ceiling holds for a keyed upload too. It is the line between R2's
+  // free tier and a bill, which is not something an override should step over by
+  // accident; the per-uploader share below is the one the key is for.
   if (!survey.complete || survey.count >= limits.objects || survey.bytes + size > limits.total) {
     return 'The clip library is full right now. Clips expire on their own, so try again later.';
   }
+  if (unlocked) return null;
   if ((survey.perUploader.get(uploader) || 0) + size > limits.perUploader) {
     return 'You have hit your share limit. Your older clips expire on their own.';
   }
@@ -170,20 +296,30 @@ export async function handleUpload(request, env, ctx, headers) {
     return json({ error: 'Clip storage is not configured.' }, 503, headers);
   }
 
-  // Reject on the declared length before reading a byte, so an oversized upload
-  // costs one round trip instead of a full transfer.
-  const max = maxBytes(env);
-  const declared = Number(request.headers.get('content-length') || '0');
-  if (declared > max) {
-    return json({ error: tooLargeError(max) }, 413, headers);
-  }
+  const key = await checkUploadKey(request, env);
+  const unlocked = key === 'valid';
 
-  if (env.CLIP_UPLOADS) {
+  // The limiter runs before the refusal below, so guessing at the key is throttled
+  // exactly the way a flood of uploads is. A key that checks out skips it: the
+  // point of the override is to get a batch through in one go.
+  if (env.CLIP_UPLOADS && !unlocked) {
     const ip = request.headers.get('cf-connecting-ip') || 'unknown';
     const { success } = await env.CLIP_UPLOADS.limit({ key: ip });
     if (!success) {
       return json({ error: 'Too many uploads from here. Wait a minute and try again.' }, 429, headers);
     }
+  }
+
+  if (key === 'invalid') {
+    return json({ error: 'That upload key was not recognised.' }, 403, headers);
+  }
+
+  // Reject on the declared length before reading a byte, so an oversized upload
+  // costs one round trip instead of a full transfer.
+  const max = maxBytes(env, unlocked);
+  const declared = Number(request.headers.get('content-length') || '0');
+  if (declared > max) {
+    return json({ error: tooLargeError(max) }, 413, headers);
   }
 
   const uploader = await hashUploader(request, env);
@@ -198,7 +334,7 @@ export async function handleUpload(request, env, ctx, headers) {
   // Checked against the declared length first, so a full bucket refuses the upload
   // before pulling 12 MB across the wire.
   const limits = quotaLimits(env);
-  const early = quotaError(survey, uploader, declared || 0, limits);
+  const early = quotaError(survey, uploader, declared || 0, limits, unlocked);
   if (early) return json({ error: early }, 507, headers);
 
   // Buffered rather than streamed on purpose. R2 needs a known length for a stream,
@@ -223,16 +359,22 @@ export async function handleUpload(request, env, ctx, headers) {
 
   // Re-checked against the real size: a chunked upload declares no length, and a
   // dishonest Content-Length is not worth trusting either.
-  const full = quotaError(survey, uploader, buf.byteLength, limits);
+  const full = quotaError(survey, uploader, buf.byteLength, limits, unlocked);
   if (full) return json({ error: full }, 507, headers);
 
   const id = newId();
   const name = decodeName(request.headers.get('x-clip-name'));
 
+  // Set here or never. The uploader is the only caller who is certainly the
+  // owner, so this is the one moment a lock can be attached without letting a
+  // recipient lock a clip that is not theirs.
+  const password = request.headers.get('x-clip-lock');
+  const lock = password ? await makeLock(password, env) : null;
+
   try {
     await env.CLIPS.put(`clips/${id}`, buf, {
       httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' },
-      customMetadata: { name, uploadedAt: new Date().toISOString(), up: uploader },
+      customMetadata: { name, uploadedAt: new Date().toISOString(), up: uploader, ...lock },
     });
   } catch {
     return json({ error: 'Could not store that clip.' }, 502, headers);
@@ -240,7 +382,7 @@ export async function handleUpload(request, env, ctx, headers) {
 
   const ttl = ttlDays(env);
   const expiresAt = new Date(Date.now() + ttl * 86400000).toISOString();
-  return json({ id, name, expiresAt, expiresInDays: ttl }, 200, headers);
+  return json({ id, name, expiresAt, expiresInDays: ttl, locked: Boolean(lock) }, 200, headers);
 }
 
 export async function handleFetchClip(request, env, id, headers) {
@@ -279,6 +421,11 @@ export async function handleFetchClip(request, env, id, headers) {
   const stored = object.customMetadata && object.customMetadata.name;
   if (stored) out.set('x-clip-name', encodeURIComponent(stored));
 
+  // Whether a delete will ask for a password. Only that a lock exists, never any
+  // part of it: the page uses this to show a password field before the visitor
+  // presses a button that would otherwise fail for no visible reason.
+  if (lockMeta(object.customMetadata)) out.set('x-clip-locked', '1');
+
   if (headOnly) {
     out.set('content-length', String(object.size));
     return new Response(null, { status: 200, headers: out });
@@ -305,4 +452,74 @@ export async function handleFetchClip(request, env, id, headers) {
   }
 
   return new Response(object.body, { status, headers: out });
+}
+
+// The link is the permission, unless the uploader set one of their own. A clip id
+// is 128 random bits, so it cannot be arrived at by guessing, and by default
+// whoever the sharer sent it to can take the clip down again — the link does not
+// only grant listening, it grants deleting, and it deletes for everyone rather
+// than just for the caller. An uploader who does not want that sets a password at
+// upload time, and this route then asks for it.
+//
+// Either way the clip expires on its own after CLIP_TTL_DAYS. The password moves
+// the delete button behind a check; it does not make anything permanent.
+export async function handleDeleteClip(request, env, id, headers) {
+  if (!env.CLIPS) return json({ error: 'Clip storage is not configured.' }, 503, headers);
+  if (!ID_RE.test(id)) return json({ error: 'Not found' }, 404, headers);
+
+  const object = await env.CLIPS.head(`clips/${id}`);
+
+  // Before the password is checked, so guessing at one is throttled the same way
+  // a flood of deletes is. An id that is not locked at all costs a limiter call
+  // it does not need, which is cheaper than a route where the limit only applies
+  // to the requests an attacker is making.
+  if (env.CLIP_DELETES) {
+    const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+    const { success } = await env.CLIP_DELETES.limit({ key: ip });
+    if (!success) {
+      return json({ error: 'Too many deletes from here. Wait a minute and try again.' }, 429, headers);
+    }
+  }
+
+  // Checked against the clip's own metadata, so a clip whose audio is already
+  // gone cannot be used to sweep a locked one: with no object there is no lock to
+  // read, and all that is left under the id is an orphaned transcript.
+  const lock = lockMeta(object && object.customMetadata);
+  if (lock) {
+    const verdict = await checkLock(lock, request.headers.get('x-clip-lock'));
+    if (verdict !== 'ok') {
+      return json({
+        error: verdict === 'missing'
+          ? 'That clip is password protected. Enter the password to delete it.'
+          : 'That password does not match.',
+        locked: true,
+      }, verdict === 'missing' ? 401 : 403, headers);
+    }
+  }
+
+  // The cached transcript goes with the audio, whether or not the audio is still
+  // there. An expired clip can outlive its own bytes as text, and a delete that
+  // left that readable would not be a delete.
+  const keys = [`clips/${id}`];
+  let cursor;
+  let truncated = true;
+  let pages = 0;
+  while (truncated && pages < MAX_LIST_PAGES) {
+    const listed = await env.CLIPS.list({ prefix: `tx/c/${id}/`, limit: 1000, cursor });
+    for (const obj of listed.objects) keys.push(obj.key);
+    truncated = listed.truncated;
+    cursor = listed.cursor;
+    pages += 1;
+  }
+
+  try {
+    await env.CLIPS.delete(keys);
+  } catch {
+    return json({ error: 'Could not delete that clip.' }, 502, headers);
+  }
+
+  // Reported missing only after the sweep, so a retry of a half-finished delete
+  // still clears whatever was left behind rather than being turned away at the door.
+  if (!object) return json({ error: 'That clip is already gone.' }, 404, headers);
+  return json({ deleted: true, id }, 200, headers);
 }
