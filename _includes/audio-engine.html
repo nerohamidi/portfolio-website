@@ -34,23 +34,29 @@
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   var audioCtx = null;
-  var source = null;
   var gainNode = null;
   var filterNode = null;
   var analyser = null;
-  var audioEl = null;
-  var sourceEl = null;   // the element `source` was created from
   var filterType = null;
-  var playing = false;
   var showWave = true;
   var showFreq = true;
   var semitones = 0;
   var lastDetect = 0;
   var detectBuf = null;
 
-  var audioRef = null;        // 'demo' | 'clip:<id>'
-  var audioName = null;
-  var pendingFile = null;     // picked locally, not uploaded yet
+  // Playback runs off a decoded AudioBuffer rather than an <audio> element.
+  // Routing an element through createMediaElementSource leaves pause and
+  // playbackRate at the mercy of each browser's media stack, and Safari honours
+  // neither reliably. A buffer source is plain Web Audio: stop() always stops, and
+  // playbackRate always resamples, so pitch and transport behave the same
+  // everywhere. The cost is that a track is fully decoded before it plays, which
+  // the 12 MB upload cap already bounds.
+  var audioBuffer = null;
+  var bufSource = null;
+  var offsetSec = 0;        // position in the buffer, in buffer seconds
+  var startedAt = 0;        // audioCtx.currentTime when the current source started
+  var playing = false;
+  var loadToken = 0;        // guards against a slow load finishing after a newer one
 
   var PLAY_PATH = 'M8 5.5v13l11-6.5z';
   var PAUSE_PATH = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
@@ -78,11 +84,15 @@
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       gainNode = audioCtx.createGain();
+      gainNode.gain.value = parseFloat(el['aud-volume'].value);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
       rebuildChain();
     }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    // Creation is allowed without a gesture; resuming is not, so this is called
+    // again from the play handler where a real activation exists.
+    if (audioCtx.state === 'suspended' && audioCtx.resume) audioCtx.resume();
+    return audioCtx;
   }
 
   function rebuildChain() {
@@ -104,16 +114,9 @@
     analyser.connect(audioCtx.destination);
   }
 
-  function loadSrc(src, name) {
-    if (audioEl) {
-      audioEl.pause();
-      audioEl.removeAttribute('src');
-      audioEl.load();
-    }
-    if (source) { try { source.disconnect(); } catch (e) {} }
-    source = null;
-    sourceEl = null;
+  // --- loading ---------------------------------------------------------------
 
+  function resetTrackUi(name) {
     audioName = name;
     el['aud-name'].textContent = name;
     el['aud-drop'].classList.add('hidden');
@@ -123,55 +126,113 @@
     el['aud-duration'].textContent = '0:00';
     el['aud-current'].textContent = '0:00';
     el['aud-seek'].value = 0;
-
-    audioEl = new Audio();
-    audioEl.playsInline = true;
-    audioEl.preload = 'auto';
-    // Only the R2 clip is cross-origin, and only it needs a CORS-readable stream for
-    // the analyser. On a blob: or same-origin URL the attribute buys nothing, and
-    // Safari fails the load outright when it is set on a blob.
-    if (/^https?:/i.test(src)) audioEl.crossOrigin = 'anonymous';
-    audioEl.src = src;
-
-    audioEl.addEventListener('loadedmetadata', function() {
-      if (isFinite(audioEl.duration)) {
-        el['aud-duration'].textContent = formatTime(audioEl.duration);
-        el['aud-seek'].max = audioEl.duration;
-      }
-    });
-
-    // The transport mirrors the element rather than guessing. If playback fails or
-    // the browser pauses us, the button says so instead of lying about the state.
-    audioEl.addEventListener('play', function() { setPlaying(true); });
-    audioEl.addEventListener('playing', function() { setPlaying(true); });
-    audioEl.addEventListener('pause', function() { setPlaying(false); });
-    audioEl.addEventListener('ended', function() { setPlaying(false); });
-
-    audioEl.addEventListener('error', function() {
-      var code = audioEl.error ? audioEl.error.code : 0;
-      var why = code === 4 ? 'This browser cannot play that file'
-              : code === 3 ? 'That file could not be decoded'
-              : audioRef && audioRef.indexOf('clip:') === 0 ? 'This clip has expired'
-              : 'Could not load that track';
-      el['aud-name'].textContent = why;
-      el['aud-share-status'].textContent = 'Try a different MP3 or WAV.';
-    });
-
-    applyPitch();
-    setPlaying(false);
   }
 
-  // Built on the first press of play, never at load time. Creating an AudioContext
-  // outside a user gesture leaves it suspended, and on iOS a media element already
-  // routed into a suspended graph stays silent even after the context resumes.
-  function connectGraph() {
-    if (!audioEl || sourceEl === audioEl) return;
+  // `get` returns a promise for the raw bytes, so a local file and a shared clip
+  // take the same path from here on.
+  function loadBytes(get, name, label) {
+    var token = ++loadToken;
+    stopSource();
+    audioBuffer = null;
+    offsetSec = 0;
+    setPlaying(false);
+    resetTrackUi(name);
+    el['aud-name'].textContent = name + '  (decoding\u2026)';
+
     ensureCtx();
-    if (source) { try { source.disconnect(); } catch (e) {} }
-    source = audioCtx.createMediaElementSource(audioEl);
-    sourceEl = audioEl;
-    source.connect(gainNode);
-    gainNode.gain.value = parseFloat(el['aud-volume'].value);
+
+    get().then(function(bytes) {
+      if (token !== loadToken) return null;
+      return new Promise(function(resolve, reject) {
+        // Callback form kept as well: older Safari never returned a promise here.
+        var ret = audioCtx.decodeAudioData(bytes, resolve, reject);
+        if (ret && ret.then) ret.then(resolve, reject);
+      });
+    }).then(function(buf) {
+      if (token !== loadToken || !buf) return;
+      audioBuffer = buf;
+      el['aud-name'].textContent = name;
+      el['aud-duration'].textContent = formatTime(buf.duration);
+      el['aud-seek'].max = buf.duration;
+      el['aud-seek'].step = 0.01;
+    }).catch(function() {
+      if (token !== loadToken) return;
+      el['aud-name'].textContent = label === 'clip'
+        ? 'This clip could not be loaded'
+        : 'That file could not be decoded';
+      el['aud-share-status'].textContent = 'Try a different MP3 or WAV.';
+      clearNote();
+    });
+  }
+
+  function loadFile(file) {
+    loadBytes(function() {
+      if (file.arrayBuffer) return file.arrayBuffer();
+      return new Promise(function(resolve, reject) {
+        var fr = new FileReader();
+        fr.onload = function() { resolve(fr.result); };
+        fr.onerror = function() { reject(fr.error); };
+        fr.readAsArrayBuffer(file);
+      });
+    }, file.name, 'file');
+  }
+
+  function loadUrl(url, name, label) {
+    loadBytes(function() {
+      return fetch(url).then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.arrayBuffer();
+      });
+    }, name, label);
+  }
+
+  // --- transport core --------------------------------------------------------
+
+  function rate() { return Math.pow(2, semitones / 12); }
+
+  function position() {
+    if (!audioBuffer) return 0;
+    if (!playing || !audioCtx) return offsetSec;
+    var p = offsetSec + (audioCtx.currentTime - startedAt) * rate();
+    return p < 0 ? 0 : (p > audioBuffer.duration ? audioBuffer.duration : p);
+  }
+
+  function stopSource() {
+    if (!bufSource) return;
+    try { bufSource.onended = null; } catch (e) {}
+    try { bufSource.stop(); } catch (e) {}
+    try { bufSource.disconnect(); } catch (e) {}
+    bufSource = null;
+  }
+
+  function startAt(sec) {
+    if (!audioBuffer) return;
+    ensureCtx();
+    stopSource();
+
+    offsetSec = Math.max(0, Math.min(sec, Math.max(0, audioBuffer.duration - 0.01)));
+    bufSource = audioCtx.createBufferSource();
+    bufSource.buffer = audioBuffer;
+    bufSource.playbackRate.value = rate();
+    bufSource.connect(gainNode);
+    bufSource.onended = function() {
+      // Only a natural end reaches here; stopSource clears the handler first.
+      offsetSec = 0;
+      bufSource = null;
+      setPlaying(false);
+      el['aud-seek'].value = 0;
+      el['aud-current'].textContent = '0:00';
+    };
+    startedAt = audioCtx.currentTime;
+    bufSource.start(0, offsetSec);
+    setPlaying(true);
+  }
+
+  function pausePlayback() {
+    if (!playing) return;
+    offsetSec = position();
+    stopSource();
+    setPlaying(false);
   }
 
   function setPlaying(on) {
@@ -203,9 +264,10 @@
 
     ctx2d.clearRect(0, 0, w, h);
 
-    if (audioEl && playing) {
-      el['aud-seek'].value = audioEl.currentTime;
-      el['aud-current'].textContent = formatTime(audioEl.currentTime);
+    if (audioBuffer && playing) {
+      var pos = position();
+      el['aud-seek'].value = pos;
+      el['aud-current'].textContent = formatTime(pos);
     }
 
     if (analyser && w) {
@@ -264,26 +326,32 @@
   // into a tempo control, so that has to be switched off on every element we make.
 
   function applyPitch() {
-    var rate = Math.pow(2, semitones / 12);
+    var r = Math.pow(2, semitones / 12);
     el['aud-pitch-val'].textContent = (semitones > 0 ? '+' : '') + semitones + ' st';
-    el['aud-pitch-rate'].textContent = rate.toFixed(2) + '\u00d7 speed';
-    if (audioEl) {
-      audioEl.preservesPitch = false;
-      audioEl.mozPreservesPitch = false;
-      audioEl.webkitPreservesPitch = false;
-      audioEl.playbackRate = rate;
+    el['aud-pitch-rate'].textContent = r.toFixed(2) + '\u00d7 speed';
+    if (bufSource) bufSource.playbackRate.value = r;
+  }
+
+  // The rebase has to happen while `semitones` still holds the old value, because
+  // position() converts the elapsed stretch at whatever rate is current. Updating
+  // the slider first and rebasing after re-times everything already played at the
+  // new rate, which sends the clock racing ahead.
+  function setSemitones(n) {
+    if (audioCtx && playing) {
+      offsetSec = position();
+      startedAt = audioCtx.currentTime;
     }
+    semitones = n;
+    applyPitch();
   }
 
   el['aud-pitch'].addEventListener('input', function() {
-    semitones = parseInt(el['aud-pitch'].value, 10) || 0;
-    applyPitch();
+    setSemitones(parseInt(el['aud-pitch'].value, 10) || 0);
   });
 
   el['aud-pitch-reset'].addEventListener('click', function() {
-    semitones = 0;
     el['aud-pitch'].value = '0';
-    applyPitch();
+    setSemitones(0);
   });
 
   // --- note detection --------------------------------------------------------
@@ -378,34 +446,34 @@
   // --- transport -------------------------------------------------------------
 
   el['aud-play'].addEventListener('click', function() {
-    if (!audioEl) return;
-    if (audioEl.paused) {
-      connectGraph();
-      ensureCtx();
-      var p = audioEl.play();
-      if (p && p.catch) p.catch(function() { setPlaying(false); });
+    if (!audioBuffer) return;
+    ensureCtx();
+    if (playing) {
+      pausePlayback();
     } else {
-      audioEl.pause();
+      startAt(offsetSec >= audioBuffer.duration - 0.02 ? 0 : offsetSec);
     }
   });
 
   el['aud-stop'].addEventListener('click', function() {
-    if (!audioEl) return;
-    audioEl.pause();
-    audioEl.currentTime = 0;
+    stopSource();
+    offsetSec = 0;
+    setPlaying(false);
     el['aud-seek'].value = 0;
     el['aud-current'].textContent = '0:00';
-    setPlaying(false);
   });
 
   el['aud-seek'].addEventListener('input', function() {
-    if (audioEl) audioEl.currentTime = parseFloat(el['aud-seek'].value);
+    if (!audioBuffer) return;
+    var to = parseFloat(el['aud-seek'].value) || 0;
+    el['aud-current'].textContent = formatTime(to);
+    if (playing) startAt(to);
+    else offsetSec = to;
   });
 
   el['aud-volume'].addEventListener('input', function() {
     var v = parseFloat(el['aud-volume'].value);
     if (gainNode) gainNode.gain.value = v;
-    if (audioEl && !sourceEl) audioEl.volume = v;   // before the graph exists
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
   });
 
@@ -465,7 +533,7 @@
     pendingFile = file;
     audioRef = null;
     resetShare();
-    loadSrc(URL.createObjectURL(file), file.name);
+    loadFile(file);
   }
 
   el['aud-file'].addEventListener('change', function(e) { takeFile(e.target.files[0]); });
@@ -474,7 +542,7 @@
     pendingFile = null;
     audioRef = 'demo';
     resetShare();
-    loadSrc(DEMO_SRC, 'symphony.mp3');
+    loadUrl(DEMO_SRC, 'symphony.mp3', 'demo');
   });
 
   // Keyboard parity for the file label, which is not a real button.
@@ -559,8 +627,7 @@
       var st = parseInt(s.p, 10);
       if (!isNaN(st) && st >= -12 && st <= 12) {
         el['aud-pitch'].value = st;
-        semitones = st;
-        applyPitch();
+        setSemitones(st);
       }
     }
 
@@ -583,25 +650,10 @@
     el['aud-shared-note'].classList.remove('hidden');
     el['aud-shared-detail'].textContent = 'Press play to hear "' + name + '" with their settings.';
 
-    // An AudioContext built without a user gesture starts suspended, and Safari will
-    // not resume one that was never tied to an interaction. Waiting for the first
-    // real click keeps the graph and the autoplay policy in agreement.
-    var armed = false;
-    function arm() {
-      if (armed) return;
-      armed = true;
-      document.removeEventListener('pointerdown', arm, true);
-      document.removeEventListener('keydown', arm, true);
-      loadSrc(src, name);
-    }
-    document.addEventListener('pointerdown', arm, true);
-    document.addEventListener('keydown', arm, true);
-
-    el['aud-drop'].classList.add('hidden');
-    el['aud-player'].classList.remove('hidden');
-    el['aud-shape'].classList.remove('hidden');
-    el['aud-share'].classList.remove('hidden');
-    el['aud-name'].textContent = name;
+    // Fetched and decoded straight away. Decoding needs an AudioContext but not a
+    // resumed one, so nothing here depends on a gesture; only starting playback
+    // does, and the play button supplies that.
+    loadUrl(src, name, ref === 'demo' ? 'demo' : 'clip');
   }
 
   function uploadClip(file) {
