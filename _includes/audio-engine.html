@@ -11,12 +11,24 @@
 
   var FILTER_CODES = { lowpass: 'lp', highpass: 'hp', bandpass: 'bp', 'notch-wide': 'bs', 'notch-narrow': 'nt' };
   var FILTER_TYPES = { lp: 'lowpass', hp: 'highpass', bp: 'bandpass', bs: 'notch-wide', nt: 'notch-narrow' };
-  // The two notch presets only differ by the Q they arrive with.
-  var FILTER_DEFAULT_Q = { 'notch-wide': 0.5, 'notch-narrow': 10 };
+  // The Q a chip arrives on. Band Stop and Notch are the same filter and differ by
+  // nothing else; Band Pass is here because Q is a width for it, and inheriting a
+  // number left behind by another chip can hand it a band too narrow to hear
+  // through. Low and high pass are left out on purpose: their Q is resonance in
+  // decibels, which is a filter you can listen to anywhere on the slider.
+  var FILTER_DEFAULT_Q = { bandpass: 2, 'notch-wide': 0.5, 'notch-narrow': 10 };
   var FILTER_LABELS = {
     lowpass: 'Low Pass', highpass: 'High Pass', bandpass: 'Band Pass',
     'notch-wide': 'Band Stop', 'notch-narrow': 'Notch'
   };
+  // A band type has no cut-off. It has a centre and two −3 dB edges either side,
+  // so the frequency slider is naming a different thing depending on the chip.
+  var FILTER_IS_BAND = { bandpass: true, 'notch-wide': true, 'notch-narrow': true };
+  // And the second slider is two different quantities: the Web Audio biquad reads
+  // Q as decibels of resonance for the low and high pass, and as a plain quality
+  // factor for the band types. One slider, so the label has to say which.
+  function filterFreqLabel(type) { return FILTER_IS_BAND[type] ? 'Centre' : 'Cutoff'; }
+  function filterQLabel(type) { return FILTER_IS_BAND[type] ? 'Q' : 'Resonance'; }
 
   // The delay line is allocated once at its longest, and the slider moves a
   // read pointer inside it. A DelayNode cannot grow after it is made.
@@ -64,6 +76,7 @@
     'aud-current', 'aud-seek', 'aud-duration', 'aud-stop', 'aud-play', 'aud-play-icon',
     'aud-volume', 'aud-vol-val', 'aud-shape', 'aud-filters', 'aud-params',
     'aud-filter-freq', 'aud-filter-freq-val', 'aud-filter-q', 'aud-filter-q-val',
+    'aud-filter-freq-name', 'aud-filter-q-name',
     'aud-pitch', 'aud-pitch-val', 'aud-pitch-rate', 'aud-pitch-reset',
     'aud-chain', 'aud-math', 'aud-math-on',
     'aud-echo-on', 'aud-echo-params', 'aud-echo-time', 'aud-echo-time-val',
@@ -105,6 +118,7 @@
   var mathOn = false;
   var showWave = true;
   var showFreq = true;
+  var filterTouched = 0;   // last time a filter control moved, for the curve's emphasis
   var semitones = 0;
   var lastDetect = 0;
   var detectBuf = null;
@@ -163,14 +177,41 @@
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
 
+  // The audible decade and a bit, shared by the slider and by the x axis of the
+  // visualiser. One pair of constants so a curve drawn at 632 Hz cannot land
+  // somewhere other than where the slider says it is.
+  var F_MIN = 20;
+  var F_MAX = 20000;
+  var F_LOG_MIN = Math.log(F_MIN);
+  var F_LOG_SPAN = Math.log(F_MAX) - F_LOG_MIN;
+
   function filterSliderToFreq(val) {
-    var minLog = Math.log(20);
-    var maxLog = Math.log(20000);
-    return Math.exp(minLog + (val / 1000) * (maxLog - minLog));
+    return Math.exp(F_LOG_MIN + (val / 1000) * F_LOG_SPAN);
+  }
+
+  function freqToX(hz, w) {
+    if (!(hz > 0)) return 0;
+    return ((Math.log(hz) - F_LOG_MIN) / F_LOG_SPAN) * w;
+  }
+
+  function xToFreq(x, w) {
+    return Math.exp(F_LOG_MIN + (x / w) * F_LOG_SPAN);
   }
 
   function formatFilterFreq(hz) {
     return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
+  }
+
+  // Short enough to sit under a curve without covering it.
+  function formatFreqTick(hz) {
+    if (hz >= 10000) return Math.round(hz / 1000) + 'k';
+    if (hz >= 1000) return (hz / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return Math.round(hz) + '';
+  }
+
+  // The value under the second slider, in the units that slider actually carries.
+  function formatFilterQ(type, q) {
+    return FILTER_IS_BAND[type] ? q.toFixed(1) : q.toFixed(1) + ' dB';
   }
 
   // --- audio graph -----------------------------------------------------------
@@ -679,6 +720,213 @@
   }
   window.addEventListener('resize', sizeCanvas);
 
+  // --- filter response -------------------------------------------------------
+  //
+  // The shape the filter is imposing, drawn over the spectrum on the same log
+  // axis, so a dip in the curve sits directly above the bars it is taking out.
+  // Ground truth comes from the node that is doing the filtering; before anything
+  // has played there is no node to ask, and the cookbook coefficients stand in.
+
+  var CURVE_DB_TOP = 18;    // headroom for a resonant low pass, which peaks well over 0
+  var CURVE_DB_BOT = -42;
+  var CURVE_N_LOG = 256;    // an even sweep of the whole axis
+  var CURVE_N_TIGHT = 65;   // packed around f0, so a sharp notch is not stepped straight over.
+                            // Odd, so the middle sample is f0 exactly and the null is drawn full depth
+  var CURVE_N = CURVE_N_LOG + CURVE_N_TIGHT;
+
+  var curveHz = new Float32Array(CURVE_N);
+  var curveMag = new Float32Array(CURVE_N);
+  var curvePhase = new Float32Array(CURVE_N);
+  var curveDb = new Float32Array(CURVE_N);
+  var curveX = new Float32Array(CURVE_N);   // the same points in pixels, worked out once a frame
+
+  // Two ascending runs merged into one: the sweep, and a cluster either side of
+  // f0. A notch 30 Hz wide would fall between two points of the sweep alone and
+  // draw as a dimple instead of the hole it is.
+  function buildCurveHz(f0, top) {
+    var topLog = Math.log(top);
+    // A context running slower than 40 kHz puts the top of the slider past its own
+    // Nyquist. The cluster follows f0 only as far as the axis goes, or it would run
+    // backwards and fold the curve over itself.
+    var c = Math.min(Math.max(f0, F_MIN), top);
+    var tLo = Math.max(F_MIN, c / 1.3);
+    var tHi = Math.min(top, c * 1.3);
+    var tLoLog = Math.log(tLo);
+    var tSpan = Math.log(tHi) - tLoLog;
+    var i = 0, j = 0, k = 0;
+    while (k < CURVE_N) {
+      var a = i < CURVE_N_LOG
+        ? Math.exp(F_LOG_MIN + (i / (CURVE_N_LOG - 1)) * (topLog - F_LOG_MIN))
+        : Infinity;
+      var b = j < CURVE_N_TIGHT
+        ? Math.exp(tLoLog + (j / (CURVE_N_TIGHT - 1)) * tSpan)
+        : Infinity;
+      if (a <= b) { curveHz[k++] = a; i++; } else { curveHz[k++] = b; j++; }
+    }
+  }
+
+  function fillCurveDb() {
+    var i;
+    if (filterNode && filterNode.getFrequencyResponse) {
+      try {
+        filterNode.getFrequencyResponse(curveHz, curveMag, curvePhase);
+        for (i = 0; i < CURVE_N; i++) {
+          curveDb[i] = curveMag[i] > 0
+            ? 20 * Math.log(curveMag[i]) / Math.LN10
+            : CURVE_DB_BOT;
+        }
+        return;
+      } catch (e) {}
+    }
+    var fs = sampleRate();
+    var type = filterType.replace('-wide', '').replace('-narrow', '');
+    var c = biquad(type, filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)),
+                   parseFloat(el['aud-filter-q'].value), fs);
+    for (i = 0; i < CURVE_N; i++) {
+      var wn = 2 * Math.PI * curveHz[i] / fs;
+      var c1 = Math.cos(wn), s1 = Math.sin(wn);
+      var c2 = Math.cos(2 * wn), s2 = Math.sin(2 * wn);
+      var nr = c.b0 + c.b1 * c1 + c.b2 * c2;
+      var ni = c.b1 * s1 + c.b2 * s2;
+      var dr = 1 + c.a1 * c1 + c.a2 * c2;
+      var di = c.a1 * s1 + c.a2 * s2;
+      var den = dr * dr + di * di;
+      var m2 = den > 0 ? (nr * nr + ni * ni) / den : 0;
+      curveDb[i] = m2 > 0 ? 10 * Math.log(m2) / Math.LN10 : CURVE_DB_BOT;
+    }
+  }
+
+  // Read straight off the curve rather than from the analogue formula, so what is
+  // marked is where this filter, warped onto this sample rate, really is 3 dB down.
+  function bandEdges(w) {
+    var out = [];
+    for (var i = 1; i < CURVE_N; i++) {
+      var a = curveDb[i - 1], b = curveDb[i];
+      if ((a > -3) === (b > -3) || a === b) continue;
+      // Interpolated in pixels rather than in hertz, because that is the spacing
+      // the two samples either side of the crossing are actually evenly on.
+      var t = (-3 - a) / (b - a);
+      out.push(xToFreq(curveX[i - 1] + t * (curveX[i] - curveX[i - 1]), w));
+      if (out.length === 2) break;
+    }
+    return out;
+  }
+
+  // Centred on what it is labelling, nudged inward by however wide it turns out
+  // to be, so a marker at either end of the axis still reads.
+  function curveLabel(text, x, yPos, w, rgba) {
+    var half = ctx2d.measureText(text).width / 2 + 2;
+    ctx2d.textAlign = 'center';
+    ctx2d.fillStyle = rgba;
+    ctx2d.fillText(text, Math.min(Math.max(x, half), w - half), yPos);
+  }
+
+  function drawFilterCurve(w, base, span) {
+    var f0 = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
+    var top = Math.min(F_MAX, (sampleRate() / 2) * 0.999);
+    buildCurveHz(f0, top);
+    fillCurveDb();
+
+    var yTop = base - span;
+    function y(db) {
+      var t = (CURVE_DB_TOP - db) / (CURVE_DB_TOP - CURVE_DB_BOT);
+      return yTop + (t < 0 ? 0 : t > 1 ? 1 : t) * span;
+    }
+
+    // The emphasis rides for a moment past the last move, so a drag reads bright
+    // and then settles back behind the bars instead of snapping off mid-gesture.
+    var since = Date.now() - filterTouched;
+    var lift = since < 900 ? 1 : since < 1500 ? (1500 - since) / 600 : 0;
+    var rgb = isLight ? '184,121,26' : '224,160,64';
+    function amber(a) { return 'rgba(' + rgb + ',' + a.toFixed(3) + ')'; }
+
+    var i;
+    for (i = 0; i < CURVE_N; i++) curveX[i] = freqToX(curveHz[i], w);
+
+    // Faint decades, because a log axis with nothing on it cannot be read.
+    ctx2d.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx2d.textBaseline = 'bottom';
+    [100, 1000, 10000].forEach(function(hz) {
+      var gx = freqToX(hz, w);
+      ctx2d.strokeStyle = amber(0.1 + lift * 0.06);
+      ctx2d.lineWidth = 1;
+      ctx2d.beginPath();
+      ctx2d.moveTo(gx, yTop);
+      ctx2d.lineTo(gx, base);
+      ctx2d.stroke();
+      curveLabel(formatFreqTick(hz), gx, base - 1, w, amber(0.38 + lift * 0.14));
+    });
+
+    // What survives the filter, as area under the curve.
+    ctx2d.beginPath();
+    ctx2d.moveTo(curveX[0], base);
+    for (i = 0; i < CURVE_N; i++) ctx2d.lineTo(curveX[i], y(curveDb[i]));
+    ctx2d.lineTo(curveX[CURVE_N - 1], base);
+    ctx2d.closePath();
+    ctx2d.fillStyle = amber(0.06 + lift * 0.09);
+    ctx2d.fill();
+
+    // The line the curve is read against.
+    ctx2d.save();
+    ctx2d.setLineDash([3, 4]);
+    ctx2d.strokeStyle = amber(0.16 + lift * 0.2);
+    ctx2d.lineWidth = 1;
+    ctx2d.beginPath();
+    ctx2d.moveTo(0, y(0));
+    ctx2d.lineTo(w, y(0));
+    ctx2d.stroke();
+    ctx2d.restore();
+
+    // The curve itself.
+    ctx2d.beginPath();
+    for (i = 0; i < CURVE_N; i++) {
+      if (i === 0) ctx2d.moveTo(curveX[0], y(curveDb[0]));
+      else ctx2d.lineTo(curveX[i], y(curveDb[i]));
+    }
+    ctx2d.strokeStyle = amber(0.5 + lift * 0.45);
+    ctx2d.lineWidth = lift > 0 ? 2.5 : 2;
+    ctx2d.stroke();
+
+    // f0, and for a band type the two edges the centre sits between. The lines
+    // start below the numbers rather than running through them.
+    var edges = FILTER_IS_BAND[filterType] ? bandEdges(w) : [];
+    var markTop = yTop + (lift > 0 ? 13 : 0);
+    ctx2d.save();
+    ctx2d.setLineDash([2, 3]);
+    ctx2d.strokeStyle = amber(0.2 + lift * 0.3);
+    ctx2d.lineWidth = 1;
+    edges.forEach(function(hz) {
+      var ex = freqToX(hz, w);
+      ctx2d.beginPath();
+      ctx2d.moveTo(ex, markTop);
+      ctx2d.lineTo(ex, base);
+      ctx2d.stroke();
+    });
+    ctx2d.restore();
+
+    var fx = freqToX(f0, w);
+    ctx2d.strokeStyle = amber(0.35 + lift * 0.45);
+    ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    ctx2d.moveTo(fx, markTop);
+    ctx2d.lineTo(fx, base);
+    ctx2d.stroke();
+
+    // Numbers only while the emphasis is up, so a curve left alone stays quiet.
+    // All on one line: the edges of a narrow notch are a few pixels apart and
+    // would print on top of each other, and the strip is 55px tall on a phone,
+    // which is not enough for a second row that does not land on the curve.
+    if (lift > 0) {
+      ctx2d.textBaseline = 'top';
+      var text = formatFilterFreq(f0);
+      if (edges.length === 2) {
+        text += '\u2002' + formatFreqTick(edges[0]) + '\u2013' + formatFreqTick(edges[1]);
+      }
+      curveLabel(text, fx, yTop + 1, w, amber(0.5 + lift * 0.5));
+    }
+    ctx2d.textAlign = 'left';
+  }
+
   function draw() {
     var rect = el['aud-canvas'].getBoundingClientRect();
     var w = rect.width;
@@ -694,9 +942,14 @@
       el['aud-current'].textContent = formatTime(pos);
     }
 
+    // The spectrum's own strip, hoisted because the filter curve shares it and is
+    // drawn whether or not there is an analyser running behind it yet.
+    var half = showWave && showFreq;
+    var base = half ? h * 0.95 : h * 0.9;
+    var span = half ? h * 0.5 : h * 0.75;
+
     if (analyser && w) {
       var bins = analyser.frequencyBinCount;
-      var half = showWave && showFreq;
 
       if (showWave) {
         var time = new Uint8Array(bins);
@@ -717,12 +970,21 @@
       if (showFreq) {
         var freq = new Uint8Array(bins);
         analyser.getByteFrequencyData(freq);
-        var base = half ? h * 0.95 : h * 0.9;
-        var span = half ? h * 0.5 : h * 0.75;
+        var nyq = sampleRate() / 2;
         var bars = Math.min(bins, Math.max(24, Math.floor(w / 4)));
         var bw = w / bars;
+        // Log spaced, like the slider and like the curve drawn over the top. A bar
+        // now covers a range of bins rather than one, so it reports the loudest of
+        // them; taking a single bin would drop peaks out of the wide bars up top.
         for (var j = 0; j < bars; j++) {
-          var v = freq[Math.floor((j / bars) * bins)] / 255;
+          var i0 = Math.floor(xToFreq(j * bw, w) / nyq * bins);
+          var i1 = Math.ceil(xToFreq((j + 1) * bw, w) / nyq * bins);
+          if (i0 >= bins) break;
+          if (i1 <= i0) i1 = i0 + 1;
+          if (i1 > bins) i1 = bins;
+          var peak = 0;
+          for (var k = i0; k < i1; k++) { if (freq[k] > peak) peak = freq[k]; }
+          var v = peak / 255;
           var bh = v * span;
           ctx2d.fillStyle = isLight
             ? 'rgba(200,50,50,' + (0.25 + v * 0.55) + ')'
@@ -731,6 +993,8 @@
         }
       }
     }
+
+    if (filterType && w) drawFilterCurve(w, base, span);
 
     // Autocorrelation is far too costly to run every frame, and a note readout that
     // updates faster than this is unreadable anyway.
@@ -921,6 +1185,19 @@
 
   // --- filter ----------------------------------------------------------------
 
+  // Both sliders keep their range and their stored value across a chip change, so
+  // only the words around them move. A share link written before this still reads
+  // back the same, because what is encoded is the raw slider position.
+  function syncFilterLabels() {
+    var type = filterType || 'lowpass';
+    el['aud-filter-freq-name'].textContent = filterFreqLabel(type);
+    el['aud-filter-q-name'].textContent = filterQLabel(type);
+    el['aud-filter-freq-val'].textContent =
+      formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
+    el['aud-filter-q-val'].textContent =
+      formatFilterQ(type, parseFloat(el['aud-filter-q'].value));
+  }
+
   function setFilter(type) {
     var chips = el['aud-filters'].querySelectorAll('.aud-chip');
     filterType = (filterType === type) ? null : type;
@@ -930,8 +1207,9 @@
     el['aud-params'].classList.toggle('hidden', !filterType);
     if (filterType && FILTER_DEFAULT_Q[filterType] !== undefined) {
       el['aud-filter-q'].value = FILTER_DEFAULT_Q[filterType];
-      el['aud-filter-q-val'].textContent = FILTER_DEFAULT_Q[filterType].toFixed(1);
     }
+    syncFilterLabels();
+    filterTouched = Date.now();
     rebuildChain();
   }
 
@@ -948,13 +1226,15 @@
     var hz = filterSliderToFreq(parseFloat(el['aud-filter-freq'].value));
     el['aud-filter-freq-val'].textContent = formatFilterFreq(hz);
     if (filterNode) filterNode.frequency.value = hz;
+    filterTouched = Date.now();
     renderMath();
   });
 
   el['aud-filter-q'].addEventListener('input', function() {
     var q = parseFloat(el['aud-filter-q'].value);
-    el['aud-filter-q-val'].textContent = q.toFixed(1);
+    el['aud-filter-q-val'].textContent = formatFilterQ(filterType || 'lowpass', q);
     if (filterNode) filterNode.Q.value = q;
+    filterTouched = Date.now();
     renderMath();
   });
 
@@ -2222,7 +2502,7 @@
     if (flt.length >= 3) {
       var want = flt[0] === 'off' ? null : (FILTER_TYPES[flt[0]] || null);
       if (want) setFilter(want);
-      // After the type: the notch presets write their own Q on the way in.
+      // After the type: a chip with a default Q writes it on the way in.
       setSlider(el['aud-filter-freq'], flt[1]);
       setSlider(el['aud-filter-q'], flt[2]);
     }
@@ -2651,8 +2931,7 @@
   // --- boot ------------------------------------------------------------------
 
   el['aud-vol-val'].textContent = Math.round(parseFloat(el['aud-volume'].value) * 100) + '%';
-  el['aud-filter-freq-val'].textContent =
-    formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
+  syncFilterLabels();
   el['aud-echo-time-val'].textContent = Math.round(echoTime() * 1000) + ' ms';
   el['aud-echo-fb-val'].textContent = echoFeedback().toFixed(2);
   el['aud-echo-mix-val'].textContent = Math.round(echoMix() * 100) + '%';

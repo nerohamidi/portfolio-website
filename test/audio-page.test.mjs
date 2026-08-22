@@ -998,6 +998,82 @@ w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
 await settle();
 check('a link from before the effects existed leaves them off', !w.__probe.effects().echoOn && !w.__probe.effects().revOn);
 
+// --- 9b. what the two sliders are called ------------------------------------
+//
+// One pair of sliders serves five chips, and the quantity under each one moves
+// with the chip. A band type has a centre and two edges rather than a cut-off,
+// and the biquad reads the second slider as decibels for the low and high pass
+// and as a plain Q everywhere else. The slider positions never move, so a link
+// written before any of this reads back exactly the same.
+
+w = boot(`#v=3&flt=lp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+const fname = () => w.document.getElementById('aud-filter-freq-name').textContent;
+const qname = () => w.document.getElementById('aud-filter-q-name').textContent;
+const fval = () => w.document.getElementById('aud-filter-freq-val').textContent;
+const qval = () => w.document.getElementById('aud-filter-q-val').textContent;
+const chip = (win, type) => win.document.querySelector(`[data-filter="${type}"]`).click();
+
+check('a low pass has a cut-off', fname() === 'Cutoff', fname());
+check('and its second slider is resonance, in the decibels the node reads', qname() === 'Resonance' && qval() === '1.0 dB', qname() + ' ' + qval());
+check('the frequency is the one the slider is sitting on', fval() === '632 Hz', fval());
+
+chip(w, 'highpass');
+check('a high pass is named the same way', fname() === 'Cutoff' && qname() === 'Resonance', fname() + ' / ' + qname());
+
+check('and a chip without an arrival Q leaves the slider where it was', w.document.getElementById('aud-filter-q').value === '1', w.document.getElementById('aud-filter-q').value);
+
+chip(w, 'bandpass');
+check('a band pass has a centre, not a cut-off', fname() === 'Centre', fname());
+check('and a plain Q, with no decibels on it', qname() === 'Q' && qval() === '2.0', qname() + ' ' + qval());
+
+chip(w, 'notch-wide');
+check('band stop reads as a centre too', fname() === 'Centre' && qname() === 'Q', fname() + ' / ' + qname());
+check('and arrives on its own wide Q', qval() === '0.5', qval());
+
+chip(w, 'notch-narrow');
+check('the notch is the narrow one', qval() === '10.0', qval());
+
+chip(w, 'lowpass');
+check('coming back to a low pass puts the decibels back on', qname() === 'Resonance' && qval() === '10.0 dB', qval());
+
+chip(w, 'lowpass');
+check('switching the filter off leaves the words alone rather than blanking them', fname() === 'Cutoff' && qname() === 'Resonance', fname() + ' / ' + qname());
+check('and folds the sliders away', w.document.getElementById('aud-params').classList.contains('hidden'));
+
+// The link is written from the slider positions, so none of the naming reaches it.
+w = boot(`#v=3&flt=bp,500,1&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('a band pass link restores as a centre', fname() === 'Centre' && fval() === '632 Hz', fname() + ' ' + fval());
+check('on the Q the sender set, not the one the chip arrives on', qval() === '1.0', qval());
+check('and goes back out unchanged', /(^|&)flt=bp,500,1(&|$)/.test(w.__probe.encodeState()), w.__probe.encodeState());
+
+// --- 9c. the Q a chip arrives on ---------------------------------------------
+//
+// The second slider keeps its position across a chip change, but its meaning does
+// not: 20 is 20 dB of resonance on a low pass and a 30 Hz slit on a band pass. A
+// chip whose Q is a width arrives on one of its own rather than inheriting a
+// number that would leave nothing to hear.
+
+w = boot(`#v=3&flt=lp,500,20&viz=1,1&vol=0.7&t=d`, () => res({ chunks: [] }));
+await settle();
+check('a low pass sitting at the top of the slider', w.document.getElementById('aud-filter-q').value === '20' && qval() === '20.0 dB', qval());
+
+chip(w, 'bandpass');
+check('band pass does not inherit it', w.document.getElementById('aud-filter-q').value === '2', w.document.getElementById('aud-filter-q').value);
+check('and the node is filtering on the new one', w.__probe.graph().filter.Q.value === 2, String(w.__probe.graph().filter.Q.value));
+check('so the band is wide enough to hear through', w.__probe.graph().filter.frequency.value / 2 > 300,
+  String(w.__probe.graph().filter.frequency.value / 2));
+
+chip(w, 'notch-narrow');
+chip(w, 'bandpass');
+check('and it arrives the same way from a notch', w.document.getElementById('aud-filter-q').value === '2', w.document.getElementById('aud-filter-q').value);
+
+// A low pass still takes whatever it is handed: resonance in decibels is a filter
+// you can listen to anywhere on the slider, so there is nothing to rescue it from.
+chip(w, 'lowpass');
+check('a low pass keeps the Q it was handed', w.document.getElementById('aud-filter-q').value === '2' && qval() === '2.0 dB', qval());
+
 // --- 10. the math panel ------------------------------------------------------
 //
 // It reads like the caption under the visualiser: short lines, each arriving a
