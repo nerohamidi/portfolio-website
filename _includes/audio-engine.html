@@ -26,9 +26,9 @@
   var TX_LEAD_SEC = 24;      // how far ahead of the playhead to stay
   var TX_JUMP_SEC = 45;      // a seek longer than this gives up on the gap
   var TX_RATE = 16000;       // what Whisper wants; also what keeps a window under a megabyte
-  // Fetched as soon as a track is decoded, before anything is played. Windows are
-  // cut on quiet, so the pump stops at the first boundary past this rather than
-  // exactly on it.
+  // Fetched from wherever the pump starts even if nothing is playing, so ticking
+  // the toggle before pressing play leaves words waiting. Windows are cut on
+  // quiet, so it stops at the first boundary past this rather than exactly on it.
   var TX_PRELOAD_SEC = 30;
   var TX_PREF_KEY = 'aud-tx-on';
 
@@ -45,8 +45,7 @@
     'aud-shared-note', 'aud-shared-detail',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
-    'aud-tx', 'aud-tx-on', 'aud-tx-status', 'aud-tx-lines', 'aud-tx-foot',
-    'aud-tx-copy', 'aud-tx-vtt', 'aud-tx-note'
+    'aud-tx-on', 'aud-tx-status', 'aud-tx-copy'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
@@ -158,7 +157,6 @@
     el['aud-shape'].classList.remove('hidden');
     el['aud-share'].classList.remove('hidden');
     el['aud-queue'].classList.remove('hidden');
-    el['aud-tx'].classList.remove('hidden');
     el['aud-duration'].textContent = '0:00';
     el['aud-current'].textContent = '0:00';
     el['aud-seek'].value = 0;
@@ -701,7 +699,7 @@
     txReset();
     loadToken++;
     el['aud-drop'].classList.remove('hidden');
-    ['aud-player', 'aud-shape', 'aud-share', 'aud-queue', 'aud-tx'].forEach(function(id) {
+    ['aud-player', 'aud-shape', 'aud-share', 'aud-queue'].forEach(function(id) {
       el[id].classList.add('hidden');
     });
     el['aud-shared-note'].classList.add('hidden');
@@ -904,11 +902,11 @@
   // start of the next window.
 
   var txOn = false;
-  // Whether transcription should start by itself. A preference rather than a
-  // per-track switch: every track now starts on its own, so switching it off has
-  // to outlast the track or it would be back on at the next one.
-  var txWanted = true;
-  try { txWanted = window.localStorage.getItem(TX_PREF_KEY) !== '0'; } catch (e) {}
+  // Whether transcription should run. Off until it is asked for, and remembered
+  // once it has been: a track that starts transcribing on its own would send
+  // audio to the Worker that nobody asked to have sent.
+  var txWanted = false;
+  try { txWanted = window.localStorage.getItem(TX_PREF_KEY) === '1'; } catch (e) {}
   var txBusy = false;
   var txDone = false;
   var txSegments = [];
@@ -937,10 +935,9 @@
     el['aud-tx-copy'].disabled = !txSegments.length;
   }
 
-  // Transcription runs unless it has been switched off. The pump is started when
-  // the track is decoded rather than when it is first played, so the opening is
-  // already transcribed by the time anyone presses play and the caption is not
-  // playing catch-up through the first verse.
+  // Only for someone who has already asked for transcription: the preference
+  // carries across tracks so a playlist does not have to be ticked one track at a
+  // time. A first visit never reaches txBegin from here.
   function txAuto() {
     if (txWanted && !txDone && !txOn && audioBuffer) txBegin();
     else txSyncControls();
@@ -968,10 +965,6 @@
     txSpans = [];
     txActive = -1;
     txActiveWord = -1;
-    el['aud-tx-lines'].textContent = '';
-    el['aud-tx-lines'].classList.add('hidden');
-    el['aud-tx-foot'].classList.add('hidden');
-    el['aud-tx-note'].textContent = '';
     el['aud-caption'].classList.add('hidden');
     el['aud-caption-line'].textContent = '';
     txStatus('');
@@ -999,7 +992,7 @@
       txIndex = saved.index;
       txLang = saved.lang;
       txDone = saved.done;
-      txRenderAll();
+      txShowBody();
       txStatus(txDone ? 'Transcript complete.' : 'Picking up where this left off.');
       txAuto();
       return;
@@ -1037,7 +1030,7 @@
       txNext = end;
       txDone = end >= duration - 0.5;
       txSave();
-      txRenderAll();
+      txShowBody();
       txStatus(txDone ? 'Transcript came with the link.' : 'Part of this is already transcribed.');
       txSyncControls();
     }).catch(function() {}).then(function() {
@@ -1198,9 +1191,9 @@
       txNext = pos;
       txPrev = '';
     }
-    // Already far enough ahead of the playhead. The opening is exempt, so a track
-    // that has only just been decoded still gets its first half minute fetched
-    // with the playhead sitting at zero.
+    // Already far enough ahead of the playhead. The first stretch is exempt, so a
+    // track sitting paused at the start still gets half a minute fetched once
+    // transcription is switched on.
     if (txNext > pos + TX_LEAD_SEC && txNext >= TX_PRELOAD_SEC) return;
 
     var start = txNext;
@@ -1228,7 +1221,7 @@
       if (added.length) {
         added.forEach(function(seg) { txSegments.push(seg); });
         txPrev = (txPrev + ' ' + added[added.length - 1].t).slice(-220).trim();
-        txAppend(added);
+        txShowBody();
       }
       txSave();
       txStatus(txNext >= txDuration - 0.2 ? 'Transcript complete.' : 'Transcribing…');
@@ -1244,49 +1237,15 @@
 
   // --- rendering ---
 
-  function txSegRow(seg) {
-    var li = document.createElement('li');
-    li.className = 'aud-tx-line';
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'aud-tx-seek';
-    b.addEventListener('click', function() { seekTo(seg.s); });
-
-    var at = document.createElement('span');
-    at.className = 'aud-tx-at';
-    at.textContent = formatTime(seg.s);
-    var text = document.createElement('span');
-    text.className = 'aud-tx-text';
-    text.textContent = seg.t;
-
-    b.appendChild(at);
-    b.appendChild(text);
-    li.appendChild(b);
-    return li;
-  }
-
+  // There is no transcript list any more, only the caption under the visualiser,
+  // so arriving text has nothing to render into. All this has to do is open the
+  // caption row and let the copy button light up.
   function txShowBody() {
-    el['aud-tx-lines'].classList.remove('hidden');
-    el['aud-tx-foot'].classList.remove('hidden');
+    if (!txSegments.length) return;
     // Shown from here rather than per line: the caption keeps its height while it
     // is empty, so the transport underneath does not jump between lines.
     el['aud-caption'].classList.remove('hidden');
     txSyncControls();
-  }
-
-  function txAppend(segs) {
-    var list = el['aud-tx-lines'];
-    segs.forEach(function(seg) { list.appendChild(txSegRow(seg)); });
-    txShowBody();
-  }
-
-  function txRenderAll() {
-    var list = el['aud-tx-lines'];
-    list.textContent = '';
-    txSegments.forEach(function(seg) { list.appendChild(txSegRow(seg)); });
-    txActive = -1;
-    txActiveWord = -1;
-    if (txSegments.length) txShowBody();
   }
 
   function txFind(pos) {
@@ -1342,19 +1301,6 @@
     });
   }
 
-  function txMarkRow(i) {
-    var rows = el['aud-tx-lines'].children;
-    for (var k = 0; k < rows.length; k++) {
-      rows[k].classList.toggle('is-on', k === i);
-    }
-    if (i < 0 || !rows[i]) return;
-    // The list scrolls inside itself. scrollIntoView would drag the whole page
-    // along with it.
-    var list = el['aud-tx-lines'];
-    var row = rows[i];
-    list.scrollTop = Math.max(0, row.offsetTop - list.clientHeight / 2 + row.offsetHeight / 2);
-  }
-
   // How much of the line has been heard: every word up to the playhead is showing,
   // and the one being said now is lit.
   function txMarkWord(pos) {
@@ -1382,7 +1328,6 @@
     if (i !== txActive) {
       txActive = i;
       txCaption(i);
-      txMarkRow(i);
     }
     if (i >= 0) txMarkWord(pos);
   }
@@ -1406,39 +1351,14 @@
 
   el['aud-tx-copy'].addEventListener('click', function() {
     var text = txPlainText();
-    function done() { el['aud-tx-note'].textContent = 'Copied.'; }
+    function done() { txStatus('Copied.'); }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, function() {
-        el['aud-tx-note'].textContent = 'Could not copy.';
+        txStatus('Could not copy.');
       });
     } else {
-      el['aud-tx-note'].textContent = 'Could not copy.';
+      txStatus('Could not copy.');
     }
-  });
-
-  function vttTime(sec) {
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    var s = sec % 60;
-    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' +
-      (s < 10 ? '0' : '') + s.toFixed(3);
-  }
-
-  el['aud-tx-vtt'].addEventListener('click', function() {
-    if (!txSegments.length) return;
-    var body = 'WEBVTT\n\n' + txSegments.map(function(seg, i) {
-      return (i + 1) + '\n' + vttTime(seg.s) + ' --> ' + vttTime(seg.e) + '\n' + seg.t + '\n';
-    }).join('\n');
-
-    var url = URL.createObjectURL(new Blob([body], { type: 'text/vtt' }));
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = (audioName || 'transcript').replace(/\.[^.]+$/, '') + '.vtt';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
-    el['aud-tx-note'].textContent = 'Saved as WebVTT.';
   });
 
   // --- share -----------------------------------------------------------------

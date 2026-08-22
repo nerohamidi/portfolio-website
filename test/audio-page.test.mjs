@@ -221,25 +221,14 @@ st = w.__probe.state();
 check('a cached transcript is adopted', st.txSegments.length === 2, JSON.stringify(st.txSegments.map((s) => s.t)));
 check('transcription resumes where the cache stops', st.txNext === 24, String(st.txNext));
 check('a partial transcript is not marked finished', st.txDone === false);
-check('transcript rows are rendered', w.document.getElementById('aud-tx-lines').children.length === 2);
-check('the transcript panel opens itself', !w.document.getElementById('aud-tx-lines').classList.contains('hidden'));
 check('the status says the transcript came along', /already transcribed/i.test(w.document.getElementById('aud-tx-status').textContent), w.document.getElementById('aud-tx-status').textContent);
-check('rows are timestamped', w.document.querySelector('.aud-tx-at').textContent === '0:00');
-check('the toggle shows it is transcribing', w.document.getElementById('aud-tx-on').checked === true);
+check('the toggle stays off, since nobody asked for it', w.document.getElementById('aud-tx-on').checked === false);
 check('copying is offered as soon as there is text', w.document.getElementById('aud-tx-copy').disabled === false);
 
 // Nothing is under the playhead before the first line starts.
 w.__probe.txFollow();
 check('the caption is empty before the first line', w.document.getElementById('aud-caption-line').textContent === '');
 check('but the caption keeps its place in the layout', !w.document.getElementById('aud-caption').classList.contains('hidden'));
-
-// Seek into the first line, then look again.
-w.document.querySelectorAll('.aud-tx-seek')[0].click();
-w.__probe.txFollow();
-check('the caption shows the line under the playhead', w.document.getElementById('aud-caption-line').textContent.replace(/\s+/g, ' ').trim() === 'the first line', JSON.stringify(w.document.getElementById('aud-caption-line').textContent));
-check('the caption is split into word spans', w.document.querySelectorAll('.aud-cap-w').length === 3);
-check('the word under the playhead is marked', w.document.querySelectorAll('.aud-cap-w.is-now').length === 1);
-check('the matching transcript row is marked', w.document.querySelectorAll('.aud-tx-line.is-on').length === 1);
 
 // The line is laid out in full the moment it starts, but only the words already
 // heard are inked. Anything else and the caption would run ahead of the audio.
@@ -253,6 +242,11 @@ const seek = (sec) => {
   w.__probe.txFollow();
 };
 
+// Seek into the first line, then look.
+seek(0.5);
+check('the caption shows the line under the playhead', w.document.getElementById('aud-caption-line').textContent.replace(/\s+/g, ' ').trim() === 'the first line', JSON.stringify(w.document.getElementById('aud-caption-line').textContent));
+check('the caption is split into word spans', capWords().length === 3);
+check('the word under the playhead is marked', w.document.querySelectorAll('.aud-cap-w.is-now').length === 1);
 check('only the first word is showing at the top of the line', shown() === 'the', JSON.stringify(shown()));
 check('but the whole line is already laid out', w.document.getElementById('aud-caption-line').textContent.replace(/\s+/g, ' ').trim() === 'the first line');
 seek(1.5);
@@ -271,9 +265,7 @@ check('and it opens on its first word alone', shown() === 'the', JSON.stringify(
 seek(14.9);
 check('by its end the whole line is showing', shown() === 'the second line', JSON.stringify(shown()));
 
-// Clicking a transcript row seeks.
-w.document.querySelectorAll('.aud-tx-seek')[1].click();
-check('clicking a line seeks to it', Number(w.document.getElementById('aud-seek').value) === 13, w.document.getElementById('aud-seek').value);
+seek(13);
 check('the clock follows the seek', w.document.getElementById('aud-current').textContent === '0:13');
 
 // --- 6. sharing a playlist of local files ------------------------------------
@@ -339,9 +331,16 @@ w.__probe.setQueue([w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'talk.mp3' }
 w.__probe.playIndex(0, false);
 await settle();
 
-check('a loaded track starts transcribing on its own', w.__probe.state().txOn === true);
-check('the toggle reflects that without being touched', w.document.getElementById('aud-tx-on').checked === true);
+check('a loaded track does not transcribe itself', w.__probe.state().txOn === false);
 check('nothing is copyable yet', w.document.getElementById('aud-tx-copy').disabled === true);
+
+const arm = (win) => {
+  const box = win.document.getElementById('aud-tx-on');
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change'));
+};
+arm(w);
+check('ticking the toggle starts it', w.__probe.state().txOn === true);
 
 w.__probe.txPump();
 await settle();
@@ -349,7 +348,8 @@ check('a window is posted', posts.length === 1, JSON.stringify(posts.length));
 check('the window is tied to the clip so it can be cached', posts[0].url.includes('clip=' + ID_A), posts[0].url);
 check('the first window starts at zero', /[?&]i=0&start=0\.000/.test(posts[0].url), posts[0].url);
 check('it is sent as WAV', posts[0].init.headers['Content-Type'] === 'audio/wav');
-check('the returned segment is shown', w.document.getElementById('aud-tx-lines').children.length === 1);
+check('the returned segment is kept', w.__probe.state().txSegments.length === 1, String(w.__probe.state().txSegments.length));
+check('and the caption row is opened for it', !w.document.getElementById('aud-caption').classList.contains('hidden'));
 
 // The window the page cut, handed to the real Worker: the two halves have to
 // agree on what a WAV is.
@@ -392,6 +392,7 @@ w = boot('', (url) => {
 w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
+arm(w);
 w.__probe.txPump();
 await settle();
 check('a refused window stops the pump', w.__probe.state().txOn === false);
@@ -402,10 +403,10 @@ check('the reason is passed on to the user', /daily limit/.test(w.document.getEl
 check('a cut lands near the target length', Math.abs(w.__probe.txCut(0) - 12) <= 1.3, String(w.__probe.txCut(0)));
 check('the last window runs to the end', w.__probe.txCut(119) === 120, String(w.__probe.txCut(119)));
 
-// --- 7b. it starts by itself, and can be told not to --------------------------
+// --- 7b. the toggle, and what it remembers -----------------------------------
 
-// The playhead never moves here: the opening is fetched because the track was
-// loaded, not because anything is playing.
+// The playhead never moves here: the opening is fetched because transcription was
+// switched on, not because anything is playing.
 posts = [];
 w = boot('', (url, init) => {
   if (url.includes('/transcript/')) return res({ chunks: [] });
@@ -415,6 +416,13 @@ w = boot('', (url, init) => {
 w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
+check('a fresh visit is not transcribing', w.__probe.state().txOn === false);
+for (let i = 0; i < 3; i++) { w.__probe.txPump(); await settle(); }
+check('and no windows go out unasked', posts.length === 0, String(posts.length));
+
+arm(w);
+check('the toggle turns it on', w.__probe.state().txOn === true);
+check('and that is remembered', w.localStorage.getItem('aud-tx-on') === '1', String(w.localStorage.getItem('aud-tx-on')));
 check('nothing has been played', Number(w.document.getElementById('aud-seek').value) === 0);
 
 for (let i = 0; i < 8; i++) { w.__probe.txPump(); await settle(); }
@@ -433,6 +441,7 @@ posts = [];
 for (let i = 0; i < 4; i++) { w.__probe.txPump(); await settle(); }
 check('no more windows go out', posts.length === 0, String(posts.length));
 check('the text so far is kept', w.__probe.state().txSegments.length > 0);
+check('and stays copyable', w.document.getElementById('aud-tx-copy').disabled === false);
 
 // A new track in the same session honours the choice rather than starting again.
 w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'another.mp3' })], 0);
@@ -441,16 +450,21 @@ await settle();
 check('the next track does not start on its own', w.__probe.state().txOn === false);
 check('and the toggle still reads off', w.document.getElementById('aud-tx-on').checked === false);
 
+// Turned back on, the preference carries across tracks: a playlist is not ticked
+// one track at a time.
 posts = [];
-const toggle2 = w.document.getElementById('aud-tx-on');
-toggle2.checked = true;
-toggle2.dispatchEvent(new w.Event('change'));
+arm(w);
 check('turning it back on starts transcribing', w.__probe.state().txOn === true);
 w.__probe.txPump();
 await settle();
 check('and windows go out again', posts.length === 1, String(posts.length));
 
-// --- 7c. the cache still wins over the auto-start ----------------------------
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'third.mp3' })], 0);
+w.__probe.playIndex(0, false);
+await settle();
+check('the track after it picks the preference up', w.__probe.state().txOn === true);
+
+// --- 7c. the cache still wins over a carried-over preference -----------------
 
 // If the pump began before the lookup landed, txLoadCached would stand down and
 // the clip would be transcribed a second time with every word already in R2.
@@ -460,6 +474,13 @@ w = boot('', (url) => {
   if (url.includes('/transcribe')) { cachePosts++; return res(reply); }
   return res({}, { 'x-clip-name': encodeURIComponent('talk.mp3') });
 });
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'first.mp3' })], 0);
+w.__probe.playIndex(0, false);
+await settle();
+arm(w);
+
+// Now a clip that the Worker already holds a transcript for, loaded with the
+// preference already on so the auto-start and the lookup are racing.
 w.__probe.setQueue([w.__probe.newEntry({ ref: 'clip:' + ID_A, name: 'talk.mp3' })], 0);
 w.__probe.playIndex(0, false);
 await settle();
@@ -467,7 +488,7 @@ st = w.__probe.state();
 check('the cached transcript is adopted', st.txSegments.length === 2, String(st.txSegments.length));
 check('and nothing was posted before it landed', cachePosts === 0, String(cachePosts));
 check('the pump picks up where the cache stops', st.txNext === 24, String(st.txNext));
-check('it is transcribing the rest', st.txOn === true);
+check('and carries on from there', st.txOn === true);
 
 // Copying hands over the whole transcript, not just the line under the playhead.
 let copied = null;
@@ -478,7 +499,7 @@ Object.defineProperty(w.navigator, 'clipboard', {
 w.document.getElementById('aud-tx-copy').click();
 await settle();
 check('the copy button hands over every line', copied === 'the first line\nthe second line', JSON.stringify(copied));
-check('and it says so', w.document.getElementById('aud-tx-note').textContent === 'Copied.');
+check('and it says so beside the toggle', w.document.getElementById('aud-tx-status').textContent === 'Copied.');
 
 // --- 8. which picker did the asking -----------------------------------------
 

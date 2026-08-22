@@ -2504,66 +2504,16 @@ body.light-mode {
   color: #888;
 }
 
-.aud-tx-lines {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  // The transcript scrolls inside itself; the page never grows a screen taller
-  // because a long track was read out.
-  max-height: 260px;
-  overflow-y: auto;
-  border-top: 1px solid #333;
-  border-bottom: 1px solid #333;
-}
-
-.aud-tx-line {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-
-  &:last-child { border-bottom: 0; }
-  &.is-on { background: rgba(108, 182, 255, 0.1); }
-  &.is-on .aud-tx-text { color: #ddd; }
-  &.is-on .aud-tx-at { color: #6cb6ff; }
-}
-
-.aud-tx-seek {
-  width: 100%;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  border: 0;
-  background: none;
-  font-family: inherit;
-  font-size: 14px;
-  text-align: left;
-  padding: 8px 10px;
-  cursor: pointer;
-
-  &:hover .aud-tx-text { color: #fff; }
-}
-
-.aud-tx-at {
-  font-family: monospace;
+// Pushed to the right, like the note row's own aside.
+.aud-tx-tip {
+  margin-left: auto;
   font-size: 11px;
   color: #777;
-  flex: none;
-  min-width: 3em;
-}
 
-.aud-tx-text {
-  color: #aaa;
-  line-height: 1.5;
-}
-
-.aud-tx-foot {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.aud-tx-note {
-  font-size: 12px;
-  color: #888;
+  @media screen and (max-width: 600px) {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
 }
 
 body.light-mode {
@@ -2587,13 +2537,6 @@ body.light-mode {
   .aud-q-btn:hover { background: rgba(0, 0, 0, 0.06); color: #000; }
   .aud-check { color: #666; input { accent-color: #2a7ae2; } }
 
-  .aud-tx-status, .aud-tx-note { color: #666; }
-  .aud-tx-lines { border-color: #e4e4e4; }
-  .aud-tx-line { border-bottom-color: #eee; }
-  .aud-tx-line.is-on { background: rgba(42, 122, 226, 0.07); }
-  .aud-tx-line.is-on .aud-tx-text { color: #222; }
-  .aud-tx-line.is-on .aud-tx-at { color: #2a7ae2; }
-  .aud-tx-at { color: #999; }
-  .aud-tx-text { color: #555; }
-  .aud-tx-seek:hover .aud-tx-text { color: #000; }
+  .aud-tx-status { color: #666; }
+  .aud-tx-tip { color: #888; }
 }
