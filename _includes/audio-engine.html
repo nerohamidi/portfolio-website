@@ -126,6 +126,12 @@
   var MODE_CODES = { simple: 's', pro: 'p', experimental: 'x' };
   var SIMPLE_PITCHES = [-12, -5, 0, 5, 12];
 
+  // Whether simple mode draws the signal in a box or across the whole window.
+  // Remembered the same way and for the same reason the mode is: it is about who
+  // is looking rather than about the sound, so it never goes in a share link --
+  // a link opens in whatever the person receiving it chose, not the sender.
+  var IMMERSIVE_STORE = 'aud-immersive';
+
   // The delay line is allocated once at its longest, and the slider moves a
   // read pointer inside it. A DelayNode cannot grow after it is made.
   // A shade over what the sliders can ask for: delayTime is clamped to the
@@ -190,7 +196,7 @@
     'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip',
     'aud-mode', 'aud-mode-simple', 'aud-mode-pro', 'aud-mode-lab',
     'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
-    'aud-simple-tx', 'aud-simple-note',
+    'aud-simple-tx', 'aud-simple-note', 'aud-simple-share', 'aud-simple-full',
     'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
     'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
     'aud-target', 'aud-target-chips',
@@ -1387,8 +1393,11 @@
     var dpr = window.devicePixelRatio || 1;
     var rect = el['aud-canvas'].getBoundingClientRect();
     if (!rect.width) return;
-    el['aud-canvas'].width = rect.width * dpr;
-    el['aud-canvas'].height = rect.height * dpr;
+    // Rounded rather than left as a float. A canvas truncates what it is given,
+    // so a box 380.5 px wide read back as 380 while the check in draw() rounded
+    // to 381, and the two disagreed on every frame.
+    el['aud-canvas'].width = Math.round(rect.width * dpr);
+    el['aud-canvas'].height = Math.round(rect.height * dpr);
     ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   window.addEventListener('resize', sizeCanvas);
@@ -1613,7 +1622,11 @@
     var w = rect.width;
     var h = rect.height;
 
-    if (w && (el['aud-canvas'].width !== Math.round(w * (window.devicePixelRatio || 1)))) sizeCanvas();
+    // Both dimensions. Width alone missed the two cases that only move the other
+    // one: turning the immersive canvas on, and a phone hiding its address bar.
+    var dpr = window.devicePixelRatio || 1;
+    if (w && (el['aud-canvas'].width !== Math.round(w * dpr) ||
+              el['aud-canvas'].height !== Math.round(h * dpr))) sizeCanvas();
 
     ctx2d.clearRect(0, 0, w, h);
 
@@ -2058,6 +2071,9 @@
 
     el['aud-echo-on'].classList.toggle('is-on', r.echoOn);
     el['aud-echo-on'].setAttribute('aria-pressed', r.echoOn ? 'true' : 'false');
+    // The switch sits beside a heading that already says which stage it is, so
+    // the word on it is the state. The name it answers to stays on aria-label.
+    el['aud-echo-on'].textContent = r.echoOn ? 'On' : 'Off';
     el['aud-echo-params'].classList.toggle('hidden', !r.echoOn);
     el['aud-echo-time'].value = r.echoMs;
     el['aud-echo-fb'].value = r.echoFb;
@@ -2068,6 +2084,7 @@
 
     el['aud-rev-on'].classList.toggle('is-on', r.revOn);
     el['aud-rev-on'].setAttribute('aria-pressed', r.revOn ? 'true' : 'false');
+    el['aud-rev-on'].textContent = r.revOn ? 'On' : 'Off';
     el['aud-rev-params'].classList.toggle('hidden', !r.revOn);
     el['aud-rev-decay'].value = r.revSec;
     el['aud-rev-pre'].value = r.revPreMs;
@@ -2627,6 +2644,47 @@
       })(chips[i]);
     }
   })();
+
+  // --- the box round the signal, or none --------------------------------------
+  //
+  // Off unless it is asked for. A rectangle is what a player looks like and needs
+  // no explaining; a visualiser across the whole window is a choice, and a first
+  // visit is not the moment to make it for someone.
+  //
+  // All this does is put a class on the body and measure the canvas again. The
+  // stylesheet takes the canvas out of the player's flow and pins it to the
+  // window; the analyser feeding it, the loop drawing it and every control around
+  // it are untouched, which is why this can be pressed mid-track and the only
+  // thing that happens is the rectangle changes size.
+
+  var immersive = false;
+
+  function setImmersive(on, remember) {
+    immersive = Boolean(on);
+    document.body.classList.toggle('aud-immersive', immersive);
+
+    var btn = el['aud-simple-full'];
+    if (btn) {
+      btn.setAttribute('data-state', immersive ? 'on' : 'off');
+      btn.classList.toggle('is-on', immersive);
+      btn.setAttribute('aria-pressed', immersive ? 'true' : 'false');
+      // The words are off the screen in this mode, not gone: what the button
+      // will do next is still on the button, for a screen reader and for anyone
+      // who hovers to check.
+      var says = immersive ? 'Put the signal back in its box' : 'Fill the window with the signal';
+      btn.setAttribute('aria-label', says);
+      btn.setAttribute('title', says);
+    }
+
+    if (remember) {
+      try { window.localStorage.setItem(IMMERSIVE_STORE, immersive ? '1' : '0'); } catch (e) {}
+    }
+    // A different rectangle on either side of this, and the canvas is sized from
+    // its box, so it has to be measured again now the class has landed.
+    sizeCanvas();
+  }
+
+  el['aud-simple-full'].addEventListener('click', function() { setImmersive(!immersive, true); });
 
   // --- the chain strip -------------------------------------------------------
   //
@@ -4406,6 +4464,19 @@
     });
   });
 
+  // Where a finished link goes when something other than the Pro panel asked for
+  // it. Pro's ending is the box under its button and it wants nothing back;
+  // simple mode has no box, so it leaves a hand-off here and gets the link -- or
+  // the reason there is not one -- as soon as either exists. One at a time, and
+  // cleared as it fires, so a share that ends twice cannot report twice.
+  var shareHandoff = null;
+
+  function handOffShare(url, why) {
+    var fn = shareHandoff;
+    shareHandoff = null;
+    if (fn) fn(url, why);
+  }
+
   function showLink(url, hash) {
     el['aud-share-link'].value = url;
     el['aud-share-out'].classList.remove('hidden');
@@ -4414,6 +4485,7 @@
     // The hash, not the card's URL: the address bar should keep showing the state
     // this page is actually in, which is also what makes a reload survive.
     history.replaceState(null, '', '#' + hash);
+    handOffShare(url, null);
   }
 
   var clipTtlDays = 30;
@@ -4503,14 +4575,19 @@
       // Whatever went up already keeps its ref, so a retry only sends the rest.
       el['aud-share-status'].textContent = (err.message || 'Upload failed.') +
         (at ? ' The ' + at + ' before it are already uploaded.' : '');
+      handOffShare(null, err.message || 'Upload failed.');
     });
   }
 
-  el['aud-share-btn'].addEventListener('click', function() {
+  // The share itself, out of its listener so simple mode's symbol can press the
+  // same one. `then` is the hand-off described above: Pro passes nothing and
+  // reads the box, simple mode passes a function and never shows a box at all.
+  function runShare(then) {
+    shareHandoff = then || null;
     var pending = queue.filter(function(entry) { return entry.file && !entry.ref; });
 
     if (!pending.length) {
-      if (!queue.length) return;
+      if (!queue.length) { handOffShare(null, 'Nothing loaded yet.'); return; }
       finishShare(queue.length > 1
         ? 'Anyone who opens this gets all ' + queue.length + ' tracks with your settings.'
         : (queue[0].ref === 'demo'
@@ -4521,17 +4598,103 @@
 
     el['aud-share-btn'].disabled = true;
     uploadRest(pending, 0);
-  });
+  }
+
+  el['aud-share-btn'].addEventListener('click', function() { runShare(null); });
+
+  // One clipboard path for both modes. The old selection trick needs something
+  // rendered to select, and the box in the share panel is inside a section simple
+  // mode hides, so the fallback brings its own field rather than reaching for
+  // that one.
+  function copyText(text, ok, fail) {
+    function old() {
+      var box = document.createElement('textarea');
+      box.value = text;
+      box.setAttribute('readonly', '');
+      box.style.position = 'fixed';
+      box.style.top = '-1000px';
+      document.body.appendChild(box);
+      var won = false;
+      try { box.select(); won = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(box);
+      if (won) ok(); else if (fail) fail();
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, old);
+    } else {
+      old();
+    }
+  }
 
   el['aud-share-copy'].addEventListener('click', function() {
+    // Selected as well as copied, so the box visibly holds what just went to the
+    // clipboard.
     el['aud-share-link'].select();
-    function ok() { el['aud-share-status'].textContent = 'Copied.'; }
-    function fallback() { try { document.execCommand('copy'); ok(); } catch (e) {} }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(el['aud-share-link'].value).then(ok, fallback);
-    } else {
-      fallback();
+    copyText(el['aud-share-link'].value, function() {
+      el['aud-share-status'].textContent = 'Copied.';
+    });
+  });
+
+  // --- simple mode's share ----------------------------------------------------
+  //
+  // The same share, with nothing around it. No title, no note and no password is
+  // the case finishShare already treats as a plain link with the whole state in
+  // its hash, so there is no second link format here and nothing new is built: a
+  // link made in this mode and a link made in Pro open the same page in the same
+  // state.
+  //
+  // The ending is what differs. There is no box to put a link in, so it goes to
+  // the platform's own share sheet where there is one -- which on a phone is the
+  // thing being reached for anyway -- and to the clipboard where there is not.
+  // The chip says which of the four states it is in with a glyph, because this
+  // mode has no words to say it in.
+
+  var shareChipTimer = 0;
+  var SHARE_CHIP_SAYS = {
+    idle: 'Make a link to this',
+    busy: 'Making the link\u2026',
+    done: 'Link ready',
+    fail: 'That did not work \u2014 press to try again'
+  };
+
+  // `why` is the reason a share ended the way it did, which is the one thing a
+  // glyph genuinely cannot carry. It goes on the label rather than being dropped,
+  // so a hover and a screen reader both get "The clip library is full right now"
+  // instead of a warning triangle and nothing else.
+  function shareChip(state, why) {
+    var chip = el['aud-simple-share'];
+    if (!chip) return;
+    var says = (state === 'fail' && why) ? why + ' Press to try again.' : SHARE_CHIP_SAYS[state];
+    chip.setAttribute('data-state', state);
+    chip.setAttribute('aria-label', says);
+    chip.setAttribute('title', says);
+    chip.disabled = state === 'busy';
+    if (shareChipTimer) { clearTimeout(shareChipTimer); shareChipTimer = 0; }
+    // Long enough to read a tick, short enough that the button is back to being a
+    // button before anyone wants it again.
+    if (state === 'done' || state === 'fail') {
+      shareChipTimer = setTimeout(function() { shareChip('idle'); }, 2600);
     }
+  }
+
+  el['aud-simple-share'].addEventListener('click', function() {
+    if (el['aud-simple-share'].disabled || !queue.length) return;
+    shareChip('busy');
+    runShare(function(url, why) {
+      if (!url) { shareChip('fail', why); return; }
+      // navigator.share is a phone's own sheet and does not exist on most
+      // desktops; the clipboard is the fallback there. A sheet that was opened
+      // and dismissed is not a failure either, so that falls back rather than
+      // reporting one -- the link exists, and it should end up somewhere.
+      if (navigator.share) {
+        navigator.share({ url: url }).then(
+          function() { shareChip('done'); },
+          function() { copyText(url, function() { shareChip('done'); }, function() { shareChip('fail'); }); }
+        );
+      } else {
+        copyText(url, function() { shareChip('done'); }, function() { shareChip('fail'); });
+      }
+    });
   });
 
   // --- boot ------------------------------------------------------------------
@@ -4573,6 +4736,14 @@
     // someone opening a link than someone building one, and the switch out of it
     // is the one control that shows in every mode.
     setMode(MODES[saved] || 'simple', false);
+  })();
+
+  (function restoreImmersive() {
+    var saved = null;
+    try { saved = window.localStorage.getItem(IMMERSIVE_STORE); } catch (e) {}
+    // Off unless it was turned on, which is the answer that needs no explaining:
+    // a player is a box with a signal in it until someone says otherwise.
+    setImmersive(saved === '1', false);
   })();
 
   try {

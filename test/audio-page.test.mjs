@@ -103,6 +103,9 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     },
     txEnsureBand: txEnsureBand,
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
+    setImmersive: setImmersive,
+    immersive: function() { return immersive; },
+    runShare: runShare,
   };
   sizeCanvas();
   draw();
@@ -1799,12 +1802,26 @@ check('switching to pro takes the class off the body', w.__probe.mode() === 'pro
 check('and the pro panel is already on what simple mode built',
   w.document.getElementById('aud-echo-on').classList.contains('is-on') &&
   w.document.getElementById('aud-rev-on').classList.contains('is-on'));
+
+// A stage switch sits beside a heading that already names the stage, so the word
+// on the switch is its state and the name it answers to is on the aria-label.
+// The word is written by the same sync as the class, which is what lets a flip
+// made in simple mode arrive here already reading On.
+check('the switch says the state rather than the stage',
+  w.document.getElementById('aud-echo-on').textContent === 'On' &&
+  w.document.getElementById('aud-rev-on').textContent === 'On',
+  w.document.getElementById('aud-echo-on').textContent);
+check('and still answers to the stage',
+  w.document.getElementById('aud-echo-on').getAttribute('aria-label') === 'Echo' &&
+  w.document.getElementById('aud-rev-on').getAttribute('aria-label') === 'Reverb');
 check('nothing was rebuilt to get there', w.__probe.graph().master.echo.output.out[0] === w.__probe.graph().master.rev.input);
 
 // The pro panel is the other half of the same switch.
 press(w, 'aud-echo-on');
 check('turning it off in pro turns it off in simple too', w.__probe.racks().master.echoOn === false &&
   !w.document.getElementById('aud-simple-echo').classList.contains('is-on'));
+check('and the word on it goes back to Off', w.document.getElementById('aud-echo-on').textContent === 'Off',
+  w.document.getElementById('aud-echo-on').textContent);
 
 w = boot(DEMO2, () => res({ chunks: [] }));
 await settle();
@@ -2186,6 +2203,234 @@ await settle();
 check('the end of one track in a playlist is not the end of the playlist',
   w.document.getElementById('aud-play').getAttribute('aria-label') !== 'Play again',
   w.document.getElementById('aud-play').getAttribute('aria-label'));
+
+// --- 18. the box round the signal, or none -----------------------------------
+//
+// jsdom has no layout, so what the canvas actually measures is not a question it
+// can answer. What it can answer is the half that decides it: which class is on
+// the body, what the button says it will do next, and whether the answer is still
+// there on the next visit.
+
+persisted.delete('aud-mode');
+persisted.delete('aud-immersive');
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+
+const full = () => w.document.getElementById('aud-simple-full');
+
+check('a first visit keeps the signal in its box', w.__probe.immersive() === false &&
+  !w.document.body.classList.contains('aud-immersive'));
+check('and the button offers the other one', full().getAttribute('data-state') === 'off' &&
+  full().getAttribute('aria-pressed') === 'false');
+check('saying so without putting a word on the screen',
+  /fill the window/i.test(full().getAttribute('aria-label')) && full().textContent.trim() === '',
+  JSON.stringify(full().getAttribute('aria-label')));
+
+full().click();
+check('pressing it fills the window', w.__probe.immersive() === true &&
+  w.document.body.classList.contains('aud-immersive'));
+check('and the button now offers the box back', full().getAttribute('data-state') === 'on' &&
+  full().getAttribute('aria-pressed') === 'true' &&
+  /back in its box/i.test(full().getAttribute('aria-label')), full().getAttribute('aria-label'));
+
+check('the choice is not in the link', !/(^|&)(im|full)=/.test(w.__probe.encodeState()),
+  w.__probe.encodeState());
+
+// Pro and experimental have panels that need the page, so the stylesheet only
+// acts on this under .aud-simple -- but the class stays put, so coming back finds
+// it where it was left.
+press(w, 'aud-mode-pro');
+check('leaving simple mode does not throw the choice away',
+  w.document.body.classList.contains('aud-immersive'));
+press(w, 'aud-mode-simple');
+check('and coming back finds it', w.__probe.immersive() === true);
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+check('the choice outlives the page', w.__probe.immersive() === true &&
+  w.document.body.classList.contains('aud-immersive'));
+
+full().click();
+check('and turning it off is remembered too', w.__probe.immersive() === false);
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+check('so the next visit opens in a box again', w.__probe.immersive() === false);
+
+// --- 19. sharing from simple mode --------------------------------------------
+//
+// The same share as Pro's, ending somewhere else. What is checked here is that it
+// is the same one -- one link format, one upload path -- and that the chip says
+// which of its four states it is in without a word on it.
+
+const shareBtn = () => w.document.getElementById('aud-simple-share');
+
+// A demo-only queue has nothing to upload, so the link is the page's own URL with
+// the state in its hash and no request is made at all.
+let sheeted = [];
+let clipped = [];
+const simpleShareBoot = () => {
+  const win = boot(DEMO2, () => res({ chunks: [] }));
+  Object.defineProperty(win.navigator, 'clipboard', {
+    value: { writeText: (t) => { clipped.push(t); return Promise.resolve(); } },
+    configurable: true,
+  });
+  return win;
+};
+
+sheeted = []; clipped = [];
+w = simpleShareBoot();
+await settle();
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+
+check('the share chip is a symbol, not a word', shareBtn().textContent.trim() === '' &&
+  /make a link/i.test(shareBtn().getAttribute('aria-label')), shareBtn().getAttribute('aria-label'));
+
+// Something switched on, so the link has something to carry that a bare one
+// would not.
+press(w, 'aud-simple-rev');
+shareBtn().click();
+await settle();
+check('with no share sheet the link goes to the clipboard', clipped.length === 1, JSON.stringify(clipped));
+check('and it is a link to this page in this state',
+  clipped[0] && clipped[0].includes('/playroom/audio/#') && /(^|&|#)v=3/.test(clipped[0]), String(clipped[0]));
+check('carrying what was built here, the same as pro would',
+  /(^|&)rv=/.test(clipped[0]) && /(^|&)vol=/.test(clipped[0]) && /(^|&)t=d/.test(clipped[0]),
+  String(clipped[0]));
+check('the chip says it worked', shareBtn().getAttribute('data-state') === 'done' &&
+  /link ready/i.test(shareBtn().getAttribute('aria-label')));
+
+// The link is the same one the Pro panel would have put in its box.
+check('and the box in pro holds the same link', w.document.getElementById('aud-share-link').value === clipped[0],
+  w.document.getElementById('aud-share-link').value);
+
+// Where the platform has a sheet of its own, that is the ending -- on a phone it
+// is what people are reaching for anyway.
+sheeted = []; clipped = [];
+w = simpleShareBoot();
+await settle();
+w.navigator.share = (data) => { sheeted.push(data); return Promise.resolve(); };
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+shareBtn().click();
+await settle();
+check('a share sheet gets the link instead', sheeted.length === 1 && clipped.length === 0 &&
+  sheeted[0].url.includes('#'), JSON.stringify(sheeted));
+check('and the chip says it worked', shareBtn().getAttribute('data-state') === 'done');
+
+// A sheet that was opened and dismissed is not a failure. The link exists, and it
+// should end up somewhere.
+sheeted = []; clipped = [];
+w = simpleShareBoot();
+await settle();
+w.navigator.share = () => Promise.reject(new Error('AbortError'));
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+shareBtn().click();
+await settle();
+check('a dismissed sheet falls back to the clipboard', clipped.length === 1, JSON.stringify(clipped));
+check('rather than reporting a failure', shareBtn().getAttribute('data-state') === 'done');
+
+// A local file goes up the same way it does from Pro, and the chip is out of
+// action while it does.
+uploads = 0;
+clipped = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.endsWith('/clip') && init && init.method === 'POST') {
+    uploads++;
+    return res({ id: ID_A, name: 'one.mp3', expiresInDays: 30 });
+  }
+  return res({}, {});
+});
+Object.defineProperty(w.navigator, 'clipboard', {
+  value: { writeText: (t) => { clipped.push(t); return Promise.resolve(); } },
+  configurable: true,
+});
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ name: 'one.mp3', file: { name: 'one.mp3' } })], 0);
+shareBtn().click();
+check('the chip is out of action while the upload runs',
+  shareBtn().getAttribute('data-state') === 'busy' && shareBtn().disabled === true);
+await settle();
+check('the file went up the same route pro uses', uploads === 1, String(uploads));
+check('and the link that comes back names the clip', clipped[0] && clipped[0].includes(ID_A), String(clipped[0]));
+
+// An upload that fails has to reach the chip, or the only sign of it would be a
+// status line in a panel this mode does not show.
+clipped = [];
+w = boot('', (url, init) => {
+  if (url.includes('/transcript/')) return res({ chunks: [] });
+  if (url.endsWith('/clip') && init && init.method === 'POST') {
+    return Promise.resolve({ ok: false, status: 507, headers: { get: () => null },
+      json: () => Promise.resolve({ error: 'The clip library is full right now.' }) });
+  }
+  return res({}, {});
+});
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ name: 'one.mp3', file: { name: 'one.mp3' } })], 0);
+shareBtn().click();
+await settle();
+check('a failed upload shows on the chip', shareBtn().getAttribute('data-state') === 'fail',
+  shareBtn().getAttribute('data-state'));
+// The one thing a glyph cannot carry is why. It goes on the label instead of
+// being thrown away, so a hover and a screen reader get the reason.
+check('and the reason rides on the label', /full right now/.test(shareBtn().getAttribute('aria-label')) &&
+  /try again/i.test(shareBtn().getAttribute('aria-label')), shareBtn().getAttribute('aria-label'));
+check('nothing was copied', clipped.length === 0, JSON.stringify(clipped));
+check('and the chip is pressable again', shareBtn().disabled === false);
+
+// --- 20. words off the screen, not gone --------------------------------------
+//
+// Simple mode is symbols. Every one of them still says what it does in an
+// aria-label, and the controls that appear in the other modes keep the word in
+// the markup for those.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+
+const named = (sel) => {
+  const nodes = [...w.document.querySelectorAll(sel)];
+  return { n: nodes.length, bad: nodes.filter((b) => !(b.getAttribute('aria-label') || '').trim()) };
+};
+let glyphs = named('.aud-simple-bar .aud-simple-chip, .aud-simple-bar label[for="aud-simple-file"]');
+check('every control in the simple bar names itself', glyphs.n >= 9 && glyphs.bad.length === 0,
+  glyphs.n + ' controls, unnamed: ' + glyphs.bad.map((b) => b.id || b.className).join(','));
+
+glyphs = named('.aud-mode-btn');
+check('and so does each way in', glyphs.n === 3 && glyphs.bad.length === 0,
+  glyphs.bad.map((b) => b.id).join(','));
+
+// The icon-only chips carry a glyph and nothing else; the semitones keep their
+// numerals, because a pitch is a quantity and five arrows say which way but never
+// how far.
+const iconOnly = [...w.document.querySelectorAll('.aud-simple-icon')];
+check('the icon chips are drawn, not written', iconOnly.length >= 5 &&
+  iconOnly.every((b) => b.textContent.trim() === '' && b.querySelector('svg')),
+  String(iconOnly.length));
+check('and the semitones keep their numbers',
+  [...w.document.querySelectorAll('.aud-simple-st')].map((b) => b.textContent.trim()).join(' ') ===
+  '\u221212 \u22125 0 +5 +12',
+  [...w.document.querySelectorAll('.aud-simple-st')].map((b) => b.textContent.trim()).join(' '));
+
+// The consent line is the one thing here that is still a sentence, and it has to
+// be, because a symbol cannot say where the audio is going.
+check('the sentence that cannot be a symbol is still a sentence',
+  /sends short windows/.test(w.document.getElementById('aud-simple-note').textContent),
+  w.document.getElementById('aud-simple-note').textContent);
+
+// Pro and experimental are unchanged: the words are in the markup beside the
+// glyphs, and the stylesheet picks one.
+press(w, 'aud-mode-pro');
+check('the words are still there for the other modes',
+  [...w.document.querySelectorAll('.aud-mode-btn .aud-word')].map((n) => n.textContent).join('|') ===
+  'Simple|Pro|Experimental',
+  [...w.document.querySelectorAll('.aud-mode-btn .aud-word')].map((n) => n.textContent).join('|'));
+check('and the empty state keeps both halves too',
+  Boolean(w.document.querySelector('label[for="aud-file"] .aud-word')) &&
+  Boolean(w.document.querySelector('label[for="aud-file"] .aud-sym')));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -1854,6 +1854,13 @@ body.light-mode {
 .aud-step-t { font-size: 14px; font-weight: 600; }
 .aud-step-d { font-size: 12px; color: #888; line-height: 1.4; }
 
+// The strip is for someone who has just arrived and does not yet know what the
+// page is for. Once a track is loaded it has been read or it never will be, and
+// what is wanted above the desk is the desk. The empty state going away is the
+// signal, since that is what a loaded track already hides -- simple mode hides
+// the strip outright, so this is the rule for the other two.
+.aud:has(#aud-drop.hidden) .aud-steps { display: none; }
+
 .aud-note {
   padding: 12px 16px;
   border-radius: 10px;
@@ -2104,11 +2111,36 @@ body.light-mode {
   gap: 12px;
 }
 
-.aud-panel-head-sep {
-  border-top: 1px solid #333;
-  padding-top: 14px;
-  margin-top: 2px;
+// One stage of the chain -- filter, echo, reverb, pitch, display. The header is
+// a single row: the stage's name and what it does on the left, and on the right
+// the one control that belongs to the stage as a whole, which is its switch
+// where it has one and its read-out where it does not. What used to be here was
+// a heading, then a sentence, then a lone pill on a line of its own carrying the
+// same word as the heading, per stage, five times over.
+.aud-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
+
+.aud-stage-sep {
+  border-top: 1px solid #333;
+  padding-top: 16px;
+}
+
+.aud-stage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+// The hint wraps; the switch beside it never shrinks below its own word.
+.aud-stage-label { min-width: 0; }
+.aud-stage-sw { flex: none; }
+
+// The stage already spaces its own children, so the sliders do not add to it.
+.aud-stage .aud-params { padding-top: 0; }
 
 .aud-panel-title {
   margin: 0;
@@ -2232,7 +2264,9 @@ body.light-mode {
 
 .aud-field-name {
   flex: none;
-  width: 84px;
+  // Wide enough for "Delete password", which is held on one line by a
+  // non-breaking space and so cannot wrap its way out of a narrower column.
+  width: 106px;
   padding-top: 11px;
   font-size: 13px;
   color: #aaa;
@@ -2261,7 +2295,7 @@ body.light-mode {
 }
 
 .aud-field-hint {
-  margin: -2px 0 4px 94px;
+  margin: -2px 0 4px 116px;
   font-size: 12px;
   color: #777;
   line-height: 1.5;
@@ -2397,7 +2431,7 @@ body.light-mode {
 
   .aud-player, .aud-panel { border-color: #e0e0e0; background: #fafafa; }
   .aud-canvas { background: rgba(0, 0, 0, 0.04); }
-  .aud-panel-head-sep { border-top-color: #e4e4e4; }
+  .aud-stage-sep { border-top-color: #e4e4e4; }
   .aud-panel-title { color: #777; }
   .aud-time, .aud-vol-val { color: #777; }
   .aud-vol-icon { fill: #999; }
@@ -2506,10 +2540,12 @@ body.light-mode {
   }
 }
 
+// The speed a pitch shift implies, and the way back to 1.00x, both moved up into
+// the stage header. They are what the stage as a whole is doing, so they belong
+// beside its name rather than stranded under its one slider.
 .aud-pitch-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
 }
 
@@ -3096,6 +3132,95 @@ body.light-mode {
   .aud-stem-name { flex: 1; }
 }
 
+// --- words and symbols ---
+//
+// Controls that appear in more than one mode carry both: the word for Pro and
+// Experimental, the glyph for Simple. Both are in the markup all the time and
+// the body class picks one, so crossing between modes swaps a `display` and
+// nothing else -- no text is rewritten, no node is built, and nothing that is
+// playing notices.
+//
+// Every glyph-only control names itself in an aria-label and a title. Hiding a
+// word is a decision about the screen; it is not a decision to stop saying what
+// a button does.
+
+.aud-sym { display: none; }
+
+// Only the svg element itself, never its children: a `fill` or `stroke`
+// attribute on a child is what makes the solid parts of an icon solid, and a
+// rule matching `svg *` would outrank it and flatten every icon to an outline.
+.aud-sym,
+.aud-simple-icon > svg,
+.aud-simple-tag > svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.aud-simple {
+  .aud-sym { display: block; }
+  .aud-word { display: none; }
+
+  // A glyph has no baseline to sit on, so anything holding one becomes a box
+  // that centres its contents.
+  .aud-mode-btn,
+  .aud-drop-actions .aud-btn,
+  .aud-simple-chip,
+  .aud-simple-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  // Square, and never below the 44px a fingertip needs. The semitone chips keep
+  // their own width, because a numeral is what they are for.
+  .aud-simple-icon {
+    min-width: 46px;
+    min-height: 46px;
+    padding: 12px;
+  }
+
+  .aud-mode-btn { padding: 7px 14px; }
+  .aud-drop-actions .aud-btn { padding: 14px; }
+}
+
+// The share chip is a four-state button drawn four times: which svg shows is the
+// whole of the state, so nothing has to be built or thrown away as it moves
+// between them.
+.aud-simple-share > svg,
+.aud-simple-full > svg { display: none; }
+
+.aud-simple-share[data-state="idle"] > .aud-sym-idle,
+.aud-simple-share[data-state="busy"] > .aud-sym-busy,
+.aud-simple-share[data-state="done"] > .aud-sym-done,
+.aud-simple-share[data-state="fail"] > .aud-sym-fail,
+.aud-simple-full[data-state="off"] > .aud-sym-off,
+.aud-simple-full[data-state="on"] > .aud-sym-on { display: block; }
+
+.aud-simple-share[data-state="busy"] {
+  cursor: default;
+  // A button that cannot be pressed should not light up under the pointer.
+  &:hover { border-color: #555; color: #bbb; }
+  > .aud-sym-busy { animation: aud-spin 0.9s linear infinite; }
+}
+
+// Green for a link that exists, amber for one that does not, both for the couple
+// of seconds it takes to read them. `is-on` blue is taken: it means a stage that
+// is switched on, and a share is not a stage.
+.aud-simple-share[data-state="done"] { border-color: #4cc38a; color: #4cc38a; }
+.aud-simple-share[data-state="fail"] { border-color: #e0a040; color: #e0a040; }
+
+@keyframes aud-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .aud-simple-share[data-state="busy"] > .aud-sym-busy { animation: none; }
+}
+
 // --- simple mode's controls ---
 //
 // Present in the markup either way and only ever shown by the class below, so
@@ -3134,6 +3259,8 @@ body.light-mode {
 }
 
 .aud-simple-tag {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -3161,7 +3288,12 @@ body.aud-simple {
   .aud-tx-bar,
   .aud-note-row,
   .aud-bg-bar,
-  .aud-drop-fine { display: none !important; }
+  .aud-drop-fine,
+  // The last two sentences on the screen. The volume readout says in digits what
+  // the slider beside it is already drawing, and the drop lead is a caption on a
+  // picture of a waveform above two buttons that say the same thing again.
+  .aud-drop-lead,
+  .aud-vol-val { display: none !important; }
 
   // The caption stays. Words appearing under the visualiser in time with the
   // track are one of the better reasons to be looking at this page, and hiding
@@ -3292,6 +3424,7 @@ body.aud-simple {
     .aud { padding-top: 54px; }
     .aud-canvas { height: clamp(130px, 26vh, 220px); }
     .aud-simple-chip { padding: 9px 16px; font-size: 13px; }
+    .aud-simple-icon { min-width: 44px; min-height: 44px; padding: 11px; }
     .aud-simple-st { min-width: 46px; padding: 9px 8px; }
 
     // The buttons are smaller here, so the offsets that hold them off the centre
@@ -3318,6 +3451,121 @@ body.aud-simple {
 }
 
 body.light-mode.aud-simple .aud { background: #ffffff; }
+
+// ---------------------------------------------------------------------------
+// Immersive
+//
+// Off unless it is asked for, and remembered per browser once it is. A box round
+// the signal is what a player looks like and needs no explaining; a visualiser
+// across the whole window is a thing to choose, not a thing to be handed on a
+// first visit.
+//
+// It is one class, and it moves one element. The canvas leaves the player's flow
+// and is pinned to the window behind everything; the player then collapses to
+// its controls and centres them over it. The analyser, the draw loop and every
+// control are the same ones either way, so turning it on mid-track resizes a
+// rectangle and interrupts nothing.
+//
+// Only under .aud-simple: pro and experimental have panels that need the page,
+// and the class is left on the body across a mode switch so coming back finds it
+// where it was.
+// ---------------------------------------------------------------------------
+
+body.aud-simple.aud-immersive {
+  // Still needed, and darker: it is the ground the signal is drawn on now rather
+  // than a page behind a box.
+  .aud { background: #141414; }
+
+  // The canvas is a child of the player rather than a sibling, which decides the
+  // whole arrangement below. A background on the player would paint behind every
+  // one of its children, the canvas included, so the ground under the controls
+  // cannot be one -- it is a pseudo-element sitting between the two.
+  //
+  // Three layers, stated as three z-indexes, inside a stacking context of the
+  // player's own. Without the context the canvas would be a positioned box among
+  // in-flow ones and would paint over the transport, which is exactly the sort of
+  // thing that looks fine until a spectrum is loud enough to hide a play button.
+  .aud-player {
+    position: relative;
+    z-index: 1;
+    padding: 30px 20px 20px;
+  }
+
+  .aud-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    background: none;
+    z-index: 0;
+    // Nothing behind it is clickable, and the scrubber sits on top of it.
+    pointer-events: none;
+  }
+
+  // A soft ground under the controls and nowhere else, because a transport drawn
+  // in thin outlines over a loud spectrum is not readable.
+  //
+  // The radii are 50% and no more, which is the whole trick: an ellipse that
+  // wide reaches zero exactly on the edges of its own box, so the scrim ends by
+  // fading out rather than by being clipped. Anything larger stays part-opaque
+  // where the box stops and draws a hard rectangle -- which is the black box this
+  // mode exists to be rid of.
+  //
+  // The box is a little larger than the controls it covers, so the fade has
+  // somewhere to happen. Twelve pixels either side, which is inside the smallest
+  // padding .aud ever has, so it can never push the page sideways.
+  .aud-player::before {
+    content: '';
+    position: absolute;
+    inset: -24px -12px;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 50% 50% at 50% 54%,
+      rgba(16, 16, 16, 0.92) 0%,
+      rgba(16, 16, 16, 0.86) 38%,
+      rgba(16, 16, 16, 0.5) 68%,
+      rgba(16, 16, 16, 0) 100%);
+  }
+
+  .aud-player > *:not(.aud-canvas) { position: relative; z-index: 2; }
+
+  // Outside the player, and above it: the switch out of this mode and the
+  // sender's own words are read against whatever the spectrum is doing behind
+  // them.
+  .aud-mode,
+  .aud-note {
+    position: relative;
+    z-index: 2;
+  }
+
+  .aud-mode {
+    background: rgba(16, 16, 16, 0.72);
+    backdrop-filter: blur(6px);
+  }
+
+  .aud-caption-line { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85); }
+
+  @media screen and (max-width: 600px) {
+    // Less window to spare, so the ground under the controls is tighter.
+    .aud-player { padding: 22px 12px 16px; }
+  }
+}
+
+body.light-mode.aud-simple.aud-immersive {
+  .aud { background: #ffffff; }
+
+  .aud-player::before {
+    background: radial-gradient(ellipse 50% 50% at 50% 54%,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.9) 38%,
+      rgba(255, 255, 255, 0.58) 68%,
+      rgba(255, 255, 255, 0) 100%);
+  }
+
+  .aud-mode { background: rgba(255, 255, 255, 0.78); }
+  .aud-caption-line { text-shadow: 0 1px 10px rgba(255, 255, 255, 0.9); }
+}
 
 // --- light mode ---
 
@@ -3360,6 +3608,10 @@ body.light-mode {
     &:hover { border-color: #888; color: #111; }
     &.is-on { background: rgba(42, 122, 226, 0.12); border-color: #2a7ae2; color: #2a7ae2; }
   }
+
+  // The two share endings, darkened enough to read on white.
+  .aud-simple-share[data-state="done"] { border-color: #1f8f5f; color: #1f8f5f; }
+  .aud-simple-share[data-state="fail"] { border-color: #b8791a; color: #b8791a; }
 
   .aud-simple-tag { color: #888; }
 }
