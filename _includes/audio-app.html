@@ -29,7 +29,7 @@
       <input type="file" id="aud-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
       <button class="aud-btn" id="aud-demo" type="button">Try the demo</button>
     </div>
-    <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB each &middot; drop several to build a playlist &middot; nothing leaves your browser until you make a link or turn on the transcript</p>
+    <p class="aud-drop-fine">MP3 and WAV, plus OGG, FLAC, M4A and AIFF &middot; up to 12&nbsp;MB each &middot; drop several to build a playlist &middot; short windows go out for the transcript unless you switch it off, and nothing else leaves your browser until you make a link</p>
   </div>
 
   <!-- Player -->
@@ -104,15 +104,18 @@
   <section class="aud-panel aud-tx hidden" id="aud-tx" aria-label="Transcript">
     <div class="aud-panel-head">
       <h2 class="aud-panel-title">Transcript</h2>
-      <p class="aud-panel-hint">Whisper reads short windows just ahead of the playhead, so the words arrive as you hear them. It listens to the track itself, not to the filtered output, and only the part being transcribed leaves your browser.</p>
+      <p class="aud-panel-hint">Whisper reads short windows just ahead of the playhead, so the words arrive as you hear them. It starts on its own and fetches the first half minute up front, so there are words ready before you press play. It listens to the track itself, not to the filtered output, and only the part being transcribed leaves your browser.</p>
     </div>
     <div class="aud-tx-bar">
-      <button class="aud-btn aud-btn-primary" id="aud-tx-btn" type="button">Transcribe as it plays</button>
+      <label class="aud-check">
+        <input type="checkbox" id="aud-tx-on" checked>
+        <span>Transcribe as it plays</span>
+      </label>
+      <button class="aud-btn aud-btn-sm" id="aud-tx-copy" type="button" disabled>Copy text</button>
       <span class="aud-tx-status" id="aud-tx-status"></span>
     </div>
     <ol class="aud-tx-lines hidden" id="aud-tx-lines"></ol>
     <div class="aud-tx-foot hidden" id="aud-tx-foot">
-      <button class="aud-btn aud-btn-sm" id="aud-tx-copy" type="button">Copy text</button>
       <button class="aud-btn aud-btn-sm" id="aud-tx-vtt" type="button">Download captions</button>
       <span class="aud-tx-note" id="aud-tx-note"></span>
     </div>

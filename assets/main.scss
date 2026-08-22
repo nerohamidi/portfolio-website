@@ -1929,6 +1929,7 @@ body.light-mode {
 
   &:hover { border-color: #999; color: #fff; }
   &:disabled { opacity: 0.5; cursor: default; }
+  &:disabled:hover { border-color: #555; color: #ccc; }
 }
 
 .aud-btn-primary {
@@ -2213,6 +2214,7 @@ body.light-mode {
     border-color: #ccc;
     color: #555;
     &:hover { border-color: #888; color: #111; }
+    &:disabled:hover { border-color: #ccc; color: #555; }
   }
 
   .aud-btn-primary {
@@ -2335,15 +2337,6 @@ body.light-mode {
   svg { width: 18px; height: 18px; }
   &:disabled { opacity: 0.35; cursor: default; }
   &:disabled:hover { border-color: #555; color: #ccc; }
-}
-
-// A button that is doing something, rather than one that offers to.
-.aud-btn.is-on {
-  border-color: #e0a040;
-  background: rgba(224, 160, 64, 0.16);
-  color: #e0a040;
-
-  &:hover { background: rgba(224, 160, 64, 0.26); border-color: #f0bb70; color: #f0bb70; }
 }
 
 // --- live caption ---
@@ -2487,6 +2480,7 @@ body.light-mode {
   cursor: pointer;
 
   input { accent-color: #6cb6ff; }
+  input:disabled { cursor: default; }
 }
 
 .aud-q-count {
@@ -2574,14 +2568,6 @@ body.light-mode {
 
 body.light-mode {
   .aud-round-step:disabled:hover { border-color: #ccc; color: #444; }
-
-  .aud-btn.is-on {
-    border-color: #b8791a;
-    background: rgba(184, 121, 26, 0.12);
-    color: #b8791a;
-
-    &:hover { background: rgba(184, 121, 26, 0.2); border-color: #96620f; color: #96620f; }
-  }
 
   .aud-caption { border-top-color: #e4e4e4; }
   .aud-caption-line { color: #666; }

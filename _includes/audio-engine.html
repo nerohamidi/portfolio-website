@@ -26,6 +26,11 @@
   var TX_LEAD_SEC = 24;      // how far ahead of the playhead to stay
   var TX_JUMP_SEC = 45;      // a seek longer than this gives up on the gap
   var TX_RATE = 16000;       // what Whisper wants; also what keeps a window under a megabyte
+  // Fetched as soon as a track is decoded, before anything is played. Windows are
+  // cut on quiet, so the pump stops at the first boundary past this rather than
+  // exactly on it.
+  var TX_PRELOAD_SEC = 30;
+  var TX_PREF_KEY = 'aud-tx-on';
 
   var el = {};
   [
@@ -40,7 +45,7 @@
     'aud-shared-note', 'aud-shared-detail',
     'aud-prev', 'aud-next', 'aud-caption', 'aud-caption-line',
     'aud-queue', 'aud-q-list', 'aud-add', 'aud-q-demo', 'aud-q-through', 'aud-q-count',
-    'aud-tx', 'aud-tx-btn', 'aud-tx-status', 'aud-tx-lines', 'aud-tx-foot',
+    'aud-tx', 'aud-tx-on', 'aud-tx-status', 'aud-tx-lines', 'aud-tx-foot',
     'aud-tx-copy', 'aud-tx-vtt', 'aud-tx-note'
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
@@ -899,6 +904,11 @@
   // start of the next window.
 
   var txOn = false;
+  // Whether transcription should start by itself. A preference rather than a
+  // per-track switch: every track now starts on its own, so switching it off has
+  // to outlast the track or it would be back on at the next one.
+  var txWanted = true;
+  try { txWanted = window.localStorage.getItem(TX_PREF_KEY) !== '0'; } catch (e) {}
   var txBusy = false;
   var txDone = false;
   var txSegments = [];
@@ -915,19 +925,34 @@
     el['aud-tx-status'].textContent = text || '';
   }
 
-  function txButton() {
-    var b = el['aud-tx-btn'];
-    if (txDone) {
-      b.textContent = 'Transcribed';
-      b.disabled = true;
-      b.classList.remove('is-on');
-      return;
-    }
-    b.disabled = !audioBuffer;
-    b.textContent = txOn
-      ? 'Stop transcribing'
-      : (txSegments.length ? 'Keep transcribing' : 'Transcribe as it plays');
-    b.classList.toggle('is-on', txOn);
+  function txSyncControls() {
+    var box = el['aud-tx-on'];
+    // Ticked while it is running and once it has finished, so the box answers
+    // "is this track transcribed" rather than "is a request in flight". A window
+    // that was refused clears it, and the status beside it says why.
+    box.checked = txOn || txDone;
+    // Left enabled even when there is nothing more to fetch: the toggle is the
+    // preference for the next track too, not just a switch for this one.
+    box.disabled = !audioBuffer;
+    el['aud-tx-copy'].disabled = !txSegments.length;
+  }
+
+  // Transcription runs unless it has been switched off. The pump is started when
+  // the track is decoded rather than when it is first played, so the opening is
+  // already transcribed by the time anyone presses play and the caption is not
+  // playing catch-up through the first verse.
+  function txAuto() {
+    if (txWanted && !txDone && !txOn && audioBuffer) txBegin();
+    else txSyncControls();
+  }
+
+  function txBegin() {
+    txOn = true;
+    // From the playhead, not from the top: the point is to read what is about to
+    // be heard.
+    if (!txSegments.length && !txNext) txNext = Math.max(0, position() - 0.5);
+    if (!txSegments.length) txStatus('Listening ahead…');
+    txSyncControls();
   }
 
   function txReset() {
@@ -950,7 +975,7 @@
     el['aud-caption'].classList.add('hidden');
     el['aud-caption-line'].textContent = '';
     txStatus('');
-    txButton();
+    txSyncControls();
   }
 
   // Kept on the entry, so leaving a track and coming back does not pay for it
@@ -964,7 +989,7 @@
 
   function txAdopt(duration) {
     txDuration = duration;
-    txButton();
+    txSyncControls();
 
     var entry = queue[current];
     var saved = entry && entry.tx;
@@ -976,12 +1001,16 @@
       txDone = saved.done;
       txRenderAll();
       txStatus(txDone ? 'Transcript complete.' : 'Picking up where this left off.');
-      txButton();
+      txAuto();
       return;
     }
 
     var id = clipIdOf(entry);
+    // The lookup has to be given its chance first. Starting the pump here would
+    // make txLoadCached stand down, and the clip would be transcribed again at
+    // full cost with every word already sitting in the bucket.
     if (id) txLoadCached(id, duration);
+    else txAuto();
   }
 
   // Whatever the Worker already holds for this clip. Someone transcribed it once
@@ -1010,8 +1039,11 @@
       txSave();
       txRenderAll();
       txStatus(txDone ? 'Transcript came with the link.' : 'Part of this is already transcribed.');
-      txButton();
-    }).catch(function() {});
+      txSyncControls();
+    }).catch(function() {}).then(function() {
+      // Found or not, the pump takes it from here.
+      if (token === loadToken) txAuto();
+    });
   }
 
   // --- cutting the window ---
@@ -1155,7 +1187,7 @@
       txDone = true;
       txSave();
       txStatus('Transcript complete.');
-      txButton();
+      txSyncControls();
       return;
     }
 
@@ -1166,14 +1198,16 @@
       txNext = pos;
       txPrev = '';
     }
-    // Already far enough ahead of the playhead.
-    if (txNext > pos + TX_LEAD_SEC) return;
+    // Already far enough ahead of the playhead. The opening is exempt, so a track
+    // that has only just been decoded still gets its first half minute fetched
+    // with the playhead sitting at zero.
+    if (txNext > pos + TX_LEAD_SEC && txNext >= TX_PRELOAD_SEC) return;
 
     var start = txNext;
     var end = txCut(start);
     if (end - start < 0.4) {
       txDone = true;
-      txButton();
+      txSyncControls();
       return;
     }
 
@@ -1202,7 +1236,7 @@
       if (token !== loadToken) return;
       txOn = false;
       txStatus(err && err.message ? err.message : 'Transcription failed.');
-      txButton();
+      txSyncControls();
     }).then(function() {
       if (token === loadToken) txBusy = false;
     });
@@ -1237,6 +1271,7 @@
     // Shown from here rather than per line: the caption keeps its height while it
     // is empty, so the transport underneath does not jump between lines.
     el['aud-caption'].classList.remove('hidden');
+    txSyncControls();
   }
 
   function txAppend(segs) {
@@ -1352,19 +1387,17 @@
     if (i >= 0) txMarkWord(pos);
   }
 
-  el['aud-tx-btn'].addEventListener('click', function() {
-    if (!audioBuffer) return;
-    txOn = !txOn;
-    if (txOn) {
-      // From the playhead, not from the top: the point is to read what is about
-      // to be heard.
-      if (!txSegments.length && !txNext) txNext = Math.max(0, position() - 0.5);
-      el['aud-tx-lines'].classList.remove('hidden');
-      txStatus('Listening ahead…');
+  el['aud-tx-on'].addEventListener('change', function() {
+    txWanted = el['aud-tx-on'].checked;
+    try { window.localStorage.setItem(TX_PREF_KEY, txWanted ? '1' : '0'); } catch (e) {}
+
+    if (txWanted) {
+      if (audioBuffer) txBegin();
     } else {
-      txStatus('Stopped. The text so far is kept.');
+      txOn = false;
+      txStatus(txSegments.length ? 'Stopped. The text so far is kept.' : '');
     }
-    txButton();
+    txSyncControls();
   });
 
   function txPlainText() {
@@ -1616,7 +1649,7 @@
     formatFilterFreq(filterSliderToFreq(parseFloat(el['aud-filter-freq'].value)));
   playThrough = el['aud-q-through'].checked;
   renderQueue();
-  txButton();
+  txSyncControls();
 
   if (location.hash.length > 1) {
     // A hand-edited hash should never take the page down with it.
