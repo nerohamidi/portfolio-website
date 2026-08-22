@@ -1,8 +1,12 @@
 # Shareable audio clips
 
-The signal playground's Share button puts the control state in the URL hash and, when
-the user has uploaded their own audio, stores the file in R2 and puts its id in the
-hash too. This Worker serves both halves of that.
+Signal Share (`/playroom/audio/`, markup in `_includes/audio-app.html`, logic in
+`_includes/audio-engine.html`) puts its control state in the URL hash and, when the
+user has loaded their own audio, stores the file in R2 and puts its id in the hash too.
+This Worker serves both halves of that.
+
+The wave playground at `/playroom/signals/` is a separate app and does not talk to this
+Worker at all.
 
 ## Routes
 
@@ -22,11 +26,18 @@ the recipient opens it.
 
 ## One-time setup
 
+Already done for the live bucket; kept here for a rebuild or a second environment.
+
 ```bash
 npx wrangler r2 bucket create nero-signal-clips --location=wnam
 npx wrangler r2 bucket lifecycle add nero-signal-clips expire-clips clips/ --expire-days 30
 npx wrangler deploy
 ```
+
+`wrangler r2 object delete` hits the **local** dev store unless you pass `--remote`, and
+it reports success either way. `bucket info` also lags, so it can report zero objects
+while the bucket is still serving them. Confirm a real deletion with a request to
+`/clip/<id>`.
 
 The lifecycle rule is what reclaims storage. The Worker also refuses to serve anything
 older than the TTL, and discounts those objects when measuring usage, so the TTL holds
