@@ -7,7 +7,7 @@ let sent = null;
 globalThis.fetch = async (url, init) => {
   sent = { url, body: JSON.parse(init.body) };
   return new Response(JSON.stringify({
-    candidates: [{ content: { parts: [{ text: 'Nero graduates December 2027.' }] } }],
+    candidates: [{ content: { parts: [{ text: 'Nero graduates in 2027.' }] } }],
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
 
@@ -27,7 +27,7 @@ const check = (name, cond, extra = '') => {
 sent = null;
 let r = await post({ messages: [{ role: 'user', text: 'When does Nero graduate?' }] });
 let j = await r.json();
-check('200 + returns only {reply}', r.status === 200 && j.reply === 'Nero graduates December 2027.' && Object.keys(j).join() === 'reply', JSON.stringify(j).slice(0,120));
+check('200 + returns only {reply}', r.status === 200 && j.reply === 'Nero graduates in 2027.' && Object.keys(j).join() === 'reply', JSON.stringify(j).slice(0,120));
 check('server prompt is attached', sent.body.systemInstruction.parts[0].text.includes('=== ABOUT ==='));
 check('user turn forwarded', sent.body.contents[0].parts[0].text === 'When does Nero graduate?');
 check('prompt is NOT in contents', !JSON.stringify(sent.body.contents).includes('=== ABOUT ==='));

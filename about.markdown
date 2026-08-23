@@ -7,7 +7,7 @@ condense: true
 
 <div class="full-only" markdown="1">
 
-I'm an ECE graduate student at UC San Diego, graduating December 2027, interested in the mathematical foundations of statistical signal processing and machine learning. My work sits at the intersection of estimation theory, embedded systems, and ML. I like building things that process real-world signals under real-world constraints, and I care that every model I ship is one I can defend mathematically. I also work in digital IC design, applying circuit-level intuition from analog and digital coursework to implementing signal processing in silicon.
+I'm an ECE graduate student at UC San Diego, graduating in 2027, interested in the mathematical foundations of statistical signal processing and machine learning. My work sits at the intersection of estimation theory, embedded systems, and ML. I like building things that process real-world signals under real-world constraints, and I care that every model I ship is one I can defend mathematically. I also work in digital IC design, applying circuit-level intuition from analog and digital coursework to implementing signal processing in silicon.
 
 Based in San Diego, CA. U.S. Citizen.
 
@@ -15,7 +15,7 @@ Based in San Diego, CA. U.S. Citizen.
 
 <div class="brief-only" markdown="1">
 
-ECE M.S. student at UC San Diego, graduating December 2027. Statistical signal processing, estimation theory, and machine learning, plus embedded systems and digital IC design.
+ECE M.S. student at UC San Diego, graduating in 2027. Statistical signal processing, estimation theory, and machine learning, plus embedded systems and digital IC design.
 
 San Diego, CA · U.S. Citizen.
 
@@ -90,7 +90,7 @@ San Diego, CA · U.S. Citizen.
 <div class="edu-entry">
   <div class="edu-school">University of California, San Diego</div>
   <div class="edu-degree">M.S. in Electrical and Computer Engineering — Signal &amp; Image Processing</div>
-  <div class="edu-dates">Expected December 2027</div>
+  <div class="edu-dates">Expected 2027</div>
 </div>
 
 <div class="edu-entry">
