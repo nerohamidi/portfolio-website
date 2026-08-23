@@ -105,6 +105,8 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     setQueue: function(q, c) { queue = q; current = c; renderQueue(); },
     setImmersive: setImmersive,
     immersive: function() { return immersive; },
+    setSheet: setSheet,
+    sheet: function() { return sheetOpen; },
     runShare: runShare,
   };
   sizeCanvas();
@@ -2431,6 +2433,178 @@ check('the words are still there for the other modes',
 check('and the empty state keeps both halves too',
   Boolean(w.document.querySelector('label[for="aud-file"] .aud-word')) &&
   Boolean(w.document.querySelector('label[for="aud-file"] .aud-sym')));
+
+// --- 21. the dock ------------------------------------------------------------
+//
+// Simple mode is a phone's music player now: the controls sit on the bottom edge
+// of the window and stay there. jsdom has no layout, so what it can answer is the
+// half that decides the layout -- which things are inside the box that is pinned
+// down, and which are above it giving up their pixels.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-mode-simple');
+
+const dock = w.document.querySelector('.aud-dock');
+check('the player has a dock', Boolean(dock) && dock.parentNode.id === 'aud-player');
+
+const inDock = (id) => Boolean(dock && dock.contains(w.document.getElementById(id)));
+check('everything that is aimed at is in it',
+  ['aud-name', 'aud-seek', 'aud-play', 'aud-prev', 'aud-next', 'aud-volume', 'aud-simple-bar']
+    .every(inDock),
+  ['aud-name', 'aud-seek', 'aud-play', 'aud-prev', 'aud-next', 'aud-volume', 'aud-simple-bar']
+    .filter((id) => !inDock(id)).join(','));
+
+// The three things whose height changes on their own -- the visualiser, the
+// caption that grows a line as words arrive, and the consent line that is one
+// sentence on a wide window and three on a narrow one. All of them above the
+// dock, so what they take comes out of the canvas and no control moves.
+check('and everything that changes size on its own is above it',
+  ['aud-canvas', 'aud-caption', 'aud-simple-note'].every((id) => !inDock(id)),
+  ['aud-canvas', 'aud-caption', 'aud-simple-note'].filter(inDock).join(','));
+
+check('the consent line left the button bar it used to sit under',
+  !w.document.getElementById('aud-simple-bar').contains(w.document.getElementById('aud-simple-note')));
+check('and still says the one thing a symbol cannot',
+  /sends short windows/.test(w.document.getElementById('aud-simple-note').textContent),
+  w.document.getElementById('aud-simple-note').textContent);
+
+// The step buttons are drawn either way in this mode and disabled when there is
+// nowhere to step, which is the bookkeeping the stylesheet leans on: a transport
+// that grows two buttons when a second track arrives is a transport that moved
+// under a thumb.
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+check('one track leaves both step buttons dead rather than absent',
+  w.document.getElementById('aud-prev').disabled === true &&
+  w.document.getElementById('aud-next').disabled === true);
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'two.mp3' }),
+], 0);
+check('and a second track brings one of them back to life',
+  w.document.getElementById('aud-prev').disabled === true &&
+  w.document.getElementById('aud-next').disabled === false);
+
+// --- 22. simple mode's playlist ----------------------------------------------
+//
+// The mode always had a queue. What it did not have was anywhere to see it: the
+// step buttons walked a list nobody could look at, and a shared playlist could
+// only be read by leaving the mode the link had opened in.
+//
+// What was added is a way to show the one that is already there. It is #aud-queue
+// -- the same section, drawn by the same renderQueue -- put where the canvas was
+// rather than under the controls, so the dock is in the same place either way.
+
+persisted.delete('aud-mode');
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+w.__probe.setQueue([
+  w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'two.mp3' }),
+  w.__probe.newEntry({ ref: 'demo', name: 'three.mp3' }),
+], 0);
+
+const listBtn = () => w.document.getElementById('aud-simple-list');
+const listed = () => [...w.document.querySelectorAll('#aud-q-list .aud-q-name')].map((n) => n.textContent);
+
+check('simple mode carries a way into the playlist', Boolean(listBtn()));
+check('drawn rather than written, and named all the same',
+  listBtn().textContent.trim() === '' && Boolean(listBtn().querySelector('svg')) &&
+  /playlist/i.test(listBtn().getAttribute('aria-label')), listBtn().getAttribute('aria-label'));
+check('and it is in the button bar with the rest of them',
+  w.document.getElementById('aud-simple-bar').contains(listBtn()));
+check('closed to start with', w.__probe.sheet() === false &&
+  !w.document.body.classList.contains('aud-sheet') &&
+  listBtn().getAttribute('aria-expanded') === 'false');
+
+listBtn().click();
+check('pressing it opens the list', w.__probe.sheet() === true &&
+  w.document.body.classList.contains('aud-sheet'));
+check('and the button says so', listBtn().getAttribute('aria-expanded') === 'true' &&
+  listBtn().classList.contains('is-on'));
+// A disclosure, not a switch: it opens a region rather than turning something on,
+// and saying that twice in two vocabularies is what makes it read out twice.
+check('in the one vocabulary that fits it', listBtn().getAttribute('aria-pressed') === null);
+check('with the label offering the way back out',
+  /hide the playlist/i.test(listBtn().getAttribute('aria-label')), listBtn().getAttribute('aria-label'));
+
+// Not a second list. The same section every other mode shows in the page, with
+// the rows renderQueue had already built.
+check('what opened is the playlist every mode shares',
+  w.document.getElementById('aud-queue').classList.contains('aud-panel') &&
+  listBtn().getAttribute('aria-controls') === 'aud-queue');
+check('holding the queue that was already there', listed().join(',') === 'one.mp3,two.mp3,three.mp3',
+  listed().join(','));
+
+// The rows do what they do everywhere else, because they are the same rows.
+w.document.querySelectorAll('#aud-q-list .aud-q-pick')[2].click();
+await settle();
+check('picking a row from it plays that track', w.__probe.state().current === 2,
+  String(w.__probe.state().current));
+check('and the list stays up, the way a queue view does',
+  w.__probe.sheet() === true);
+
+w.document.querySelectorAll('#aud-q-list .aud-q-btn')[2].click();
+check('its own tools reach the queue too', listed().join(',') === 'two.mp3,three.mp3', listed().join(','));
+
+// Adding is what the sheet is for, so this is the one that appends.
+w.document.querySelector('label[for="aud-add"]').click();
+pickFiles(w, ['four.mp3'], 'aud-add');
+await settle();
+check('adding a track from the sheet grows the list',
+  listed().join(',') === 'two.mp3,three.mp3,four.mp3', listed().join(','));
+press(w, 'aud-q-demo');
+check('and so does the demo button beside it', listed().length === 4, listed().join(','));
+
+// Three ways out, because the one that opened it is not where a thumb is once the
+// list is up.
+press(w, 'aud-q-close');
+check('the close button shuts it', w.__probe.sheet() === false &&
+  !w.document.body.classList.contains('aud-sheet'));
+check('and the button offers the way back in',
+  /show the playlist/i.test(listBtn().getAttribute('aria-label')), listBtn().getAttribute('aria-label'));
+
+listBtn().click();
+w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+check('so does Escape', w.__probe.sheet() === false);
+
+// Escape belongs to the sheet and to nothing else on this page, so it is only
+// ever taken while the sheet is holding it.
+let escapes = 0;
+w.document.addEventListener('keydown', function(e) { if (e.key === 'Escape') escapes++; });
+w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+check('and a closed sheet leaves an Escape alone', escapes === 1 && w.__probe.sheet() === false);
+
+// The other two modes show the same list as a panel in the page, where it has
+// always been, so the sheet is simple mode's arrangement and leaves with it.
+listBtn().click();
+press(w, 'aud-mode-pro');
+check('leaving simple mode puts the list back in the page', w.__probe.sheet() === false &&
+  !w.document.body.classList.contains('aud-sheet'));
+w.__probe.setSheet(true);
+check('and it cannot be opened from a mode that has no sheet', w.__probe.sheet() === false);
+
+// Nothing left to list.
+press(w, 'aud-mode-simple');
+listBtn().click();
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'last.mp3' })], 0);
+w.__probe.removeAt(0);
+check('taking the last track away closes it too', w.__probe.sheet() === false &&
+  w.document.getElementById('aud-queue').classList.contains('hidden'));
+
+// Where someone happens to be looking, which is neither part of the sound nor
+// part of the link. A link that opened onto a list of filenames instead of onto
+// the track would be opening on the wrong thing.
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' })], 0);
+listBtn().click();
+check('the list is not in the link', !/(^|&)(q|list|sheet)=/.test(w.__probe.encodeState()),
+  w.__probe.encodeState());
+check('and not on disk either', !persisted.has('aud-sheet'), [...persisted.keys()].join(','));
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+check('so the next visit opens on the track', w.__probe.sheet() === false &&
+  !w.document.body.classList.contains('aud-sheet'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

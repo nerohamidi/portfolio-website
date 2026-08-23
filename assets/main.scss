@@ -3179,7 +3179,13 @@ body.aud-simple {
 
   // Square, and never below the 44px a fingertip needs. The semitone chips keep
   // their own width, because a numeral is what they are for.
+  //
+  // border-box, because one of these is a <label> rather than a <button> and a
+  // label is content-box by default. On that one the minimum was landing on the
+  // content rather than on the border, which put the padding and the border on
+  // top of it: 68 square beside 44s, and a whole extra line in the row.
   .aud-simple-icon {
+    box-sizing: border-box;
     min-width: 46px;
     min-height: 46px;
     padding: 12px;
@@ -3254,8 +3260,20 @@ body.aud-simple {
 .aud-simple-st {
   font-family: monospace;
   min-width: 54px;
+  min-height: 46px;
   padding: 10px 12px;
   text-align: center;
+}
+
+// The five semitones are one control, not five, so they wrap as one: a row that
+// broke between +5 and +12 would read as two unrelated groups of numbers.
+.aud-simple-pitch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .aud-simple-tag {
@@ -3268,6 +3286,32 @@ body.aud-simple {
   margin-right: 2px;
 }
 
+// A hairline between what shapes the sound and what to do with it. It carries no
+// information a screen reader needs, which is why it is a bare span with
+// aria-hidden on it rather than a border on the button beside it -- a border
+// would move when the row wraps and the divider would end up mid-line.
+.aud-simple-div {
+  display: none;
+  width: 1px;
+  height: 24px;
+  flex: none;
+  margin: 0 3px;
+  background: #444;
+}
+
+// --- the dock ---
+//
+// Everything that is aimed at rather than looked at. In pro and experimental it
+// is a wrapper and nothing more -- the same column with the same gap the player
+// already spaced its children with, so those two modes cannot tell it is there.
+// Simple mode is where it earns the name.
+
+.aud-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 // ---------------------------------------------------------------------------
 // Simple mode
 //
@@ -3275,10 +3319,29 @@ body.aud-simple {
 // page flow to fill the window. Nothing here is a second copy of anything: the
 // canvas, the transport and the scrubber are the ones Pro mode uses, which is
 // why switching between the two never interrupts what is playing.
+//
+// The arrangement is a phone's music player: the controls sit on the bottom edge
+// of the window and stay there, and everything above them -- the visualiser, the
+// caption, the consent line -- is what gives up pixels when something needs
+// them. Nothing scrolls, because a control that can be scrolled away is a
+// control that is not where it was a moment ago.
 // ---------------------------------------------------------------------------
+
+// Both elements, because which of the two a browser scrolls is not something to
+// have an opinion about: some propagate the body's overflow to the viewport and
+// some do not, and a pull-to-refresh is answered by the root in either case.
+// Browsers without :has() still get the body half below, which is enough
+// everywhere the root is not the scroller.
+html:has(body.aud-simple) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 
 body.aud-simple {
   overflow: hidden;
+  // No rubber-band, no pull-to-refresh, and no chaining out of the playlist into
+  // a page that is not going anywhere.
+  overscroll-behavior: none;
 
   .site-header,
   .site-footer,
@@ -3308,23 +3371,51 @@ body.aud-simple {
     padding: 0;
   }
 
+  // The transport's three sizes, stated once. The grid below places the play
+  // button against them, so a breakpoint that shrinks a button cannot leave the
+  // arithmetic that centres it behind.
+  --aud-round-sm: 48px;
+  --aud-round-lg: 68px;
+  --aud-round-step: 44px;
+
+  // One window, exactly. `dvh` is the height the window actually has right now,
+  // which on a phone changes as the address bar comes and goes -- `vh` is the
+  // height it has when the bar is hidden, and using that alone would put the
+  // bottom row of controls underneath the bar for as long as it was showing. The
+  // plain `vh` line stays above it for browsers that do not know the other.
   .aud {
+    --aud-side: clamp(14px, 5vw, 56px);
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    // The window, padding and all. Without this the padding is added to the
+    // height rather than taken out of it, and the bottom row of controls sits
+    // exactly one top padding below the bottom of the screen -- which is a place
+    // nothing can be pressed and, with the page pinned, nowhere to scroll to.
+    box-sizing: border-box;
+    height: 100vh;
+    height: 100dvh;
     z-index: 40;
     max-width: none;
     margin: 0;
-    padding: 18px clamp(14px, 5vw, 56px) 24px;
-    gap: 14px;
-    justify-content: center;
+    padding: 62px var(--aud-side) 18px;
+    // Round a notch in landscape, and above the home indicator in portrait.
+    padding-left: max(var(--aud-side), env(safe-area-inset-left));
+    padding-right: max(var(--aud-side), env(safe-area-inset-right));
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    gap: 12px;
     background: #1e1e1e;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
+  // Its own band across the top rather than a badge floating over the signal.
+  // The 62px of padding above is exactly the room this needs, so the visualiser
+  // starts below it and the switch never has to be read against a spectrum.
   .aud-mode {
     position: absolute;
-    top: 16px;
-    right: clamp(14px, 5vw, 56px);
+    top: 14px;
+    right: max(var(--aud-side, 14px), env(safe-area-inset-right));
     z-index: 2;
   }
 
@@ -3333,121 +3424,437 @@ body.aud-simple {
     border: none;
     padding: 0;
     margin: auto;
+    flex: 0 1 auto;
+    min-height: 0;
   }
   .aud-drop-icon { width: 96px; }
   .aud-drop-lead { font-size: 20px; }
 
+  // The player is the window. The canvas is the only thing in it with a flexible
+  // height, so every other row keeps the size it asks for and the dock lands on
+  // the bottom edge whatever is above it.
   .aud-player {
     border: none;
     background: none;
     padding: 0;
-    margin: auto;
+    margin: 0;
+    align-self: center;
     width: 100%;
     max-width: 760px;
-    gap: 18px;
+    flex: 1 1 auto;
+    min-height: 0;
+    justify-content: flex-end;
+    gap: 12px;
   }
 
-  // The visualiser is the thing being looked at here, so it takes whatever the
-  // window has left over once the controls have had theirs.
+  // The visualiser keeps a floor of its own. Everything above the dock competes
+  // for the same pixels, and on a small phone a caption and a consent line can
+  // want more than there are: what gives then is the words, which are clamped
+  // and can be read again next window, rather than the picture, which cannot be
+  // a picture of nothing.
   .aud-canvas {
-    height: clamp(160px, 34vh, 340px);
+    flex: 1 1 0;
+    min-height: 48px;
+    height: auto;
+  }
+
+  .aud-dock { flex: none; }
+
+  .aud-caption,
+  .aud-simple-note {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  // Two lines are held open in the other modes so the transport below does not
+  // jump as the caption changes length. Nothing below it can jump here -- the
+  // dock is on the bottom edge of the window -- so the line takes what it needs
+  // and gives the rest back to the signal.
+  //
+  // With a ceiling on it, though. Both of these are read against a window that
+  // has already given most of itself to the dock, and a paragraph that grows
+  // without limit eats the picture it is a caption for. Clamped rather than
+  // simply cut off: three lines and an ellipsis ends on a word, and `overflow:
+  // hidden` on its own ends halfway through a letter.
+  .aud-caption-line,
+  .aud-simple-note {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  // A control is pressed, not read: nothing in here should select on a long
+  // press, and nothing should flash grey on a tap or zoom on a double one.
+  .aud-dock {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+
+    button,
+    label,
+    input[type="range"] { touch-action: manipulation; }
   }
 
   .aud-track { justify-content: center; }
 
   .aud-track-name {
+    flex: 0 1 auto;
     font-size: 15px;
     text-align: center;
   }
+
+  // A thicker bar to aim at than the desk needs, because here it is aimed at
+  // with a thumb.
+  .aud-seek { height: 26px; }
 
   // Nothing to change the track to until there is one; the file button in the
   // simple bar does that job, and two of them side by side is one too many.
   #aud-change { display: none; }
 
   // The play button lands on the centre line of the window, and everything else
-  // is placed against it. Centring the row as a whole is not the same thing:
-  // with a volume on one side and nothing on the other, a centred row puts the
-  // button people are looking for off to the right of where they look.
+  // is placed against it: five columns, with the two outer ones carrying the same
+  // floor and the same fraction. That is what keeps the button where it is
+  // whatever happens to sit beside it -- a volume on one side and nothing on the
+  // other, or a pair of step buttons that were not there a moment ago.
   //
-  // The offsets are the button's own half-width plus the gap, so they hold
-  // whatever the row happens to contain -- a single track hides the two step
-  // buttons, and nothing else has to know.
+  // The floor is stated because a bare `1fr` already has one of its own: whatever
+  // its content needs. With a stop button in one of them and nothing in the
+  // other, that lands on one side only, and the play button drifts off centre by
+  // half the difference -- on exactly the narrow windows where there is no room
+  // to spare and it matters most.
+  //
+  // This used to be four absolute offsets plus a :has() rule that swapped two of
+  // them when a playlist appeared. It held only while every button stayed the
+  // size the offsets had been written for, and it moved the stop button under
+  // someone's thumb the moment a second track was added. A grid measures rather
+  // than remembering.
   .aud-transport {
-    position: relative;
-    justify-content: center;
-    gap: 16px;
+    --aud-edge: calc(var(--aud-round-sm) + 6px);
+    display: grid;
+    grid-template-columns:
+      minmax(var(--aud-edge), 1fr) auto auto auto minmax(var(--aud-edge), 1fr);
+    align-items: center;
+    justify-items: center;
+    column-gap: 14px;
+    row-gap: 12px;
     min-height: 68px;
   }
 
-  .aud-transport > .aud-round:not(#aud-play),
+  #aud-stop { grid-area: 1 / 1; justify-self: end; margin-right: 6px; }
+  #aud-prev { grid-area: 1 / 2; }
+  #aud-play { grid-area: 1 / 3; }
+  #aud-next { grid-area: 1 / 4; }
+
   .aud-vol {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
+    grid-area: 1 / 5;
+    justify-self: start;
+    margin-left: 6px;
   }
 
-  #aud-stop { right: 50%; margin-right: 50px; }
-  #aud-prev { right: 50%; margin-right: 110px; }
-  #aud-next { left: 50%; margin-left: 50px; }
-  .aud-vol { right: 0; margin-left: 0; }
+  // A phone's music player carries these two whether or not there is anywhere to
+  // step, and so does this one: a transport that grows two buttons when a second
+  // track arrives is a transport that has moved under a thumb. They are disabled
+  // rather than absent, and renderQueue sets that either way.
+  .aud-round-step.hidden { display: flex !important; }
 
-  // A single track hides the two step buttons, and stop takes the place beside
-  // play. A playlist shows them, and then it is prev and next that belong there
-  // -- one either side, the same distance out -- with stop moving outward. The
-  // browsers that do not know :has() keep the first arrangement, which is the
-  // right one for the commoner case.
-  .aud-transport:has(#aud-prev:not(.hidden)) {
-    #aud-stop { margin-right: 110px; }
-    #aud-prev { margin-right: 50px; }
+  .aud-round { width: var(--aud-round-sm); height: var(--aud-round-sm); }
+  .aud-round-lg {
+    width: var(--aud-round-lg);
+    height: var(--aud-round-lg);
+    svg { width: 30px; height: 30px; }
   }
-
-  .aud-round { width: 48px; height: 48px; }
-  .aud-round-lg { width: 68px; height: 68px; svg { width: 30px; height: 30px; } }
-  .aud-round-step { width: 44px; height: 44px; }
+  .aud-round-step { width: var(--aud-round-step); height: var(--aud-round-step); }
 
   .aud-simple-bar {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding-top: 4px;
+    gap: 10px;
+  }
+
+  // Only where the row it divides is one row. Below this the pitch group takes a
+  // line of its own however small the chips are made, and a rule at the end of
+  // the line above it divides nothing from nothing.
+  @media screen and (min-width: 561px) {
+    .aud-simple-div { display: block; }
   }
 
   // The sender's own words still come through: they are the point of the link,
   // not chrome, and this is the mode most recipients will read them in.
+  //
+  // With an order of its own, because the playlist takes one to get above the
+  // player and DOM order alone would then leave the note sandwiched between the
+  // list and the controls.
   .aud-note {
+    order: -2;
     max-width: 520px;
     margin: 0 auto;
     font-size: 13px;
   }
 
+  // Nothing to close until the sheet below opens one.
+  .aud-q-close { display: none; }
+
   @media screen and (max-width: 600px) {
-    .aud { padding-top: 54px; }
-    .aud-canvas { height: clamp(130px, 26vh, 220px); }
+    .aud { padding-top: 60px; }
     .aud-simple-chip { padding: 9px 16px; font-size: 13px; }
     .aud-simple-icon { min-width: 44px; min-height: 44px; padding: 11px; }
-    .aud-simple-st { min-width: 46px; padding: 9px 8px; }
+    .aud-simple-st { min-width: 46px; min-height: 44px; padding: 9px 8px; }
 
-    // The buttons are smaller here, so the offsets that hold them off the centre
-    // are too.
-    #aud-stop { margin-right: 44px; }
-    #aud-prev { margin-right: 96px; }
-    #aud-next { margin-left: 44px; }
-
-    .aud-transport:has(#aud-prev:not(.hidden)) {
-      #aud-stop { margin-right: 96px; }
-      #aud-prev { margin-right: 44px; }
-    }
-
-    // No room beside the buttons on a phone, so the volume goes back in the flow
-    // and takes a row of its own under them.
-    .aud-transport { flex-wrap: wrap; row-gap: 14px; }
+    // No room beside the buttons on a phone, so the volume goes under them and
+    // takes a row of its own. Which row a control is on is decided by how wide
+    // the window is and by nothing else, so it does not change while the page is
+    // being used.
     .aud-vol {
-      position: static;
-      transform: none;
-      flex-basis: 100%;
-      justify-content: center;
+      grid-area: 2 / 1 / 2 / -1;
+      justify-self: center;
+      margin-left: 0;
     }
   }
+
+  // The narrowest phones still in use. Seven glyphs and five numerals have to
+  // fit across 320px of window, and 40px is still a fingertip.
+  @media screen and (max-width: 380px) {
+    --aud-round-sm: 42px;
+    --aud-round-lg: 58px;
+    --aud-round-step: 40px;
+
+    .aud-round-lg svg { width: 26px; height: 26px; }
+    .aud-transport { column-gap: 8px; row-gap: 8px; min-height: 58px; }
+
+    .aud-player { gap: 8px; }
+    .aud-dock { gap: 8px; }
+    .aud-simple-bar { gap: 6px; }
+
+    .aud-simple-row { gap: 6px; }
+    .aud-simple-pitch { gap: 6px; }
+    .aud-simple-icon { min-width: 40px; min-height: 40px; padding: 9px; }
+    .aud-simple-st { min-width: 40px; min-height: 40px; padding: 9px 4px; font-size: 12px; }
+    .aud-simple-tag { margin-right: 0; }
+  }
+
+  // Landscape on a phone, and any short window. Everything shrinks together and
+  // the one sentence goes, because a consent line for a button that cannot be
+  // reached is worth less than the button.
+  @media screen and (max-height: 560px) {
+    .aud {
+      padding-top: 48px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      gap: 8px;
+    }
+    --aud-round-sm: 40px;
+    --aud-round-lg: 52px;
+    --aud-round-step: 38px;
+
+    .aud-mode { top: 8px; }
+    .aud-mode-btn { padding: 5px 10px; font-size: 11px; }
+    .aud-player { gap: 8px; }
+    .aud-dock { gap: 8px; }
+    .aud-simple-bar { gap: 6px; }
+    .aud-caption-line { font-size: 15px; -webkit-line-clamp: 2; }
+    .aud-simple-note { -webkit-line-clamp: 2; }
+    .aud-track-name { font-size: 13px; }
+    .aud-seek { height: 20px; }
+
+    .aud-transport { min-height: 0; row-gap: 8px; column-gap: 10px; }
+    .aud-round svg { width: 18px; height: 18px; }
+    .aud-round-lg svg { width: 24px; height: 24px; }
+    .aud-simple-icon { min-width: 38px; min-height: 38px; padding: 9px; }
+    .aud-simple-st { min-width: 40px; min-height: 38px; padding: 6px 6px; font-size: 12px; }
+    .aud-simple-div { height: 20px; }
+  }
+
+  // Landscape proper, where the window is shorter than the dock would like and
+  // the sentence is the last thing left to give. It is a disclosure, so it is
+  // given up only when there is genuinely nowhere to put it -- a portrait phone
+  // keeps it, clamped, above.
+  @media screen and (max-height: 430px) {
+    .aud-simple-note { display: none; }
+    .aud-caption-line { -webkit-line-clamp: 1; }
+  }
+}
+
+// --- simple mode's playlist ---
+//
+// The sheet is not a second list. It is #aud-queue, rendered by the same
+// renderQueue every mode uses, moved above the player and given the fraction of
+// the window the canvas had. The dock does not move, because nothing under the
+// sheet changed size.
+
+body.aud-simple.aud-sheet {
+  .aud-canvas { display: none; }
+
+  // The player is now only its dock, which is exactly the size it asks for.
+  .aud-player { flex: 0 0 auto; }
+
+  // Looking at the list is not looking at the captions, and both of them change
+  // height. Out of the way while the sheet is up.
+  .aud-caption,
+  .aud-simple-note { display: none !important; }
+
+  // More specific than the rule that puts every panel away in this mode, and
+  // still behind the `hidden` flag the queue carries when there is no track: an
+  // empty page has no list to show.
+  #aud-queue:not(.hidden) {
+    display: flex !important;
+    order: -1;
+    flex: 1 1 0;
+    min-height: 0;
+    align-self: center;
+    width: 100%;
+    max-width: 760px;
+    margin: 0;
+    padding: 12px 14px 14px;
+    gap: 10px;
+  }
+
+  #aud-queue .aud-panel-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  #aud-queue .aud-panel-hint { display: none; }
+  .aud-q-close { display: inline-flex; }
+
+  // The one thing on the page that scrolls, and it scrolls inside itself: ten
+  // tracks do not fit above the dock on a phone and the alternative is a list
+  // that runs off the bottom of the window. `contain` keeps a flick that reaches
+  // the end of the list from turning into a flick on the page behind it.
+  .aud-q-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 2px;
+  }
+
+  .aud-q-foot { flex: none; }
+
+  // Words, not glyphs, and pressed with a thumb: the desk's small-button padding
+  // is a mouse target.
+  .aud-q-foot .aud-btn { padding: 10px 14px; font-size: 13px; }
+
+  // And the three tools on every row, which are 28px on the desk.
+  .aud-q-btn {
+    width: 38px;
+    height: 38px;
+    font-size: 17px;
+  }
+
+  .aud-q-pick { padding: 12px 8px; }
+
+  // Same as the dock: a row is pressed rather than read, and a list of names is
+  // exactly the sort of thing a long press would otherwise start selecting.
+  #aud-queue {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+
+    button,
+    label,
+    input { touch-action: manipulation; }
+  }
+
+  @media screen and (max-width: 600px) {
+    #aud-queue:not(.hidden) { padding: 10px 12px 12px; gap: 8px; }
+    .aud-q-foot { gap: 8px; }
+    .aud-q-foot .aud-btn { padding: 8px 12px; font-size: 12px; }
+  }
+
+  // The rows are numbered, so the tally under them is saying twice what the last
+  // row already says. The ceiling goes with it, and the two buttons and the
+  // checkbox are shrunk until the three of them fit on one line -- between them
+  // that is a whole extra track on screen, on the window that has least of it.
+  @media screen and (max-width: 380px) {
+    .aud-q-count { display: none; }
+    .aud-q-foot { gap: 6px; }
+    .aud-q-foot .aud-btn { padding: 7px 9px; font-size: 11px; }
+    .aud-q-foot .aud-check { font-size: 11px; gap: 4px; }
+  }
+
+  // A window this short has nothing to give a list above the dock: the dock is
+  // most of what there is, and what was left over was one row of a playlist -- or,
+  // in landscape, four pixels and a footer hanging out of the bottom of its own
+  // panel.
+  //
+  // So it stops sharing and takes the window. The controls underneath are covered
+  // rather than moved -- closing it finds every one of them exactly where it was,
+  // which is the whole promise this mode makes -- and the way back out is the
+  // button in the sheet's own corner, and Escape.
+  //
+  // 600 rather than the 560 everything else here turns on. That one is about
+  // whether a control still fits; this one is about whether a list is worth
+  // opening, and a list needs more room than a button does.
+  @media screen and (max-height: 600px) {
+    // The dock underneath keeps its place rather than collapsing to the top of a
+    // window nobody can see. Covered, not moved: closing the sheet is a reveal
+    // and not a re-layout.
+    .aud-canvas { display: block; }
+    .aud-player { flex: 1 1 auto; }
+
+    #aud-queue:not(.hidden) {
+      position: absolute;
+      inset: 0;
+      // Both of these, and neither is decoration. `align-self: center` is what
+      // centres the panel in the column above, and on an absolutely positioned
+      // box Chrome takes it as licence to size the box from its content instead
+      // of from the offsets -- ten rows tall, over the bottom of the window and
+      // out the other side. The height says in one place what inset says in two.
+      align-self: auto;
+      height: 100%;
+      z-index: 3;
+      box-sizing: border-box;
+      max-width: none;
+      border: none;
+      border-radius: 0;
+      background: #1e1e1e;
+      padding: 12px var(--aud-side) 14px;
+      padding-left: max(var(--aud-side), env(safe-area-inset-left));
+      padding-right: max(var(--aud-side), env(safe-area-inset-right));
+      padding-bottom: calc(14px + env(safe-area-inset-bottom));
+      gap: 8px;
+    }
+    .aud-q-pick { padding: 8px; }
+    .aud-q-btn { width: 32px; height: 32px; }
+  }
+}
+
+body.light-mode.aud-simple.aud-sheet {
+  @media screen and (max-height: 600px) {
+    #aud-queue:not(.hidden) { background: #ffffff; }
+  }
+}
+
+.aud-q-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #555;
+  border-radius: 50%;
+  background: none;
+  color: #bbb;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+
+  svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  &:hover { border-color: #999; color: #fff; }
 }
 
 body.light-mode.aud-simple .aud { background: #ffffff; }
@@ -3461,10 +3868,10 @@ body.light-mode.aud-simple .aud { background: #ffffff; }
 // first visit.
 //
 // It is one class, and it moves one element. The canvas leaves the player's flow
-// and is pinned to the window behind everything; the player then collapses to
-// its controls and centres them over it. The analyser, the draw loop and every
-// control are the same ones either way, so turning it on mid-track resizes a
-// rectangle and interrupts nothing.
+// and is pinned to the window behind everything; the dock stays exactly where it
+// was and gets a ground of its own to be read against. The analyser, the draw
+// loop and every control are the same ones either way, so turning it on mid-track
+// resizes a rectangle and interrupts nothing.
 //
 // Only under .aud-simple: pro and experimental have panels that need the page,
 // and the class is left on the body across a mode switch so coming back finds it
@@ -3477,18 +3884,14 @@ body.aud-simple.aud-immersive {
   .aud { background: #141414; }
 
   // The canvas is a child of the player rather than a sibling, which decides the
-  // whole arrangement below. A background on the player would paint behind every
-  // one of its children, the canvas included, so the ground under the controls
-  // cannot be one -- it is a pseudo-element sitting between the two.
-  //
-  // Three layers, stated as three z-indexes, inside a stacking context of the
-  // player's own. Without the context the canvas would be a positioned box among
-  // in-flow ones and would paint over the transport, which is exactly the sort of
-  // thing that looks fine until a spectrum is loud enough to hide a play button.
+  // whole arrangement below. Three layers, stated as three z-indexes, inside a
+  // stacking context of the player's own. Without the context the canvas would be
+  // a positioned box among in-flow ones and would paint over the transport, which
+  // is exactly the sort of thing that looks fine until a spectrum is loud enough
+  // to hide a play button.
   .aud-player {
     position: relative;
     z-index: 1;
-    padding: 30px 20px 20px;
   }
 
   .aud-canvas {
@@ -3503,37 +3906,42 @@ body.aud-simple.aud-immersive {
     pointer-events: none;
   }
 
-  // A soft ground under the controls and nowhere else, because a transport drawn
-  // in thin outlines over a loud spectrum is not readable.
-  //
-  // The radii are 50% and no more, which is the whole trick: an ellipse that
-  // wide reaches zero exactly on the edges of its own box, so the scrim ends by
-  // fading out rather than by being clipped. Anything larger stays part-opaque
-  // where the box stops and draws a hard rectangle -- which is the black box this
-  // mode exists to be rid of.
-  //
-  // The box is a little larger than the controls it covers, so the fade has
-  // somewhere to happen. Twelve pixels either side, which is inside the smallest
-  // padding .aud ever has, so it can never push the page sideways.
-  .aud-player::before {
-    content: '';
-    position: absolute;
-    inset: -24px -12px;
-    z-index: 1;
-    pointer-events: none;
-    background: radial-gradient(ellipse 50% 50% at 50% 54%,
-      rgba(16, 16, 16, 0.92) 0%,
-      rgba(16, 16, 16, 0.86) 38%,
-      rgba(16, 16, 16, 0.5) 68%,
-      rgba(16, 16, 16, 0) 100%);
-  }
-
   .aud-player > *:not(.aud-canvas) { position: relative; z-index: 2; }
 
-  // Outside the player, and above it: the switch out of this mode and the
-  // sender's own words are read against whatever the spectrum is doing behind
-  // them.
-  .aud-mode,
+  // A ground under the controls and nowhere else, because a transport drawn in
+  // thin outlines over a loud spectrum is not readable.
+  //
+  // It rises from the bottom edge of the window and fades out above the dock,
+  // which is the shape a dock wants; what used to be here was a radial ellipse,
+  // which is the shape a player floating in the middle of the window wanted. The
+  // box reaches past the bottom of the dock so the fade has somewhere to happen
+  // at both ends, and .aud clips whatever runs off the window.
+  .aud-dock {
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -34px -16px -60px;
+      z-index: -1;
+      pointer-events: none;
+      background: linear-gradient(to top,
+        rgba(16, 16, 16, 0.95) 0%,
+        rgba(16, 16, 16, 0.93) 52%,
+        rgba(16, 16, 16, 0.74) 80%,
+        rgba(16, 16, 16, 0) 100%);
+    }
+  }
+
+  // Outside the dock, and above the signal: the switch out of this mode, the
+  // sender's own words, the caption and the consent line are all read against
+  // whatever the spectrum is doing behind them.
+  //
+  // The switch keeps the absolute corner simple mode already put it in. It used
+  // to be given `position: relative` here, which was harmless while the player
+  // floated in the middle of a centred column and put the switch back in the flow
+  // -- at the top of the window, across the full width -- the moment the column
+  // became a dock with a visualiser above it.
   .aud-note {
     position: relative;
     z-index: 2;
@@ -3544,27 +3952,38 @@ body.aud-simple.aud-immersive {
     backdrop-filter: blur(6px);
   }
 
-  .aud-caption-line { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85); }
+  .aud-caption-line,
+  .aud-simple-note { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85); }
 
-  @media screen and (max-width: 600px) {
-    // Less window to spare, so the ground under the controls is tighter.
-    .aud-player { padding: 22px 12px 16px; }
+  // The sheet is opaque: a list of names over a moving spectrum is not a list
+  // anyone can read.
+  &.aud-sheet #aud-queue:not(.hidden) {
+    background: rgba(20, 20, 20, 0.94);
+    backdrop-filter: blur(10px);
+    border-color: #3a3a3a;
   }
 }
 
 body.light-mode.aud-simple.aud-immersive {
   .aud { background: #ffffff; }
 
-  .aud-player::before {
-    background: radial-gradient(ellipse 50% 50% at 50% 54%,
-      rgba(255, 255, 255, 0.95) 0%,
-      rgba(255, 255, 255, 0.9) 38%,
-      rgba(255, 255, 255, 0.58) 68%,
+  .aud-dock::before {
+    background: linear-gradient(to top,
+      rgba(255, 255, 255, 0.96) 0%,
+      rgba(255, 255, 255, 0.94) 52%,
+      rgba(255, 255, 255, 0.78) 80%,
       rgba(255, 255, 255, 0) 100%);
   }
 
   .aud-mode { background: rgba(255, 255, 255, 0.78); }
-  .aud-caption-line { text-shadow: 0 1px 10px rgba(255, 255, 255, 0.9); }
+
+  .aud-caption-line,
+  .aud-simple-note { text-shadow: 0 1px 10px rgba(255, 255, 255, 0.9); }
+
+  &.aud-sheet #aud-queue:not(.hidden) {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: #e4e4e4;
+  }
 }
 
 // --- light mode ---
@@ -3614,6 +4033,13 @@ body.light-mode {
   .aud-simple-share[data-state="fail"] { border-color: #b8791a; color: #b8791a; }
 
   .aud-simple-tag { color: #888; }
+  .aud-simple-div { background: #ddd; }
+
+  .aud-q-close {
+    border-color: #ccc;
+    color: #666;
+    &:hover { border-color: #888; color: #111; }
+  }
 }
 
 // --- separating into sources ---
@@ -3774,7 +4200,11 @@ body.light-mode {
 
 // --- simple mode's transcript switch ---
 
+// Simple mode's, and only its: the other two say the same thing in the line under
+// the transcribe checkbox, where there is room for it. It used to be hidden by
+// the button bar it sat inside; out here on its own it has to say so itself.
 .aud-simple-note {
+  display: none;
   margin: 2px 0 0;
   max-width: 44ch;
   margin-left: auto;
@@ -3783,7 +4213,6 @@ body.light-mode {
   font-size: 12px;
   line-height: 1.5;
   color: #777;
-  min-height: 1.5em;
 }
 
 // The button offering a restart rather than a first play. Same size and place,

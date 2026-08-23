@@ -196,7 +196,8 @@
     'aud-tx-on', 'aud-tx-status', 'aud-tx-copy', 'aud-bg', 'aud-bg-on', 'aud-bg-tip',
     'aud-mode', 'aud-mode-simple', 'aud-mode-pro', 'aud-mode-lab',
     'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
-    'aud-simple-tx', 'aud-simple-note', 'aud-simple-share', 'aud-simple-full',
+    'aud-simple-tx', 'aud-simple-note', 'aud-simple-share', 'aud-simple-full', 'aud-simple-list',
+    'aud-q-close',
     'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
     'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
     'aud-target', 'aud-target-chips',
@@ -2572,6 +2573,12 @@
     // contains.
     if (!labMode() && target >= 0) target = -1;
 
+    // The sheet belongs to simple mode's arrangement and to nothing else: the
+    // other two show the same list as a panel in the page, where it has always
+    // been. setSheet closes it in those, because it only ever opens in simple,
+    // and this is also what writes the chip's own label for the first time.
+    setSheet(sheetOpen);
+
     if (remember) {
       try { window.localStorage.setItem(MODE_STORE, MODE_CODES[uiMode]); } catch (e) {}
     }
@@ -2685,6 +2692,62 @@
   }
 
   el['aud-simple-full'].addEventListener('click', function() { setImmersive(!immersive, true); });
+
+  // --- the list, in the space the signal was using ----------------------------
+  //
+  // Simple mode used to have a playlist it could not show. The step buttons
+  // walked it, a shared link restored it, and the only way to see what was on it
+  // was to leave the mode the link had opened in.
+  //
+  // This shows the one that is already there. It is #aud-queue -- the same
+  // section, the same rows, drawn by the same renderQueue every other mode uses
+  // -- put where the canvas was rather than under the controls. The stylesheet
+  // moves the flexible fraction of the window from one to the other, so the dock
+  // is at the same pixel whether the list is up or not, which is the whole point
+  // of showing it here instead of in a panel below.
+  //
+  // Not remembered anywhere. It is a thing you open, look at, and close, and a
+  // link that opened onto a list of filenames instead of onto the track would be
+  // opening on the wrong thing.
+
+  var sheetOpen = false;
+
+  function setSheet(on) {
+    sheetOpen = Boolean(on) && uiMode === 'simple';
+    document.body.classList.toggle('aud-sheet', sheetOpen);
+
+    var chip = el['aud-simple-list'];
+    if (chip) {
+      chip.classList.toggle('is-on', sheetOpen);
+      // aria-expanded and not aria-pressed: this opens a region rather than
+      // switching something on, and saying it twice in two vocabularies is what
+      // makes a screen reader read it out twice.
+      chip.setAttribute('aria-expanded', sheetOpen ? 'true' : 'false');
+      // The words are off the screen in this mode, not gone: what the button
+      // will do next is still on the button, for a screen reader and for anyone
+      // who hovers to check.
+      var says = sheetOpen ? 'Hide the playlist' : 'Show the playlist';
+      chip.setAttribute('aria-label', says);
+      chip.setAttribute('title', says);
+    }
+
+    // The canvas is not in the layout at all while the sheet is up, so it comes
+    // back with no size of its own and has to be measured again.
+    sizeCanvas();
+  }
+
+  el['aud-simple-list'].addEventListener('click', function() { setSheet(!sheetOpen); });
+  el['aud-q-close'].addEventListener('click', function() { setSheet(false); });
+
+  // Escape is what closes a thing that opened over something else, and the sheet
+  // is the only such thing on the page. Guarded on being open, so it never eats
+  // an Escape meant for anything else.
+  document.addEventListener('keydown', function(e) {
+    if (!sheetOpen) return;
+    if (e.key !== 'Escape' && e.key !== 'Esc') return;
+    setSheet(false);
+    el['aud-simple-list'].focus();
+  });
 
   // --- the chain strip -------------------------------------------------------
   //
@@ -3149,6 +3212,9 @@
       el[id].classList.add('hidden');
     });
     el['aud-shared-note'].classList.add('hidden');
+    // Nothing left to list, and the sheet would otherwise be holding the window
+    // open over an empty page.
+    setSheet(false);
     renderQueue();
   }
 
@@ -3316,12 +3382,13 @@
   // intent each one carries. A label's own click runs before it forwards to the
   // input.
   //
-  // Simple mode's is the odd one out. It says "Track", there is no playlist on
-  // screen to add to, and someone who presses it while something is playing
-  // means play this instead -- so it swaps rather than appends. With nothing
-  // loaded yet there is nothing to swap and it falls through to adding, and
-  // picking several files still builds a playlist that the step buttons can
-  // walk, which is the whole of a queue that mode has room for.
+  // Simple mode's is the odd one out, and stays that way now that the mode has a
+  // list of its own. Adding is what the sheet is for; the folder on the dock is
+  // the one someone presses while something is playing, and what they mean by it
+  // is play this instead -- so it swaps the current row rather than appending.
+  // With nothing loaded yet there is nothing to swap and it falls through to
+  // adding, and picking several files still builds a playlist, which is now a
+  // list the mode can show rather than one it was hiding.
   [
     ['label[for="aud-file"]', el['aud-file'], 'add'],
     ['label[for="aud-add"]', el['aud-add'], 'add'],
