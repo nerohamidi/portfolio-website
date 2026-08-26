@@ -107,6 +107,9 @@ engine = engine.replace('  sizeCanvas();\n  draw();\n})();', `
     immersive: function() { return immersive; },
     setSheet: setSheet,
     sheet: function() { return sheetOpen; },
+    setSettings: setSettings,
+    settings: function() { return setsOpen; },
+    position: position,
     runShare: runShare,
   };
   sizeCanvas();
@@ -2397,8 +2400,10 @@ const named = (sel) => {
   const nodes = [...w.document.querySelectorAll(sel)];
   return { n: nodes.length, bad: nodes.filter((b) => !(b.getAttribute('aria-label') || '').trim()) };
 };
-let glyphs = named('.aud-simple-bar .aud-simple-chip, .aud-simple-bar label[for="aud-simple-file"]');
-check('every control in the simple bar names itself', glyphs.n >= 9 && glyphs.bad.length === 0,
+let glyphs = named('.aud-simple-bar .aud-simple-chip, .aud-settings .aud-simple-chip, ' +
+  '.aud-settings label[for="aud-simple-file"], .aud-simple-fx button, .aud-simple-vol button');
+check('every control simple mode draws instead of writing names itself',
+  glyphs.n >= 12 && glyphs.bad.length === 0,
   glyphs.n + ' controls, unnamed: ' + glyphs.bad.map((b) => b.id || b.className).join(','));
 
 glyphs = named('.aud-mode-btn');
@@ -2511,8 +2516,8 @@ check('simple mode carries a way into the playlist', Boolean(listBtn()));
 check('drawn rather than written, and named all the same',
   listBtn().textContent.trim() === '' && Boolean(listBtn().querySelector('svg')) &&
   /playlist/i.test(listBtn().getAttribute('aria-label')), listBtn().getAttribute('aria-label'));
-check('and it is in the button bar with the rest of them',
-  w.document.getElementById('aud-simple-bar').contains(listBtn()));
+check('and it is behind the gear with the other settings',
+  w.document.getElementById('aud-settings').contains(listBtn()));
 check('closed to start with', w.__probe.sheet() === false &&
   !w.document.body.classList.contains('aud-sheet') &&
   listBtn().getAttribute('aria-expanded') === 'false');
@@ -2605,6 +2610,218 @@ w = boot(DEMO2, () => res({ chunks: [] }));
 await settle();
 check('so the next visit opens on the track', w.__probe.sheet() === false &&
   !w.document.body.classList.contains('aud-sheet'));
+
+// --- 25. the arrangement ------------------------------------------------------
+//
+// Simple mode is four bands and two corners now: the transcript at the top, the
+// wave, the transport, the spectrum, and the link and the settings on the bottom
+// edge. jsdom has no layout, so what it can answer is the half that decides the
+// layout -- which element is where in the tree, and what each control reaches.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'symphony.mp3' })], 0);
+
+const doc = () => w.document;
+const id = (s) => w.document.getElementById(s);
+
+// Two canvases, and the second one is the dock's: the spectrum is under the
+// transport, which is what one canvas cannot do.
+check('the picture is drawn on two surfaces', Boolean(id('aud-canvas')) && Boolean(id('aud-canvas2')));
+check('the wave is above the dock, where it can give up its pixels',
+  !doc().querySelector('.aud-dock').contains(id('aud-canvas')));
+check('and the spectrum is inside it, where nothing moves it',
+  doc().querySelector('.aud-dock').contains(id('aud-canvas2')));
+
+// The transport is the sketch: the two effects, the three transport buttons, and
+// the two volume steps. Nothing else is in that row.
+const tp = doc().querySelector('.aud-transport');
+check('the effects are in the transport, so the play button can be measured against them',
+  tp.contains(id('aud-simple-rev')) && tp.contains(id('aud-simple-echo')));
+check('and so are the volume steps',
+  tp.contains(id('aud-vol-up')) && tp.contains(id('aud-vol-down')));
+check('the two effects are words rather than glyphs',
+  id('aud-simple-rev').textContent.trim() === 'Rev.' &&
+  id('aud-simple-echo').textContent.trim() === 'Echo' &&
+  !id('aud-simple-rev').querySelector('svg'),
+  id('aud-simple-rev').textContent + '/' + id('aud-simple-echo').textContent);
+check('and they still write into the master rack',
+  (() => { const before = w.__probe.effects().revOn;
+           press(w, 'aud-simple-rev');
+           const after = w.__probe.effects().revOn;
+           press(w, 'aud-simple-rev');
+           return before !== after; })());
+
+// Stop is on the bottom edge with the link and the gear, out of the way of the
+// thumb working the transport.
+check('stop moved to the bottom edge',
+  id('aud-simple-bar').contains(id('aud-simple-stop')) && !tp.contains(id('aud-simple-stop')));
+check('and the two corners are the link and the settings',
+  id('aud-simple-bar').contains(id('aud-simple-share')) &&
+  id('aud-simple-bar').contains(id('aud-simple-gear')));
+
+w.__probe.seekTo(40);
+press(w, 'aud-simple-stop');
+check('and it still puts the playhead back at the top', w.__probe.position() === 0,
+  String(w.__probe.position()));
+
+// --- 26. the volume, as two steps --------------------------------------------
+//
+// There is still one volume and one place it is kept: the arrows write into the
+// slider, which is what the link is read off and what the graph listens to.
+
+const volEl = () => parseFloat(id('aud-volume').value);
+const v0 = volEl();
+press(w, 'aud-vol-down');
+check('the down arrow turns it down', volEl() < v0, volEl() + ' from ' + v0);
+press(w, 'aud-vol-up');
+check('and the up arrow puts it back', Math.abs(volEl() - v0) < 1e-9, String(volEl()));
+check('the slider is what carries it, so a link made after pressing them agrees',
+  new RegExp('vol=' + volEl()).test(w.__probe.encodeState()), w.__probe.encodeState());
+
+for (let i = 0; i < 30 && !id('aud-vol-down').disabled; i++) press(w, 'aud-vol-down');
+check('an arrow with nowhere left to go says so rather than doing nothing',
+  volEl() === 0 && id('aud-vol-down').disabled && !id('aud-vol-up').disabled,
+  volEl() + ' down:' + id('aud-vol-down').disabled + ' up:' + id('aud-vol-up').disabled);
+for (let i = 0; i < 30 && !id('aud-vol-up').disabled; i++) press(w, 'aud-vol-up');
+check('and so does the other one', volEl() === 1 && id('aud-vol-up').disabled,
+  volEl() + ' up:' + id('aud-vol-up').disabled);
+
+// --- 27. the wave is the scrubber --------------------------------------------
+//
+// No bar under the transport. The picture of the track is the bar, and the line
+// on it is dragged. jsdom has no layout at all, so the box is given one here:
+// what is being checked is that a press at a fraction across it lands on that
+// fraction of the track, and that a drag keeps landing as it moves.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-mode-simple');
+
+const wave = id('aud-wave');
+wave.getBoundingClientRect = () => ({ left: 20, top: 0, width: 200, height: 100,
+  right: 220, bottom: 100, x: 20, y: 0 });
+const pointerAt = (type, clientX) => {
+  const e = new w.Event(type, { bubbles: true, cancelable: true });
+  e.clientX = clientX;
+  e.pointerId = 7;
+  wave.dispatchEvent(e);
+};
+// Asked for rather than written down: seekTo clamps, so the far end of the track
+// is whatever comes back from asking for a point past it.
+w.__probe.seekTo(1e9);
+const dur = w.__probe.position();
+
+check('the wave carries the playhead', Boolean(wave) && dur > 0, String(dur));
+pointerAt('pointerdown', 120);          // halfway across
+const half = w.__probe.position();
+check('a press halfway across lands halfway through the track',
+  Math.abs(half / dur - 0.5) < 0.02, half + ' of ' + dur);
+
+pointerAt('pointermove', 180);          // four fifths
+pointerAt('pointerup', 180);
+const far = w.__probe.position();
+check('and a drag keeps landing where the finger is',
+  Math.abs(far / dur - 0.8) < 0.02, far + ' of ' + dur);
+
+pointerAt('pointerdown', -50);          // dragged off the left edge
+check('past the end it stops at the end rather than going negative',
+  w.__probe.position() === 0, String(w.__probe.position()));
+pointerAt('pointerup', -50);
+
+// A move with no press before it is not a drag. Without the guard, a pointer
+// crossing the window would seek.
+const held = w.__probe.position();
+pointerAt('pointermove', 190);
+check('a move with nothing held moves nothing', w.__probe.position() === held,
+  held + ' -> ' + w.__probe.position());
+
+// And in the modes that have a scrubber of their own, the picture is a read-out.
+press(w, 'aud-mode-pro');
+w.__probe.seekTo(11);
+pointerAt('pointerdown', 180);
+check('in Pro the wave is looked at rather than pressed', w.__probe.position() === 11,
+  String(w.__probe.position()));
+pointerAt('pointerup', 180);
+
+// --- 28. the settings sheet ---------------------------------------------------
+//
+// Five controls that used to be glyphs on the bottom edge. They open where the
+// playlist opens, over the signal, so nothing anyone is aiming at moves.
+
+w = boot(DEMO2, () => res({ chunks: [] }));
+await settle();
+press(w, 'aud-mode-simple');
+w.__probe.setQueue([w.__probe.newEntry({ ref: 'demo', name: 'one.mp3' })], 0);
+
+const sheetEl = () => id('aud-settings');
+check('simple mode carries a way into the settings', Boolean(id('aud-simple-gear')));
+check('drawn rather than written, and named all the same',
+  id('aud-simple-gear').textContent.trim() === '' &&
+  Boolean(id('aud-simple-gear').querySelector('svg')) &&
+  /settings/i.test(id('aud-simple-gear').getAttribute('aria-label')),
+  id('aud-simple-gear').getAttribute('aria-label'));
+
+check('everything that left the bottom edge is in it',
+  ['aud-simple-pitch', 'aud-simple-tx', 'aud-simple-list', 'aud-simple-full', 'aud-simple-file']
+    .every((x) => sheetEl().contains(id(x))),
+  ['aud-simple-pitch', 'aud-simple-tx', 'aud-simple-list', 'aud-simple-full', 'aud-simple-file']
+    .filter((x) => !sheetEl().contains(id(x))).join(','));
+
+check('and the sentence that cannot be a symbol is beside the switch it is about',
+  sheetEl().contains(id('aud-simple-note')) &&
+  /sends short windows/.test(id('aud-simple-note').textContent),
+  id('aud-simple-note').textContent);
+
+check('closed to start with', w.__probe.settings() === false &&
+  !w.document.body.classList.contains('aud-set') &&
+  id('aud-simple-gear').getAttribute('aria-expanded') === 'false');
+
+press(w, 'aud-simple-gear');
+check('the gear opens it', w.__probe.settings() === true &&
+  w.document.body.classList.contains('aud-set') &&
+  id('aud-simple-gear').getAttribute('aria-expanded') === 'true');
+check('with the label offering the way back out',
+  /close/i.test(id('aud-simple-gear').getAttribute('aria-label')),
+  id('aud-simple-gear').getAttribute('aria-label'));
+
+// The pitch in here is the same pitch, so a link made after pressing it agrees.
+[...sheetEl().querySelectorAll('.aud-simple-st')].find((b) => b.getAttribute('data-st') === '5').click();
+check('the pitch in it is the one the link carries', /(^|&)p=5(&|$)/.test(w.__probe.encodeState()),
+  w.__probe.encodeState());
+
+press(w, 'aud-simple-gear');
+check('and the gear shuts it again', w.__probe.settings() === false);
+
+press(w, 'aud-simple-gear');
+press(w, 'aud-set-close');
+check('so does the button in its own corner', w.__probe.settings() === false);
+
+press(w, 'aud-simple-gear');
+w.document.dispatchEvent(Object.assign(new w.Event('keydown', { bubbles: true }), { key: 'Escape' }));
+check('and so does Escape', w.__probe.settings() === false);
+
+// Two sheets, one space. Whichever is asked for takes it.
+press(w, 'aud-simple-gear');
+press(w, 'aud-simple-list');
+check('opening the playlist from it closes it',
+  w.__probe.sheet() === true && w.__probe.settings() === false);
+press(w, 'aud-simple-gear');
+check('and asking for the settings back closes the playlist',
+  w.__probe.settings() === true && w.__probe.sheet() === false);
+
+press(w, 'aud-mode-pro');
+check('leaving simple mode closes it', w.__probe.settings() === false &&
+  !w.document.body.classList.contains('aud-set'));
+press(w, 'aud-simple-gear');
+check('and it cannot be opened from a mode that has no sheet', w.__probe.settings() === false);
+
+press(w, 'aud-mode-simple');
+press(w, 'aud-simple-gear');
+check('which of the two is open is not in the link',
+  !/(^|&)(set|settings)=/.test(w.__probe.encodeState()), w.__probe.encodeState());
+check('and not on disk either', !persisted.has('aud-set'), [...persisted.keys()].join(','));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

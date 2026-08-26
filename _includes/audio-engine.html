@@ -197,6 +197,8 @@
     'aud-mode', 'aud-mode-simple', 'aud-mode-pro', 'aud-mode-lab',
     'aud-simple-bar', 'aud-simple-echo', 'aud-simple-rev', 'aud-simple-pitch', 'aud-simple-file',
     'aud-simple-tx', 'aud-simple-note', 'aud-simple-share', 'aud-simple-full', 'aud-simple-list',
+    'aud-wave', 'aud-canvas2', 'aud-simple-fx', 'aud-simple-vol', 'aud-vol-up', 'aud-vol-down',
+    'aud-simple-stop', 'aud-simple-gear', 'aud-settings', 'aud-set-close',
     'aud-q-close',
     'aud-stems', 'aud-split-on', 'aud-split-params', 'aud-split-f1', 'aud-split-f1-val',
     'aud-split-f2', 'aud-split-f2-val', 'aud-stem-list', 'aud-stem-foot',
@@ -207,6 +209,10 @@
   ].forEach(function(id) { el[id] = document.getElementById(id); });
 
   var ctx2d = el['aud-canvas'].getContext('2d');
+  // Simple mode's second surface, and the only one the spectrum is drawn on
+  // there. The other two modes never touch it: it is not in their layout, has no
+  // size, and draw() does not hand it a frame.
+  var ctx2dB = el['aud-canvas2'] ? el['aud-canvas2'].getContext('2d') : null;
   var isLight = document.body.classList.contains('light-mode');
   new MutationObserver(function() {
     isLight = document.body.classList.contains('light-mode');
@@ -1390,16 +1396,28 @@
 
   // --- visualiser ------------------------------------------------------------
 
-  function sizeCanvas() {
+  // Which surface the drawing below is painting on. Simple mode has two and
+  // paints them one after the other inside a single frame -- the wave above the
+  // transport and the spectrum below it -- so the helpers cannot name one canvas
+  // and mean it.
+  var g = ctx2d;
+
+  function sizeOne(cx, canvas) {
+    if (!cx || !canvas) return;
     var dpr = window.devicePixelRatio || 1;
-    var rect = el['aud-canvas'].getBoundingClientRect();
+    var rect = canvas.getBoundingClientRect();
     if (!rect.width) return;
     // Rounded rather than left as a float. A canvas truncates what it is given,
-    // so a box 380.5 px wide read back as 380 while the check in draw() rounded
+    // so a box 380.5 px wide read back as 380 while the check in paint() rounded
     // to 381, and the two disagreed on every frame.
-    el['aud-canvas'].width = Math.round(rect.width * dpr);
-    el['aud-canvas'].height = Math.round(rect.height * dpr);
-    ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function sizeCanvas() {
+    sizeOne(ctx2d, el['aud-canvas']);
+    sizeOne(ctx2dB, el['aud-canvas2']);
   }
   window.addEventListener('resize', sizeCanvas);
 
@@ -1504,10 +1522,10 @@
   // Centred on what it is labelling, nudged inward by however wide it turns out
   // to be, so a marker at either end of the axis still reads.
   function curveLabel(text, x, yPos, w, rgba) {
-    var half = ctx2d.measureText(text).width / 2 + 2;
-    ctx2d.textAlign = 'center';
-    ctx2d.fillStyle = rgba;
-    ctx2d.fillText(text, Math.min(Math.max(x, half), w - half), yPos);
+    var half = g.measureText(text).width / 2 + 2;
+    g.textAlign = 'center';
+    g.fillStyle = rgba;
+    g.fillText(text, Math.min(Math.max(x, half), w - half), yPos);
   }
 
   function drawFilterCurve(w, base, span, r) {
@@ -1533,80 +1551,80 @@
     for (i = 0; i < CURVE_N; i++) curveX[i] = freqToX(curveHz[i], w);
 
     // Faint decades, because a log axis with nothing on it cannot be read.
-    ctx2d.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-    ctx2d.textBaseline = 'bottom';
+    g.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.textBaseline = 'bottom';
     [100, 1000, 10000].forEach(function(hz) {
       var gx = freqToX(hz, w);
-      ctx2d.strokeStyle = amber(0.1 + lift * 0.06);
-      ctx2d.lineWidth = 1;
-      ctx2d.beginPath();
-      ctx2d.moveTo(gx, yTop);
-      ctx2d.lineTo(gx, base);
-      ctx2d.stroke();
+      g.strokeStyle = amber(0.1 + lift * 0.06);
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(gx, yTop);
+      g.lineTo(gx, base);
+      g.stroke();
       curveLabel(formatFreqTick(hz), gx, base - 1, w, amber(0.38 + lift * 0.14));
     });
 
     // What survives the filter, as area under the curve.
-    ctx2d.beginPath();
-    ctx2d.moveTo(curveX[0], base);
-    for (i = 0; i < CURVE_N; i++) ctx2d.lineTo(curveX[i], y(curveDb[i]));
-    ctx2d.lineTo(curveX[CURVE_N - 1], base);
-    ctx2d.closePath();
-    ctx2d.fillStyle = amber(0.06 + lift * 0.09);
-    ctx2d.fill();
+    g.beginPath();
+    g.moveTo(curveX[0], base);
+    for (i = 0; i < CURVE_N; i++) g.lineTo(curveX[i], y(curveDb[i]));
+    g.lineTo(curveX[CURVE_N - 1], base);
+    g.closePath();
+    g.fillStyle = amber(0.06 + lift * 0.09);
+    g.fill();
 
     // The line the curve is read against.
-    ctx2d.save();
-    ctx2d.setLineDash([3, 4]);
-    ctx2d.strokeStyle = amber(0.16 + lift * 0.2);
-    ctx2d.lineWidth = 1;
-    ctx2d.beginPath();
-    ctx2d.moveTo(0, y(0));
-    ctx2d.lineTo(w, y(0));
-    ctx2d.stroke();
-    ctx2d.restore();
+    g.save();
+    g.setLineDash([3, 4]);
+    g.strokeStyle = amber(0.16 + lift * 0.2);
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, y(0));
+    g.lineTo(w, y(0));
+    g.stroke();
+    g.restore();
 
     // The curve itself.
-    ctx2d.beginPath();
+    g.beginPath();
     for (i = 0; i < CURVE_N; i++) {
-      if (i === 0) ctx2d.moveTo(curveX[0], y(curveDb[0]));
-      else ctx2d.lineTo(curveX[i], y(curveDb[i]));
+      if (i === 0) g.moveTo(curveX[0], y(curveDb[0]));
+      else g.lineTo(curveX[i], y(curveDb[i]));
     }
-    ctx2d.strokeStyle = amber(0.5 + lift * 0.45);
-    ctx2d.lineWidth = lift > 0 ? 2.5 : 2;
-    ctx2d.stroke();
+    g.strokeStyle = amber(0.5 + lift * 0.45);
+    g.lineWidth = lift > 0 ? 2.5 : 2;
+    g.stroke();
 
     // f0, and for a band type the two edges the centre sits between. The lines
     // start below the numbers rather than running through them.
     var edges = FILTER_IS_BAND[r.filterType] ? bandEdges(w) : [];
     var markTop = yTop + (lift > 0 ? 13 : 0);
-    ctx2d.save();
-    ctx2d.setLineDash([2, 3]);
-    ctx2d.strokeStyle = amber(0.2 + lift * 0.3);
-    ctx2d.lineWidth = 1;
+    g.save();
+    g.setLineDash([2, 3]);
+    g.strokeStyle = amber(0.2 + lift * 0.3);
+    g.lineWidth = 1;
     edges.forEach(function(hz) {
       var ex = freqToX(hz, w);
-      ctx2d.beginPath();
-      ctx2d.moveTo(ex, markTop);
-      ctx2d.lineTo(ex, base);
-      ctx2d.stroke();
+      g.beginPath();
+      g.moveTo(ex, markTop);
+      g.lineTo(ex, base);
+      g.stroke();
     });
-    ctx2d.restore();
+    g.restore();
 
     var fx = freqToX(f0, w);
-    ctx2d.strokeStyle = amber(0.35 + lift * 0.45);
-    ctx2d.lineWidth = 1.5;
-    ctx2d.beginPath();
-    ctx2d.moveTo(fx, markTop);
-    ctx2d.lineTo(fx, base);
-    ctx2d.stroke();
+    g.strokeStyle = amber(0.35 + lift * 0.45);
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(fx, markTop);
+    g.lineTo(fx, base);
+    g.stroke();
 
     // Numbers only while the emphasis is up, so a curve left alone stays quiet.
     // All on one line: the edges of a narrow notch are a few pixels apart and
     // would print on top of each other, and the strip is 55px tall on a phone,
     // which is not enough for a second row that does not land on the curve.
     if (lift > 0) {
-      ctx2d.textBaseline = 'top';
+      g.textBaseline = 'top';
       var text = formatFilterFreq(f0);
       if (edges.length === 2) {
         text += '\u2002' + formatFreqTick(edges[0]) + '\u2013' + formatFreqTick(edges[1]);
@@ -1615,84 +1633,190 @@
       if (target >= 0) text = stems[target].name + '\u2002' + text;
       curveLabel(text, fx, yTop + 1, w, amber(0.5 + lift * 0.5));
     }
-    ctx2d.textAlign = 'left';
+    g.textAlign = 'left';
   }
 
-  function draw() {
-    var rect = el['aud-canvas'].getBoundingClientRect();
+  // The loudest bin under each bar, kept between frames so a spectrum that is
+  // drawn twice -- once as a shape and once as the line along the top of it --
+  // is measured once.
+  var barPeak = new Float32Array(0);
+
+  // One surface. `time` and `freq` are whichever of the two readings belong on
+  // it, either or both; `head` asks for the playhead, and `step` for the skyline
+  // rather than the bars. Simple mode calls this twice a frame with one reading
+  // and one flag each; the other two call it once with both readings and neither
+  // flag, which is what puts the filter curve over the bars it is taking out.
+  //
+  // Both flags are passed rather than worked out from which reading arrived. Pro
+  // with its wave switched off also sends a spectrum on its own, and that is
+  // still Pro's spectrum: bars, under a curve that is read against them.
+  function paint(cx, canvas, time, freq, head, step) {
+    if (!cx || !canvas) return;
+
+    var rect = canvas.getBoundingClientRect();
     var w = rect.width;
     var h = rect.height;
 
     // Both dimensions. Width alone missed the two cases that only move the other
     // one: turning the immersive canvas on, and a phone hiding its address bar.
     var dpr = window.devicePixelRatio || 1;
-    if (w && (el['aud-canvas'].width !== Math.round(w * dpr) ||
-              el['aud-canvas'].height !== Math.round(h * dpr))) sizeCanvas();
+    if (w && (canvas.width !== Math.round(w * dpr) ||
+              canvas.height !== Math.round(h * dpr))) sizeOne(cx, canvas);
 
-    ctx2d.clearRect(0, 0, w, h);
+    g = cx;
+    g.clearRect(0, 0, w, h);
+    if (!w) return;
 
+    // The spectrum's own strip. Hoisted because the filter curve shares it and is
+    // drawn whether or not there is an analyser running behind it yet.
+    var both = Boolean(time) && Boolean(freq);
+    var base = both ? h * 0.95 : h * 0.9;
+    var span = both ? h * 0.5 : h * 0.75;
+
+    if (time) {
+      var mid = both ? h * 0.28 : h * 0.5;
+      var amp = both ? h * 0.2 : h * 0.36;
+      var bins = time.length;
+      g.beginPath();
+      for (var i = 0; i < bins; i++) {
+        var y = mid + ((time[i] / 128) - 1) * amp;
+        if (i === 0) g.moveTo(0, y);
+        else g.lineTo((i / bins) * w, y);
+      }
+      // Purple on its own canvas, green when it is sharing one with the bars: two
+      // readings drawn over each other need two colours, and one drawn alone can
+      // have the one the page was designed around.
+      g.strokeStyle = head
+        ? (isLight ? 'rgba(94,52,168,0.95)' : 'rgba(166,126,240,0.95)')
+        : (isLight ? 'rgba(34,160,80,0.85)' : 'rgba(100,220,140,0.85)');
+      g.lineWidth = 2;
+      g.stroke();
+    }
+
+    if (freq) {
+      var fbins = freq.length;
+      var nyq = sampleRate() / 2;
+      // Wide steps in the mode where the spectrum is a skyline to glance at,
+      // thin bars in the modes where it is a reading to be taken.
+      var bars = step
+        ? Math.max(12, Math.min(56, Math.round(w / 18)))
+        : Math.min(fbins, Math.max(24, Math.floor(w / 4)));
+      bars = Math.min(bars, fbins);
+      if (barPeak.length < bars) barPeak = new Float32Array(bars);
+      var bw = w / bars;
+
+      var drawn = 0;
+      for (var j = 0; j < bars; j++) {
+        // Log spaced, like the slider and like the curve drawn over the top. A bar
+        // covers a range of bins rather than one, so it reports the loudest of
+        // them; taking a single bin would drop peaks out of the wide bars up top.
+        var i0 = Math.floor(xToFreq(j * bw, w) / nyq * fbins);
+        var i1 = Math.ceil(xToFreq((j + 1) * bw, w) / nyq * fbins);
+        if (i0 >= fbins) break;
+        if (i1 <= i0) i1 = i0 + 1;
+        if (i1 > fbins) i1 = fbins;
+        var peak = 0;
+        for (var k = i0; k < i1; k++) { if (freq[k] > peak) peak = freq[k]; }
+        barPeak[j] = peak / 255;
+        drawn = j + 1;
+      }
+
+      if (!step) {
+        // Separated bars, each one shaded by how loud it is, so a single band can
+        // be picked out of the row and followed.
+        for (var b = 0; b < drawn; b++) {
+          var v = barPeak[b];
+          var bh = v * span;
+          g.fillStyle = isLight
+            ? 'rgba(200,50,50,' + (0.25 + v * 0.55) + ')'
+            : 'rgba(255,100,100,' + (0.25 + v * 0.55) + ')';
+          g.fillRect(b * bw, base - bh, Math.max(bw - 1.5, 1), bh);
+        }
+      } else if (drawn) {
+        // One stepped line instead, over the same numbers. On its own canvas the
+        // spectrum is a shape rather than a table: a skyline reads as one thing
+        // at a glance, where a row of separated bars asks to be counted through.
+        // The shape is filled and the top of it drawn again as a line, which is
+        // what makes a step read as a step when it is two pixels tall.
+        var red = isLight ? '200,50,50' : '255,100,100';
+        var s;
+        g.beginPath();
+        g.moveTo(0, base - barPeak[0] * span);
+        for (s = 0; s < drawn; s++) {
+          var sy = base - barPeak[s] * span;
+          g.lineTo(s * bw, sy);
+          g.lineTo(Math.min((s + 1) * bw, w), sy);
+        }
+        var endX = Math.min(drawn * bw, w);
+        g.lineTo(endX, base);
+        g.lineTo(0, base);
+        g.closePath();
+        g.fillStyle = 'rgba(' + red + ',0.16)';
+        g.fill();
+
+        g.beginPath();
+        g.moveTo(0, base - barPeak[0] * span);
+        for (s = 0; s < drawn; s++) {
+          var ty = base - barPeak[s] * span;
+          g.lineTo(s * bw, ty);
+          g.lineTo(Math.min((s + 1) * bw, w), ty);
+        }
+        g.strokeStyle = 'rgba(' + red + ',0.9)';
+        g.lineWidth = 2;
+        g.lineJoin = 'miter';
+        g.stroke();
+      }
+    }
+
+    // The curve belongs to the rack the panel is pointed at, which is the one the
+    // sliders under it are moving. It goes wherever the frequency axis is: the
+    // shared canvas in Pro and Experimental, and the spectrum's own in simple.
+    if (!head) {
+      var shown = rack();
+      if (shown.filterType) drawFilterCurve(w, base, span, shown);
+    }
+
+    // The playhead, which is simple mode's scrubber: the wave is the bar, and the
+    // line on it is where the track is. What has been played is shaded behind it,
+    // so how far in a track is reads without a clock to read it off.
+    if (head && audioBuffer && audioBuffer.duration > 0) {
+      var at = (scrubAt !== null ? scrubAt : position()) / audioBuffer.duration;
+      var px = (at < 0 ? 0 : at > 1 ? 1 : at) * w;
+      g.fillStyle = isLight ? 'rgba(94,52,168,0.09)' : 'rgba(166,126,240,0.12)';
+      g.fillRect(0, 0, px, h);
+      g.strokeStyle = isLight ? 'rgba(94,52,168,0.75)' : 'rgba(166,126,240,0.8)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(px, 0);
+      g.lineTo(px, h);
+      g.stroke();
+    }
+  }
+
+  function draw() {
     if (audioBuffer && playing) {
       var pos = position();
       el['aud-seek'].value = pos;
       el['aud-current'].textContent = formatTime(pos);
     }
 
-    // The spectrum's own strip, hoisted because the filter curve shares it and is
-    // drawn whether or not there is an analyser running behind it yet.
-    var half = showWave && showFreq;
-    var base = half ? h * 0.95 : h * 0.9;
-    var span = half ? h * 0.5 : h * 0.75;
-
-    if (analyser && w) {
+    // Read once, painted wherever it belongs. Simple mode puts the two readings
+    // on either side of the transport and the other two put them on top of each
+    // other, and neither of those is a reason to ask the analyser twice.
+    var time = null;
+    var freq = null;
+    if (analyser) {
       var bins = analyser.frequencyBinCount;
-
-      if (showWave) {
-        var time = new Uint8Array(bins);
-        analyser.getByteTimeDomainData(time);
-        var mid = half ? h * 0.28 : h * 0.5;
-        var amp = (half ? h * 0.2 : h * 0.36);
-        ctx2d.beginPath();
-        for (var i = 0; i < bins; i++) {
-          var y = mid + ((time[i] / 128) - 1) * amp;
-          if (i === 0) ctx2d.moveTo(0, y);
-          else ctx2d.lineTo((i / bins) * w, y);
-        }
-        ctx2d.strokeStyle = isLight ? 'rgba(34,160,80,0.85)' : 'rgba(100,220,140,0.85)';
-        ctx2d.lineWidth = 2;
-        ctx2d.stroke();
-      }
-
-      if (showFreq) {
-        var freq = new Uint8Array(bins);
-        analyser.getByteFrequencyData(freq);
-        var nyq = sampleRate() / 2;
-        var bars = Math.min(bins, Math.max(24, Math.floor(w / 4)));
-        var bw = w / bars;
-        // Log spaced, like the slider and like the curve drawn over the top. A bar
-        // now covers a range of bins rather than one, so it reports the loudest of
-        // them; taking a single bin would drop peaks out of the wide bars up top.
-        for (var j = 0; j < bars; j++) {
-          var i0 = Math.floor(xToFreq(j * bw, w) / nyq * bins);
-          var i1 = Math.ceil(xToFreq((j + 1) * bw, w) / nyq * bins);
-          if (i0 >= bins) break;
-          if (i1 <= i0) i1 = i0 + 1;
-          if (i1 > bins) i1 = bins;
-          var peak = 0;
-          for (var k = i0; k < i1; k++) { if (freq[k] > peak) peak = freq[k]; }
-          var v = peak / 255;
-          var bh = v * span;
-          ctx2d.fillStyle = isLight
-            ? 'rgba(200,50,50,' + (0.25 + v * 0.55) + ')'
-            : 'rgba(255,100,100,' + (0.25 + v * 0.55) + ')';
-          ctx2d.fillRect(j * bw, base - bh, Math.max(bw - 1.5, 1), bh);
-        }
-      }
+      if (showWave) { time = new Uint8Array(bins); analyser.getByteTimeDomainData(time); }
+      if (showFreq) { freq = new Uint8Array(bins); analyser.getByteFrequencyData(freq); }
     }
 
-    // The curve belongs to the rack the panel is pointed at, which is the one
-    // the sliders under it are moving.
-    var shown = rack();
-    if (shown.filterType && w) drawFilterCurve(w, base, span, shown);
+    if (uiMode === 'simple') {
+      paint(ctx2d, el['aud-canvas'], time, null, true, false);
+      paint(ctx2dB, el['aud-canvas2'], null, freq, false, true);
+    } else {
+      paint(ctx2d, el['aud-canvas'], time, freq, false, false);
+    }
 
     // Autocorrelation is far too costly to run every frame, and a note readout that
     // updates faster than this is unreadable anyway.
@@ -1874,6 +1998,10 @@
   }
 
   el['aud-stop'].addEventListener('click', stopPlayback);
+  // Simple mode's own, on the bottom edge rather than in the transport, where it
+  // is out of the way of the thumb working the play button. One function, two
+  // buttons, one of which is on the screen at a time.
+  if (el['aud-simple-stop']) el['aud-simple-stop'].addEventListener('click', stopPlayback);
 
   function seekTo(sec) {
     if (!audioBuffer) return;
@@ -1889,6 +2017,79 @@
   el['aud-seek'].addEventListener('input', function() {
     seekTo(parseFloat(el['aud-seek'].value) || 0);
   });
+
+  // --- the wave is the scrubber ----------------------------------------------
+  //
+  // Simple mode has no bar under the transport. It has a picture of the track
+  // with a line on it, and the line is dragged: the bar was a second drawing of
+  // the same number, in a strip of window that the picture could have had.
+  //
+  // The box round the canvas is what the drag is measured against rather than the
+  // canvas itself. They are the same rectangle until the immersive mode moves the
+  // drawing to the back of the window, and after that the box goes with it, so
+  // there is one rectangle either way and it is always the one being looked at.
+  //
+  // While a drag is in progress the playhead follows the finger rather than the
+  // sound. They are the same thing a few milliseconds later, but a line that
+  // waits for the audio graph to restart before it moves reads as a line that is
+  // stuck.
+
+  var scrubAt = null;    // seconds, while a drag is in progress; null otherwise
+  var scrubId = null;
+  var scrubLast = -1;
+
+  function scrubSeconds(e) {
+    var box = el['aud-wave'];
+    if (!box || !audioBuffer) return null;
+    var r = box.getBoundingClientRect();
+    if (!r.width) return null;
+    var t = (e.clientX - r.left) / r.width;
+    return (t < 0 ? 0 : t > 1 ? 1 : t) * audioBuffer.duration;
+  }
+
+  function scrubMove(e) {
+    var to = scrubSeconds(e);
+    if (to === null) return;
+    scrubAt = to;
+    // A drag crosses a few hundred pixels and every one of them would otherwise
+    // build a new source node and throw the last one away. A twentieth of a
+    // second is finer than a finger and coarser than a frame.
+    if (Math.abs(to - scrubLast) < 0.05) return;
+    scrubLast = to;
+    seekTo(to);
+  }
+
+  function scrubEnd(e) {
+    if (scrubId === null || (e && e.pointerId !== scrubId)) return;
+    var box = el['aud-wave'];
+    try { box.releasePointerCapture(scrubId); } catch (err) {}
+    scrubId = null;
+    if (scrubAt !== null) seekTo(scrubAt);
+    scrubAt = null;
+    scrubLast = -1;
+  }
+
+  if (el['aud-wave']) {
+    el['aud-wave'].addEventListener('pointerdown', function(e) {
+      // Only where the wave is a control. In Pro and Experimental it is a
+      // read-out beside a scrubber that is already on the screen.
+      if (uiMode !== 'simple' || !audioBuffer) return;
+      if (e.button !== undefined && e.button !== 0) return;
+      scrubId = e.pointerId;
+      try { el['aud-wave'].setPointerCapture(e.pointerId); } catch (err) {}
+      scrubLast = -1;
+      scrubMove(e);
+      e.preventDefault();
+    });
+
+    el['aud-wave'].addEventListener('pointermove', function(e) {
+      if (scrubId === null || e.pointerId !== scrubId) return;
+      scrubMove(e);
+    });
+
+    el['aud-wave'].addEventListener('pointerup', scrubEnd);
+    el['aud-wave'].addEventListener('pointercancel', scrubEnd);
+  }
 
   // --- continue in the background --------------------------------------------
   //
@@ -1926,7 +2127,39 @@
     if (sepGain) sepGain.gain.value = v;
     bgSync();
     el['aud-vol-val'].textContent = Math.round(v * 100) + '%';
+    syncVolSteps();
   });
+
+  // Simple mode's two arrows. There is still one volume and one place it is
+  // kept: these write into the slider and let it tell everyone, which is why a
+  // link made after pressing them carries what was pressed.
+  //
+  // A twentieth of the range a step, which is twenty presses end to end -- fine
+  // enough to land on a level and coarse enough to get there.
+  var VOL_STEP = 0.05;
+
+  function nudgeVolume(by) {
+    var v = parseFloat(el['aud-volume'].value);
+    if (isNaN(v)) v = 0.7;
+    v = Math.round((v + by) / VOL_STEP) * VOL_STEP;
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    el['aud-volume'].value = v;
+    el['aud-volume'].dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // An arrow with nowhere left to go says so rather than going grey on the press
+  // that does nothing.
+  function syncVolSteps() {
+    if (!el['aud-vol-up']) return;
+    var v = parseFloat(el['aud-volume'].value);
+    el['aud-vol-up'].disabled = !(v < 0.999);
+    el['aud-vol-down'].disabled = !(v > 0.001);
+  }
+
+  if (el['aud-vol-up']) {
+    el['aud-vol-up'].addEventListener('click', function() { nudgeVolume(VOL_STEP); });
+    el['aud-vol-down'].addEventListener('click', function() { nudgeVolume(-VOL_STEP); });
+  }
 
   // --- filter ----------------------------------------------------------------
 
@@ -2573,11 +2806,14 @@
     // contains.
     if (!labMode() && target >= 0) target = -1;
 
-    // The sheet belongs to simple mode's arrangement and to nothing else: the
+    // Both sheets belong to simple mode's arrangement and to nothing else: the
     // other two show the same list as a panel in the page, where it has always
-    // been. setSheet closes it in those, because it only ever opens in simple,
-    // and this is also what writes the chip's own label for the first time.
+    // been, and have the real version of every setting in panels beside it. Each
+    // call closes its sheet in those modes, because they only ever open in
+    // simple, and this is also what writes each chip's own label for the first
+    // time.
     setSheet(sheetOpen);
+    setSettings(setsOpen);
 
     if (remember) {
       try { window.localStorage.setItem(MODE_STORE, MODE_CODES[uiMode]); } catch (e) {}
@@ -2715,6 +2951,8 @@
   function setSheet(on) {
     sheetOpen = Boolean(on) && uiMode === 'simple';
     document.body.classList.toggle('aud-sheet', sheetOpen);
+    // Two sheets open into the same space. Whichever is asked for takes it.
+    if (sheetOpen && setsOpen) setSettings(false);
 
     var chip = el['aud-simple-list'];
     if (chip) {
@@ -2739,14 +2977,61 @@
   el['aud-simple-list'].addEventListener('click', function() { setSheet(!sheetOpen); });
   el['aud-q-close'].addEventListener('click', function() { setSheet(false); });
 
-  // Escape is what closes a thing that opened over something else, and the sheet
-  // is the only such thing on the page. Guarded on being open, so it never eats
-  // an Escape meant for anything else.
+  // --- the settings, in the same space -----------------------------------------
+  //
+  // Simple mode used to keep five controls along the bottom edge of the window as
+  // glyphs in two rows. The arrangement it has now spends that room on a
+  // transport with a picture above and below it, so those five moved in here --
+  // and being off the edge, they got their words back.
+  //
+  // It opens where the playlist opens, over the signal and above the dock, so
+  // nothing anyone is aiming at moves when it comes and goes. Not remembered
+  // anywhere: it is a thing you open, change something in, and close.
+
+  var setsOpen = false;
+
+  function setSettings(on) {
+    setsOpen = Boolean(on) && uiMode === 'simple';
+    document.body.classList.toggle('aud-set', setsOpen);
+    if (setsOpen && sheetOpen) setSheet(false);
+
+    var chip = el['aud-simple-gear'];
+    if (chip) {
+      chip.classList.toggle('is-on', setsOpen);
+      // aria-expanded and not aria-pressed: this opens a region rather than
+      // switching something on, and saying it twice in two vocabularies is what
+      // makes a screen reader read it out twice.
+      chip.setAttribute('aria-expanded', setsOpen ? 'true' : 'false');
+      var says = setsOpen ? 'Close settings' : 'Settings';
+      chip.setAttribute('aria-label', says);
+      chip.setAttribute('title', says);
+    }
+
+    // The wave is not in the layout at all while a sheet is up, so it comes back
+    // with no size of its own and has to be measured again.
+    sizeCanvas();
+  }
+
+  if (el['aud-simple-gear']) {
+    el['aud-simple-gear'].addEventListener('click', function() { setSettings(!setsOpen); });
+  }
+  if (el['aud-set-close']) {
+    el['aud-set-close'].addEventListener('click', function() { setSettings(false); });
+  }
+
+  // Escape is what closes a thing that opened over something else, and the two
+  // sheets are the only such things on the page. Guarded on one being open, so it
+  // never eats an Escape meant for anything else.
   document.addEventListener('keydown', function(e) {
-    if (!sheetOpen) return;
+    if (!sheetOpen && !setsOpen) return;
     if (e.key !== 'Escape' && e.key !== 'Esc') return;
-    setSheet(false);
-    el['aud-simple-list'].focus();
+    if (sheetOpen) {
+      setSheet(false);
+      el['aud-simple-list'].focus();
+    } else {
+      setSettings(false);
+      if (el['aud-simple-gear']) el['aud-simple-gear'].focus();
+    }
   });
 
   // --- the chain strip -------------------------------------------------------

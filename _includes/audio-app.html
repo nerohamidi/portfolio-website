@@ -73,7 +73,15 @@
       <span class="aud-tx-tip" id="aud-tx-tip">off until you tick it &middot; then short windows of the track go to Gemini</span>
     </div>
 
-    <canvas class="aud-canvas" id="aud-canvas"></canvas>
+    <!-- The signal, and the only thing in simple mode that can be aimed at
+         without being a button. The canvas sits in a box of its own rather than
+         in the player's flow directly, because the immersive mode moves the
+         drawing to the back of the window and the place people press has to stay
+         where the picture was: the box is that place, and it goes with the
+         drawing. -->
+    <div class="aud-wave" id="aud-wave">
+      <canvas class="aud-canvas" id="aud-canvas"></canvas>
+    </div>
 
     <div class="aud-note-row" id="aud-note-row">
       <span class="aud-note-name" id="aud-note-name">&mdash;</span>
@@ -84,20 +92,14 @@
       <span class="aud-note-tip">clearest on a single instrument or voice</span>
     </div>
 
+    <!-- The transcript. In Pro it is a caption under the picture, which is where
+         a caption goes; in simple mode it is the first thing in the window,
+         because on a shared link the words are usually the reason the link was
+         sent. One element either way -- the stylesheet lifts it, nothing is
+         moved or rebuilt. -->
     <div class="aud-caption hidden" id="aud-caption">
       <p class="aud-caption-line" id="aud-caption-line"></p>
     </div>
-
-    <!-- The one line that cannot be cut for brevity, and the only thing in simple
-         mode that is still a sentence: transcribing sends audio somewhere, and the
-         person pressing the button has to know that before they press it. A symbol
-         cannot say it, so it is not asked to.
-
-         It sits above the dock rather than inside it. The line is one sentence on
-         a wide window and three on a narrow one, and anything that changes height
-         below the transport moves the transport. Above it, the visualiser gives up
-         the pixels instead, and nothing anyone is aiming at shifts. -->
-    <p class="aud-simple-note" id="aud-simple-note"></p>
 
     <!-- The dock: everything that is aimed at rather than looked at, in one box.
          Simple mode pins it to the bottom of the window the way a phone's music
@@ -118,6 +120,23 @@
       </div>
 
       <div class="aud-transport">
+        <!-- The two effects, as words rather than as glyphs. Everything else in
+             this mode is a symbol because a symbol is read at a glance, but a
+             reverb and an echo have no picture anyone already knows -- the
+             drawings that used to be here were a decaying comb and a pair of
+             brackets, and both of them had to be hovered to be read. Three
+             letters and four say it outright.
+
+             Inside the transport rather than beside it, because the play button
+             is centred by the grid below and a control that is not one of the
+             grid's own columns cannot be measured against it. -->
+        <div class="aud-simple-fx" id="aud-simple-fx" role="group" aria-label="Effects">
+          <button class="aud-simple-word" id="aud-simple-rev" type="button"
+                  aria-pressed="false" aria-label="Reverb" title="Reverb">Rev.</button>
+          <button class="aud-simple-word" id="aud-simple-echo" type="button"
+                  aria-pressed="false" aria-label="Echo" title="Echo">Echo</button>
+        </div>
+
         <button class="aud-round" id="aud-stop" type="button" aria-label="Stop">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
         </button>
@@ -139,112 +158,84 @@
           <input type="range" id="aud-volume" class="aud-volume" min="0" max="1" value="0.7" step="0.01" aria-label="Volume">
           <span class="aud-vol-val" id="aud-vol-val">70%</span>
         </div>
+
+        <!-- The same volume, as two steps and a word. A slider is a thing to
+             land on; on the mode people open a shared link into, on a phone,
+             held in one hand, two arrows are a thing to press. It writes into
+             the slider above and lets it tell everyone, so there is still one
+             volume and one place it is kept.
+
+             The word between them is a label, not a readout: the number that
+             used to be here said in digits what the sound already says. -->
+        <div class="aud-simple-vol" id="aud-simple-vol" role="group" aria-label="Volume">
+          <button class="aud-vol-step" id="aud-vol-up" type="button" aria-label="Louder" title="Louder">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15.5 12 8.5l7 7"/></svg>
+          </button>
+          <span class="aud-vol-word" aria-hidden="true">Vol</span>
+          <button class="aud-vol-step" id="aud-vol-down" type="button" aria-label="Quieter" title="Quieter">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5 12 15.5l7-7"/></svg>
+          </button>
+        </div>
       </div>
 
-      <!-- Simple mode's whole control surface, and hidden everywhere else.
-           Symbols rather than words: this is the mode people open a link into, on
-           a phone, and a glyph is read at a glance where a row of labels is read
-           one at a time. Every one of them names itself in an aria-label and a
-           title, so what was taken off the screen is still on the button for a
-           screen reader and for anyone who hovers to check.
+      <!-- The spectrum, on the other side of the controls from the wave. Simple
+           mode is the only place the two are drawn apart: one canvas cannot have
+           a transport through the middle of it, and the arrangement is what the
+           mode is for. Pro and Experimental keep the single canvas above, where
+           the filter curve is read against the bars it is taking out.
 
-           The semitones keep their numerals. A pitch is a quantity, and five
-           arrows without a legend say which way but never how far.
+           Its height is fixed rather than flexible. Everything below it -- the
+           controls, the link, the settings -- is on the bottom edge of the
+           window and must not move, and everything above it can give up pixels
+           instead. -->
+      <canvas class="aud-canvas2" id="aud-canvas2" aria-hidden="true"></canvas>
 
-           Two rows, always the same two: what shapes the sound, then what to do
-           with it. Every button is in the markup whether or not it can do anything
-           yet, so what wraps is decided by the width of the window and by nothing
-           else -- the row a control is on never changes under someone's thumb. -->
+      <!-- The bottom edge. Two corners and the middle: the link on the left, the
+           way out of the track in the middle, and everything that is a setting
+           behind the one button on the right. -->
       <div class="aud-simple-bar" id="aud-simple-bar">
-        <div class="aud-simple-row">
-          <button class="aud-simple-chip aud-simple-icon" id="aud-simple-echo" type="button"
-                  aria-pressed="false" aria-label="Echo" title="Echo">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3.2" y="5" width="2.4" height="14" rx="1.2" fill="currentColor" stroke="none"/>
-              <rect x="9" y="7.25" width="2.4" height="9.5" rx="1.2" fill="currentColor" stroke="none"/>
-              <rect x="14.8" y="9" width="2.4" height="6" rx="1.2" fill="currentColor" stroke="none"/>
-              <rect x="19.4" y="10.25" width="2.4" height="3.5" rx="1.2" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-          <button class="aud-simple-chip aud-simple-icon" id="aud-simple-rev" type="button"
-                  aria-pressed="false" aria-label="Reverb" title="Reverb">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M9.2 8.4Q6.2 12 9.2 15.6M6.2 5.4Q1.8 12 6.2 18.6M14.8 8.4Q17.8 12 14.8 15.6M17.8 5.4Q22.2 12 17.8 18.6"/>
-              <circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-          <span class="aud-simple-div" aria-hidden="true"></span>
-          <span class="aud-simple-pitch" id="aud-simple-pitch" role="group" aria-label="Pitch, in semitones">
-            <span class="aud-simple-tag" aria-hidden="true" title="Pitch, in semitones">
-              <svg viewBox="0 0 24 24"><path d="M9.6 17.4V5.2l8.8-1.8v11.4"/><ellipse cx="6.9" cy="17.6" rx="2.9" ry="2.3" fill="currentColor" stroke="none"/><ellipse cx="15.7" cy="15.6" rx="2.9" ry="2.3" fill="currentColor" stroke="none"/></svg>
-            </span>
-            <button class="aud-simple-chip aud-simple-st" data-st="-12" type="button" aria-label="Down 12 semitones">&minus;12</button>
-            <button class="aud-simple-chip aud-simple-st" data-st="-5" type="button" aria-label="Down 5 semitones">&minus;5</button>
-            <button class="aud-simple-chip aud-simple-st is-on" data-st="0" type="button" aria-label="Unchanged pitch">0</button>
-            <button class="aud-simple-chip aud-simple-st" data-st="5" type="button" aria-label="Up 5 semitones">+5</button>
-            <button class="aud-simple-chip aud-simple-st" data-st="12" type="button" aria-label="Up 12 semitones">+12</button>
-          </span>
-        </div>
-        <div class="aud-simple-row">
-          <!-- The playlist, which simple mode used to do without: the step buttons
-               could walk a list nobody could see, and the only way to look at it
-               was to leave the mode the link had opened in. It opens over the
-               visualiser rather than under the controls, so the transport is in
-               the same place whether the list is up or not. -->
-          <button class="aud-simple-chip aud-simple-icon aud-simple-list" id="aud-simple-list" type="button"
-                  aria-expanded="false" aria-controls="aud-queue"
-                  aria-label="Show the playlist" title="Show the playlist">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3.2 6.4h12.4M3.2 11.6h12.4M3.2 16.8h7.4"/>
-              <path d="M15.8 13.6v7.2l6-3.6z" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-          <button class="aud-simple-chip aud-simple-icon" id="aud-simple-tx" type="button"
-                  aria-pressed="false" aria-label="Transcribe as it plays" title="Transcribe as it plays">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="2.6" y="4.4" width="18.8" height="12.4" rx="3"/>
-              <path d="M8 16.8V21l4.6-4.2M6.6 9h10.8M6.6 12.4h6.8"/>
-            </svg>
-          </button>
-          <!-- The link. Simple mode has no title, no note and no password around
-               it, which is exactly the case the share already treats as a plain
-               link with the whole state in its hash -- so this is the same button
-               as Pro's, with a different ending: the platform's own share sheet
-               where there is one, and the clipboard where there is not. -->
-          <button class="aud-simple-chip aud-simple-icon aud-simple-share" id="aud-simple-share" type="button"
-                  data-state="idle" aria-label="Make a link to this" title="Make a link to this">
-            <svg class="aud-sym-idle" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="17.8" cy="5.6" r="2.8"/><circle cx="6.2" cy="12" r="2.8"/><circle cx="17.8" cy="18.4" r="2.8"/>
-              <path d="M8.6 10.6 15.4 7M8.6 13.4 15.4 17"/>
-            </svg>
-            <svg class="aud-sym-busy" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="8" opacity="0.3"/><path d="M20 12a8 8 0 0 0-8-8"/>
-            </svg>
-            <svg class="aud-sym-done" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 12.4 5 5 10-11"/></svg>
-            <svg class="aud-sym-fail" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 4 21 20H3zM12 10v4.4"/><circle cx="12" cy="17.4" r="1.1" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-          <!-- The box around the signal, or no box at all. Off by default: a
-               rectangle is what a player looks like, and a visualiser that takes
-               the whole window is a thing to ask for rather than a thing to be
-               handed on a first visit. -->
-          <button class="aud-simple-chip aud-simple-icon aud-simple-full" id="aud-simple-full" type="button"
-                  data-state="off" aria-pressed="false" aria-label="Fill the window with the signal"
-                  title="Fill the window with the signal">
-            <svg class="aud-sym-off" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M9 3H4.6A1.6 1.6 0 0 0 3 4.6V9M15 3h4.4A1.6 1.6 0 0 1 21 4.6V9M21 15v4.4a1.6 1.6 0 0 1-1.6 1.6H15M3 15v4.4A1.6 1.6 0 0 0 4.6 21H9"/>
-            </svg>
-            <svg class="aud-sym-on" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 9h4.4A1.6 1.6 0 0 0 9 7.4V3M21 9h-4.4A1.6 1.6 0 0 1 15 7.4V3M21 15h-4.4a1.6 1.6 0 0 0-1.6 1.6V21M3 15h4.4A1.6 1.6 0 0 1 9 16.6V21"/>
-            </svg>
-          </button>
-          <label class="aud-btn aud-btn-sm aud-simple-icon" for="aud-simple-file" tabindex="0"
-                 role="button" aria-label="Change the track" title="Change the track">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.6A1.6 1.6 0 0 1 4.6 5h4.2l2 2.6h8.6A1.6 1.6 0 0 1 21 9.2v9.2A1.6 1.6 0 0 1 19.4 20H4.6A1.6 1.6 0 0 1 3 18.4z"/></svg>
-          </label>
-          <input type="file" id="aud-simple-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
-        </div>
+        <!-- The link. Simple mode has no title, no note and no password around
+             it, which is exactly the case the share already treats as a plain
+             link with the whole state in its hash -- so this is the same button
+             as Pro's, with a different ending: the platform's own share sheet
+             where there is one, and the clipboard where there is not. -->
+        <button class="aud-simple-chip aud-simple-icon aud-simple-share" id="aud-simple-share" type="button"
+                data-state="idle" aria-label="Make a link to this" title="Make a link to this">
+          <svg class="aud-sym-idle" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="17.8" cy="5.6" r="2.8"/><circle cx="6.2" cy="12" r="2.8"/><circle cx="17.8" cy="18.4" r="2.8"/>
+            <path d="M8.6 10.6 15.4 7M8.6 13.4 15.4 17"/>
+          </svg>
+          <svg class="aud-sym-busy" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8" opacity="0.3"/><path d="M20 12a8 8 0 0 0-8-8"/>
+          </svg>
+          <svg class="aud-sym-done" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 12.4 5 5 10-11"/></svg>
+          <svg class="aud-sym-fail" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 4 21 20H3zM12 10v4.4"/><circle cx="12" cy="17.4" r="1.1" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+
+        <!-- Stop, which the transport above no longer has room for and which a
+             play button that says pause does not replace: one returns to the top
+             of the track and the other stays where it is. Down here it is out of
+             the way of the thumb that is working the transport, which is the
+             only argument against it being up there. -->
+        <button class="aud-simple-chip aud-simple-icon" id="aud-simple-stop" type="button"
+                aria-label="Stop" title="Stop">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        </button>
+
+        <!-- Everything that is a choice rather than a control. The pitch, the
+             transcript, the playlist, the box round the signal and the way to a
+             different track are all one press away and none of them is on the
+             screen while the track is playing. -->
+        <button class="aud-simple-chip aud-simple-icon aud-simple-gear" id="aud-simple-gear" type="button"
+                aria-expanded="false" aria-controls="aud-settings"
+                aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2.6l1.7 2.5 3-.4.4 3 2.5 1.7-1.4 2.6 1.4 2.6-2.5 1.7-.4 3-3-.4L12 21.4l-1.7-2.5-3 .4-.4-3-2.5-1.7L5.8 12 4.4 9.4l2.5-1.7.4-3 3 .4z"/>
+            <circle cx="12" cy="12" r="2.6"/>
+          </svg>
+        </button>
       </div>
 
       <div class="aud-bg-bar">
@@ -253,6 +244,96 @@
           <span>Continue in the background</span>
         </label>
         <span class="aud-bg-tip" id="aud-bg-tip"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings
+       Simple mode's second sheet, and everything it holds is a control the mode
+       used to keep on the bottom edge of the window. Five of them fitted while
+       they were glyphs in two rows; the arrangement the page has now has room
+       for a transport and two pictures and not for those, so they moved in here
+       and got their words back.
+
+       It opens where the playlist opens -- over the signal, above the dock --
+       so the controls underneath stay at the pixel they were at. Only simple
+       mode ever shows it: Pro and Experimental have the real versions of all
+       five, in panels, in the page. -->
+  <section class="aud-panel aud-settings" id="aud-settings" aria-label="Settings">
+    <div class="aud-panel-head">
+      <h2 class="aud-panel-title">Settings</h2>
+      <button class="aud-q-close" id="aud-set-close" type="button" aria-label="Close settings" title="Close settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="aud-set-list">
+      <div class="aud-set-row">
+        <span class="aud-set-name">Pitch</span>
+        <!-- The five semitones keep their numerals. A pitch is a quantity, and
+             five arrows without a legend say which way but never how far. -->
+        <span class="aud-simple-pitch" id="aud-simple-pitch" role="group" aria-label="Pitch, in semitones">
+          <button class="aud-simple-chip aud-simple-st" data-st="-12" type="button" aria-label="Down 12 semitones">&minus;12</button>
+          <button class="aud-simple-chip aud-simple-st" data-st="-5" type="button" aria-label="Down 5 semitones">&minus;5</button>
+          <button class="aud-simple-chip aud-simple-st is-on" data-st="0" type="button" aria-label="Unchanged pitch">0</button>
+          <button class="aud-simple-chip aud-simple-st" data-st="5" type="button" aria-label="Up 5 semitones">+5</button>
+          <button class="aud-simple-chip aud-simple-st" data-st="12" type="button" aria-label="Up 12 semitones">+12</button>
+        </span>
+      </div>
+
+      <div class="aud-set-row aud-set-row-tx">
+        <span class="aud-set-name">Transcribe as it plays</span>
+        <button class="aud-simple-chip aud-simple-icon" id="aud-simple-tx" type="button"
+                aria-pressed="false" aria-label="Transcribe as it plays" title="Transcribe as it plays">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2.6" y="4.4" width="18.8" height="12.4" rx="3"/>
+            <path d="M8 16.8V21l4.6-4.2M6.6 9h10.8M6.6 12.4h6.8"/>
+          </svg>
+        </button>
+        <!-- The one line that cannot be cut for brevity: transcribing sends
+             audio somewhere, and the person pressing the button has to know that
+             before they press it. A symbol cannot say it, so it is not asked to,
+             and it sits with the button it is about rather than on a screen the
+             button is no longer on. -->
+        <p class="aud-simple-note" id="aud-simple-note"></p>
+      </div>
+
+      <div class="aud-set-row">
+        <span class="aud-set-name">Playlist</span>
+        <button class="aud-simple-chip aud-simple-icon aud-simple-list" id="aud-simple-list" type="button"
+                aria-expanded="false" aria-controls="aud-queue"
+                aria-label="Show the playlist" title="Show the playlist">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3.2 6.4h12.4M3.2 11.6h12.4M3.2 16.8h7.4"/>
+            <path d="M15.8 13.6v7.2l6-3.6z" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="aud-set-row">
+        <span class="aud-set-name">Fill the window with the signal</span>
+        <!-- Off by default: a rectangle is what a player looks like, and a
+             visualiser that takes the whole window is a thing to ask for rather
+             than a thing to be handed on a first visit. -->
+        <button class="aud-simple-chip aud-simple-icon aud-simple-full" id="aud-simple-full" type="button"
+                data-state="off" aria-pressed="false" aria-label="Fill the window with the signal"
+                title="Fill the window with the signal">
+          <svg class="aud-sym-off" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 3H4.6A1.6 1.6 0 0 0 3 4.6V9M15 3h4.4A1.6 1.6 0 0 1 21 4.6V9M21 15v4.4a1.6 1.6 0 0 1-1.6 1.6H15M3 15v4.4A1.6 1.6 0 0 0 4.6 21H9"/>
+          </svg>
+          <svg class="aud-sym-on" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 9h4.4A1.6 1.6 0 0 0 9 7.4V3M21 9h-4.4A1.6 1.6 0 0 1 15 7.4V3M21 15h-4.4a1.6 1.6 0 0 0-1.6 1.6V21M3 15h4.4A1.6 1.6 0 0 1 9 16.6V21"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="aud-set-row">
+        <span class="aud-set-name">Change the track</span>
+        <label class="aud-btn aud-btn-sm aud-simple-icon" for="aud-simple-file" tabindex="0"
+               role="button" aria-label="Change the track" title="Change the track">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.6A1.6 1.6 0 0 1 4.6 5h4.2l2 2.6h8.6A1.6 1.6 0 0 1 21 9.2v9.2A1.6 1.6 0 0 1 19.4 20H4.6A1.6 1.6 0 0 1 3 18.4z"/></svg>
+        </label>
+        <input type="file" id="aud-simple-file" accept=".mp3,.wav,.ogg,.oga,.flac,.m4a,.mp4,.aac,.aiff,.aif,.weba,audio/*" multiple hidden>
       </div>
     </div>
   </section>
