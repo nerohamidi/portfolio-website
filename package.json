@@ -1,0 +1,11 @@
+{
+  "name": "portfolio-website",
+  "private": true,
+  "description": "Tests for the site's scripts and the Worker. The site itself needs no build.",
+  "scripts": {
+    "test": "node test/audio.test.mjs && node api-proxy/test/worker.test.mjs && node api-proxy/test/audio.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signal Playground · Nero Hamidi</title>
+  <meta name="description" content="Build waveforms, add and convolve them, and see their frequency domain.">
+  <link rel="stylesheet" href="../../assets/style.css">
+</head>
+<body>
+  <header>
+    <a href="../../">Nero Hamidi</a>
+    <nav>
+      <a href="../../about/">About</a>
+      <a href="../../projects/">Projects</a>
+      <a href="../" aria-current="page">Playroom</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Signal Playground</h1>
+    <p>Three waves. Each can be shown in time or in frequency and sounded as a tone; combine them by adding, subtracting or convolving. For loading and sharing audio, see <a href="../audio/">Signal Share</a>.</p>
+
+    <canvas id="scope" height="400"></canvas>
+
+    <fieldset class="wave">
+      <legend><label><input type="checkbox" class="on" checked> W1</label></legend>
+      <label class="row">frequency <input type="range" class="freq" min="0.1" max="1" step="0.01" value="0.3"> <output>0.30 Hz</output></label>
+      <label class="row">amplitude <input type="range" class="amp" min="0.1" max="2" step="0.05" value="1"> <output>1.00</output></label>
+      <p class="controls">
+        <select class="type" aria-label="W1 shape"><option value="sin">sine</option><option value="cos">cosine</option><option value="square">square</option><option value="sawtooth">sawtooth</option><option value="triangle">triangle</option></select>
+        <button type="button" class="view" aria-pressed="false">frequency view</button>
+        <button type="button" class="tone" aria-pressed="false">play tone</button>
+      </p>
+    </fieldset>
+
+    <fieldset class="wave">
+      <legend><label><input type="checkbox" class="on" checked> W2</label></legend>
+      <label class="row">frequency <input type="range" class="freq" min="0.1" max="1" step="0.01" value="0.5"> <output>0.50 Hz</output></label>
+      <label class="row">amplitude <input type="range" class="amp" min="0.1" max="2" step="0.05" value="1"> <output>1.00</output></label>
+      <p class="controls">
+        <select class="type" aria-label="W2 shape"><option value="sin">sine</option><option value="cos">cosine</option><option value="square">square</option><option value="sawtooth">sawtooth</option><option value="triangle">triangle</option></select>
+        <button type="button" class="view" aria-pressed="false">frequency view</button>
+        <button type="button" class="tone" aria-pressed="false">play tone</button>
+      </p>
+    </fieldset>
+
+    <fieldset class="wave">
+      <legend><label><input type="checkbox" class="on" checked> W3</label></legend>
+      <label class="row">frequency <input type="range" class="freq" min="0.1" max="1" step="0.01" value="0.2"> <output>0.20 Hz</output></label>
+      <label class="row">amplitude <input type="range" class="amp" min="0.1" max="2" step="0.05" value="1"> <output>1.00</output></label>
+      <p class="controls">
+        <select class="type" aria-label="W3 shape"><option value="sin">sine</option><option value="cos">cosine</option><option value="square">square</option><option value="sawtooth">sawtooth</option><option value="triangle">triangle</option></select>
+        <button type="button" class="view" aria-pressed="false">frequency view</button>
+        <button type="button" class="tone" aria-pressed="false">play tone</button>
+      </p>
+    </fieldset>
+
+    <fieldset id="combine">
+      <legend><label><input type="checkbox" id="combine-on"> Combine</label></legend>
+      <p class="controls">
+        W1 <button type="button" class="op" aria-label="Operation between W1 and W2">+</button>
+        W2 <button type="button" class="op" aria-label="Operation between W2 and W3">+</button>
+        W3
+        <button type="button" id="combine-view" aria-pressed="false">frequency view</button>
+        <button type="button" id="combine-tone" aria-pressed="false">play tone</button>
+      </p>
+      <p class="muted">Press an operator to cycle through + (add), − (subtract) and ∗ (convolve). Tones play the sliders' frequencies a thousand times faster, so 0.30 Hz sounds at 300 Hz.</p>
+    </fieldset>
+  </main>
+
+  <script src="../../assets/js/signals.js"></script>
+</body>
+</html>

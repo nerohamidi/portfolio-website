@@ -1,8 +1,8 @@
 # Shareable audio clips
 
-Signal Share (`/playroom/audio/`, markup in `_includes/audio-app.html`, logic in
-`_includes/audio-engine.html`) puts its control state in the URL hash and, when the
-user has loaded their own audio, stores the file in R2 and puts its id in the hash too.
+Signal Share (`/playroom/audio/`, markup in `playroom/audio/index.html`, logic in
+`assets/js/audio.js`) puts its control state in the URL hash and, when the user has
+loaded their own audio, stores the file in R2 and puts its id in the hash too.
 A share now carries a *playlist* of those ids rather than a single one. This Worker
 serves both halves of that, plus the preview card a titled share links through, plus
 the transcription the page runs when a listener asks for one.
@@ -182,9 +182,8 @@ mostly silence as far as it is concerned — an invented line is worse than a ga
 because it scrolls past under the audio as if it had been heard. Timings that come back
 outside the window are dropped rather than clamped, for the same reason.
 
-Word-level timings do not come back from this model. The page spreads a line over its
-own span when they are missing, so the caption still arrives a word at a time; see
-`txSpreadWords` in the engine.
+Word-level timings do not come back from this model; the page shows each line whole
+while the playhead is inside it.
 
 The Worker measures each window's duration from its RIFF header rather than
 trusting a query parameter, which is also the format check: nothing that is not a
@@ -268,8 +267,8 @@ node test/worker.test.mjs   # the chatbot proxy
 node test/audio.test.mjs    # clips, transcription, the transcript cache
 ```
 
-The page's own logic has a harness at `../test/audio-page.test.mjs`, which drives
-the real engine in jsdom and needs `npm install jsdom`.
+The page's own logic has a harness at `../test/audio.test.mjs`, which drives the
+real script in jsdom; `npm install` at the repository root fetches jsdom.
 
 ## Storage caps
 
@@ -321,4 +320,4 @@ The transcription model is `TRANSCRIBE_MODEL` in `wrangler.toml`, with the same 
 as a fallback in `src/transcribe.js`; it has to be a model that takes audio input, and
 it is a separate choice from the chatbot's, which is `MODEL` in `src/index.js`. Window
 length, how far ahead of the playhead the page works, and how many tracks a playlist
-holds are all constants at the top of `_includes/audio-engine.html`.
+holds are all constants at the top of `assets/js/audio.js`.
