@@ -628,6 +628,7 @@
   var bgUrl = null;       // object URL of the current track, iOS only
   var bgActive = false;   // the element, not the graph, has the track
   var bgPrimed = false;   // the element has played once from a real gesture
+  var priming = false;    // the muted unlock play is in flight, so leave it be
 
   function adoptBg(bytes, type) {
     releaseBg();
@@ -637,6 +638,7 @@
 
   function releaseBg() {
     bgActive = false;
+    el.bg.muted = true;
     el.bg.pause();
     el.bg.removeAttribute('src');
     el.bg.load();
@@ -651,15 +653,17 @@
   function primeBg() {
     if (bgPrimed || !IOS || !bgUrl) return;
     bgPrimed = true;
+    priming = true;
     el.bg.muted = true;
     var p = el.bg.play();
-    if (!p || !p.then) return;
+    if (!p || !p.then) { priming = false; keepBgSilent(); return; }
     p.then(function () {
-      if (!bgActive) { el.bg.pause(); el.bg.currentTime = 0; }
-      el.bg.muted = false;
+      priming = false;
+      keepBgSilent();
     }, function () {
-      el.bg.muted = false;
+      priming = false;
       bgPrimed = false;
+      keepBgSilent();
     });
   }
 
@@ -678,7 +682,11 @@
     var p = el.bg.play();
     if (p && p.catch) {
       p.catch(function () {
+        // A rejection that lands after playback was handed back to the graph
+        // is stale: acting on it would stop the graph or clear the flag.
+        if (!bgActive) return;
         bgActive = false;
+        el.bg.muted = true;
         offset = Math.max(0, sec || 0);
         setPlaying(false);
       });
@@ -688,6 +696,18 @@
 
   function stopBg() {
     bgActive = false;
+    el.bg.muted = true;
+    el.bg.pause();
+  }
+
+  // iOS resolves a queued play() on its own schedule, and can start the element
+  // playing again just after playback was handed back to the graph, so the two
+  // run together a few frames apart. The element is the output only while
+  // bgActive (and, muted, during the priming play); any other time it begins to
+  // play, silence and stop it at once.
+  function keepBgSilent() {
+    if (bgActive || priming) return;
+    el.bg.muted = true;
     el.bg.pause();
   }
 
@@ -704,6 +724,10 @@
     offset = el.bg.currentTime || 0;
     setPlaying(false);
   });
+
+  // A stray or iOS-resumed play must not sound under the graph (see keepBgSilent).
+  el.bg.addEventListener('play', keepBgSilent);
+  el.bg.addEventListener('playing', keepBgSilent);
 
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {

@@ -109,9 +109,11 @@ function reply(json, status = 200, headers = {}) {
   return new Response(JSON.stringify(json), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 }
 
-async function boot({ hash = '', handlers = [] } = {}) {
+async function boot({ hash = '', handlers = [], userAgent } = {}) {
   const dom = new JSDOM(html, { url: PAGE + hash, runScripts: 'outside-only', pretendToBeVisual: false });
   const win = dom.window;
+  // IOS is read from the user agent when the script boots, so set it first.
+  if (userAgent) Object.defineProperty(win.navigator, 'userAgent', { configurable: true, get: () => userAgent });
   win.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
     get: (t, k) => (k in t ? t[k] : () => {}),
     set: (t, k, v) => { t[k] = v; return true; }
@@ -124,6 +126,8 @@ async function boot({ hash = '', handlers = [] } = {}) {
   win.setInterval = () => 0;
   win.AudioContext = function () { return fakeContext(win); };
   win.OfflineAudioContext = fakeOffline();
+  win.URL.createObjectURL = () => 'blob:fake';
+  win.URL.revokeObjectURL = () => {};
   if (!win.Blob.prototype.arrayBuffer) {
     win.Blob.prototype.arrayBuffer = function () { return Promise.resolve(new ArrayBuffer(this.size)); };
   }
@@ -140,6 +144,31 @@ function file(win, name, bytes = 1000, type = 'audio/mpeg') {
 }
 
 function decoded(win) { return win.signalShare.decodeState(win.signalShare.encodeState()); }
+
+const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
+// A stand-in for the hidden <audio> that models the one iOS behaviour the fix
+// is about: play() begins playback only when its promise settles, and a settle
+// that lands after the page has taken playback back still starts the element.
+function instrumentBg(win) {
+  const bg = win.document.getElementById('bg-audio');
+  const st = { paused: true, muted: false, currentTime: 0, pending: [] };
+  Object.defineProperty(bg, 'muted', { configurable: true, get: () => st.muted, set: (v) => { st.muted = v; } });
+  Object.defineProperty(bg, 'currentTime', { configurable: true, get: () => st.currentTime, set: (v) => { st.currentTime = v; } });
+  Object.defineProperty(bg, 'ended', { configurable: true, get: () => false });
+  bg.play = () => new Promise((resolve) => {
+    st.pending.push(() => { st.paused = false; bg.dispatchEvent(new win.Event('playing')); resolve(); });
+  });
+  bg.pause = () => { st.paused = true; };
+  bg.load = () => {};
+  st.settlePlay = () => { st.pending.splice(0).forEach((fn) => fn()); };
+  return st;
+}
+
+function setHidden(win, hidden) {
+  Object.defineProperty(win.document, 'hidden', { configurable: true, get: () => hidden });
+  win.document.dispatchEvent(new win.Event('visibilitychange'));
+}
 
 const clipHandlers = (names = {}) => [
   { method: 'HEAD', match: (u) => /^\/clip\//.test(u.pathname),
@@ -541,6 +570,46 @@ console.log('\nMoving between tracks');
   app.playIndex(0, false);
   await settle();
   check('coming back finds the words still there', state().tx.segments.length === 1 && !$('tx-copy').disabled);
+}
+
+console.log('\niOS: the graph and the background element never sound together');
+{
+  const { $, win, app, state } = await boot({ hash: '#v=3&t=d', userAgent: IPHONE, handlers: clipHandlers() });
+  await settle();
+  const bg = instrumentBg(win);
+  setHidden(win, false);      // a visible page, so play goes through the graph
+
+  // Play in the foreground: the graph is the output, and the element, once its
+  // muted unlock play resolves, is left paused and silent.
+  app.togglePlay();
+  bg.settlePlay();
+  await settle();
+  check('playing through the graph, the element is silent', state().playing && bg.paused);
+
+  // Lock the screen: playback is handed to the element. iOS has not actually
+  // started it yet, so its play() promise is still in flight.
+  setHidden(win, true);
+  await settle();
+  check('hidden, the element takes over, unmuted', !bg.muted);
+
+  // Unlock before that play() resolves: playback goes back to the graph.
+  setHidden(win, false);
+  await settle();
+  check('back in the foreground, the graph is playing again', state().playing);
+
+  // Now iOS finally starts the element from the play() it had queued while
+  // hidden. Left alone it would sound under the graph: two tracks at once,
+  // and a stop that reaches only one of them.
+  bg.settlePlay();
+  await settle();
+  check('the resumed element is silenced, not left sounding under the graph', bg.paused && bg.muted);
+  check('and the graph is still the one playing', state().playing);
+
+  // Stop must leave nothing playing, on either output.
+  $('stop').click();
+  bg.settlePlay();
+  await settle();
+  check('stop leaves neither the graph nor the element playing', !state().playing && bg.paused);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
