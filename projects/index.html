@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Projects · Nero Hamidi</title>
-  <meta name="description" content="Nero Hamidi's projects in signal processing, machine learning, embedded systems and IC design.">
+  <meta name="description" content="Nero Hamidi's projects in signal processing, efficient machine learning and integrated circuits.">
   <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
@@ -22,92 +22,53 @@
     <p>Most of these are on my <a href="https://github.com/nerohamidi">GitHub</a>; a few stay private because of course rules. <a href="mailto:nero.hamidi@gmail.com">Email me</a> if you want to hear more about any of them.</p>
 
     <article>
-      <h2>Adaptive Kalman Filtering for Market Microstructure Noise</h2>
-      <p class="muted">Python · NumPy · SciPy · pandas · estimation theory</p>
-      <p>A Kalman filter that tracks the true price of Bitcoin and Ethereum through second-by-second noise, then tests whether the estimate is tradable.</p>
+      <h2>Low-Power ML Accelerator (in progress)</h2>
+      <p class="muted">Verilog · PyTorch · Quartus Prime</p>
+      <p>A Verilog accelerator for quantized neural network inference, mapped from a model trained in PyTorch.</p>
       <details>
         <summary>Details</summary>
         <ul>
-          <li>Filter written from scratch, noise parameters fit by maximum likelihood on 45 million price updates. The adaptive version re-estimates noise as volatility shifts and fits unseen months far better.</li>
-          <li>Backtested with realistic costs: the roughly 0.1 basis point edge did not clear the 0.5 bp cost floor, so the signal would not make money.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/kalman_signature.png"><img src="../assets/images/projects/kalman_signature.png" alt="Realized-volatility signature plot for BTC and ETH" loading="lazy"></a>
-          <a href="../assets/images/projects/kalman_adaptive_btc.png"><img src="../assets/images/projects/kalman_adaptive_btc.png" alt="Adaptive-Q Kalman filter diagnostics on BTC" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>ECG Denoising at Negative SNR: LMMSE vs. Transformer</h2>
-      <p class="muted">Python · PyTorch · NumPy/SciPy · statistical signal processing</p>
-      <p>A classical statistical filter against a Transformer on heart signals buried in noise, compared on accuracy and on compute.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>On MIT-BIH recordings at −8.5 dB the Transformer cut error 10.6 dB, 1.9 dB past the best causal linear filter, and that margin traced to nonlinearity rather than longer context.</li>
-          <li>The linear filter costs 128 multiply-accumulates per sample against 34 million, roughly 265,000 times less compute, closed form and with readable coefficients.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/ecg_waveforms.png"><img src="../assets/images/projects/ecg_waveforms.png" alt="ECG denoising: noisy observation, LMMSE and Transformer estimates against ground truth" loading="lazy"></a>
-          <a href="../assets/images/projects/ecg_nmse_sweep.png"><img src="../assets/images/projects/ecg_nmse_sweep.png" alt="NMSE against context length for LMMSE and Transformer" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>Real-Time Audio Spectrum Analyzer</h2>
-      <p class="muted">C · STM32 ARM MCU · hardware design and validation · DSP</p>
-      <p>A microphone device that shows a sound's frequency content live, built end to end from the analog circuit to the firmware.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>Single-supply 9 V front end (mic preamp, 5-pole anti-aliasing filter, ADC level shifting) feeding DMA-driven 12-bit acquisition at 10 kHz.</li>
-          <li>Real-time CMSIS-DSP FFT on the chip's FPU. When the built circuit disagreed with SPICE, scoping it traced the fault to leaky electrolytic capacitors.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/audio_spectrum_image.png"><img src="../assets/images/projects/audio_spectrum_image.png" alt="Audio spectrum analyzer schematic" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>Real-Time Camera Metric Pipeline</h2>
-      <p class="muted">C++17 · embedded Linux · multithreading · TCP sockets · Prometheus · Grafana</p>
-      <p>A C++ service that watches a Raspberry Pi camera around the clock and makes a degraded stream loud instead of silent.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>A C++17 exporter polls two Linux media servers each second and serves rates from a <code>/metrics</code> endpoint on raw TCP sockets, poll loop and socket server on separate threads behind a mutex.</li>
-          <li>Grafana dashboards and alert rules on Raspberry Pi 5 and Arduino Uno hardware: a stalled stream shows up as a falling frame rate.</li>
-        </ul>
-        <p><a href="https://drive.google.com/file/d/1CeahDCygqzYuBNiazsKlBZ-9BN5L3j2f/view">Demo video</a></p>
-      </details>
-    </article>
-
-    <article>
-      <h2>This Site and Its Grounded LLM Chat Assistant</h2>
-      <p class="muted">JavaScript · Gemini API · Cloudflare Workers</p>
-      <p>This site, plus its chatbot. The work was grounding the model and keeping the API key out of the browser.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>Browser chat UI holding multi-turn history, grounded on a curated profile so the model says it doesn't know instead of inventing an answer.</li>
-          <li>API key moved off the client into a Cloudflare Worker proxy gated by an origin allowlist, after a build-time secret still reached users.</li>
-          <li>Plain HTML on GitHub Pages. The signal playground and Signal Share are vanilla JavaScript, no framework.</li>
+          <li>Applying quantization, pruning, and sparsity-aware techniques to the model.</li>
+          <li>Verifying the RTL with testbenches generated in Python.</li>
         </ul>
       </details>
     </article>
 
     <article>
-      <h2>LiDAR and Multi-Sensor SLAM for a Differential-Drive Robot</h2>
-      <p class="muted">Python · C++ · sensors · DSP</p>
-      <p>SLAM for a two-wheeled robot: working out where it is while building a map, from a spinning laser scanner.</p>
+      <h2>Spectral Estimation and Machine Learning</h2>
+      <p class="muted">Python · SciPy · PyTorch</p>
+      <p>Classical spectrum estimates against neural networks, on a resonant random process.</p>
       <details>
         <summary>Details</summary>
         <ul>
-          <li>Turns 1,081-beam scans into 2D point clouds and estimates frame-to-frame motion by aligning each scan against the last (ICP).</li>
-          <li>Fuses wheel odometry with those constraints in a GTSAM pose graph, so drift doesn't warp the map.</li>
+          <li>Compared periodogram and Welch estimates over 200 Monte Carlo trials: the raw periodogram stays noisy however much data it gets, while Welch averaging cuts the variance.</li>
+          <li>Trained MLP and LSTM models to imitate the filter. Both fit the data but missed the true spectral peaks by 2–5×.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article>
+      <h2>8-bit Kogge-Stone Adder</h2>
+      <p class="muted">Cadence Virtuoso · 45 nm CMOS</p>
+      <p>A fast adder co-designed at the transistor level, running at 2.6 GHz after layout against a 1.8 GHz target.</p>
+      <details>
+        <summary>Details</summary>
+        <ul>
+          <li>Low-threshold transistors on the critical path. 35% faster than a ripple-carry baseline after layout, with clean DRC and LVS.</li>
+          <li>Led verification, and traced a 4.5 GHz pre-layout speed ceiling to the testbench flip-flops rather than the adder itself.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article>
+      <h2>LiDAR-Based SLAM</h2>
+      <p class="muted">Python · NumPy · GTSAM</p>
+      <p>Tracking a robot's path and mapping the building around it, from wheel encoder, IMU, LiDAR, and depth camera data.</p>
+      <details>
+        <summary>Details</summary>
+        <ul>
+          <li>ICP scan matching written from scratch, with accumulated drift removed by pose-graph optimization and loop closures.</li>
+          <li>Occupancy-grid and color floor maps built from the corrected trajectory.</li>
         </ul>
         <p class="thumbs">
           <a href="../assets/images/projects/SLAM_img1.png"><img src="../assets/images/projects/SLAM_img1.png" alt="SLAM point cloud visualization" loading="lazy"></a>
@@ -116,100 +77,8 @@
       </details>
     </article>
 
-    <article>
-      <h2>Communication and DSP Lab</h2>
-      <p class="muted">MATLAB · lab instrumentation · analog and digital communications</p>
-      <p>Bench and MATLAB labs building the core pieces of radio and audio communication systems.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>A delta-modulation audio codec in MATLAB, and the Nyquist limit shown on hardware by sweeping frequency until aliasing appeared.</li>
-          <li>Two analog FM demodulators (phase-locked-loop and zero-crossing) plus a digital I/Q version with an arctangent discriminator.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/comm_img1.png"><img src="../assets/images/projects/comm_img1.png" alt="Communication lab figure 1" loading="lazy"></a>
-          <a href="../assets/images/projects/comm_img2.png"><img src="../assets/images/projects/comm_img2.png" alt="Communication lab figure 2" loading="lazy"></a>
-          <a href="../assets/images/projects/comm_img3.png"><img src="../assets/images/projects/comm_img3.png" alt="Communication lab figure 3" loading="lazy"></a>
-          <a href="../assets/images/projects/comm_img4.png"><img src="../assets/images/projects/comm_img4.png" alt="Communication lab figure 4" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>Digital Clock on FPGA</h2>
-      <p class="muted">Verilog · Basys 3 FPGA</p>
-      <p>An alarm clock built as digital logic in Verilog rather than software, running on an FPGA.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>Counters for the time base, a time-multiplexed 7-segment driver, and comparator logic for the alarm.</li>
-          <li>Synthesized and verified on a Basys 3 board.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/dig_clock_img.png"><img src="../assets/images/projects/dig_clock_img.png" alt="Digital clock on a Basys 3 FPGA" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>Full Adder IC Design in Pseudo-NMOS Logic</h2>
-      <p class="muted">Cadence Virtuoso</p>
-      <p>A 1-bit adder designed at the transistor level: schematics, physical layout, and simulation.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>AND, OR, and XOR gates in pseudo-NMOS logic, every layout clean through DRC and LVS.</li>
-          <li>0.96 ns carry and 0.60 ns sum propagation delay driving 50 fF loads at 5 V.</li>
-        </ul>
-      </details>
-    </article>
-
-    <article>
-      <h2>Digital Integrated Circuit Design</h2>
-      <p class="muted">Cadence Virtuoso · Spectre · Verilog · 45 nm CMOS PDK</p>
-      <p>Coursework designing digital circuits on a 45-nanometer process, from transistor sizing to physical layout.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>Inverter sizing, ring oscillator characterization across supply voltage, and logical-effort gate optimization, simulated in Spectre.</li>
-          <li>Standard-cell layout in Virtuoso through DRC, LVS, and post-layout extraction.</li>
-        </ul>
-      </details>
-    </article>
-
-    <article>
-      <h2>OCR Model Robustness Evaluation</h2>
-      <p class="muted">Python · MATLAB · PyTorch · DSP</p>
-      <p>How much a wet or hazy lens hurts AI text recognition, and whether image restoration wins any of it back.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>Paired 100-image dataset, the same scenes clean and through a water droplet: TrOCR and PARSeq read accuracy fell from 0.93 to 0.63.</li>
-          <li>Dehazing and Wiener super-resolution recovered none of it, because droplet blur is not linear motion blur and an indoor scene has no haze.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/OCR_img1.png"><img src="../assets/images/projects/OCR_img1.png" alt="OCR robustness evaluation figure 1" loading="lazy"></a>
-          <a href="../assets/images/projects/OCR_img2.png"><img src="../assets/images/projects/OCR_img2.png" alt="OCR robustness evaluation figure 2" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
-
-    <article>
-      <h2>Machine Learning Projects</h2>
-      <p class="muted">Python · NumPy · PyTorch · HuggingFace · pandas · scikit-learn</p>
-      <p>Core machine-learning algorithms written by hand in NumPy, plus applied work in PyTorch and HuggingFace.</p>
-      <details>
-        <summary>Details</summary>
-        <ul>
-          <li>LASSO via ISTA on a 1,279-feature genetics dataset, plus PCA, K-means, and a two-layer network with hand-coded backpropagation, all in plain NumPy.</li>
-          <li>In PyTorch: a CNN on 60K MNIST images, an LSTM over 18 language classes, and a CBOW embedding model.</li>
-        </ul>
-        <p class="thumbs">
-          <a href="../assets/images/projects/ML_proj_img1.png"><img src="../assets/images/projects/ML_proj_img1.png" alt="ML project figure 1" loading="lazy"></a>
-          <a href="../assets/images/projects/ML_proj_img2.png"><img src="../assets/images/projects/ML_proj_img2.png" alt="ML project figure 2" loading="lazy"></a>
-        </p>
-      </details>
-    </article>
+    <hr>
+    <p>More projects, outside my current focus, are on <a href="../other/">another page</a>.</p>
   </main>
 </body>
 </html>

@@ -6,7 +6,8 @@ repository is what is served.
 ```
 index.html                 home
 about/                     experience, education, skills, coursework
-projects/                  project list
+projects/                  the projects on the resume
+other/                     everything else; linked from projects/, not the header
 playroom/                  the three tools
   signals/                 wave playground        (assets/js/signals.js)
   audio/                   Signal Share           (assets/js/audio.js)

@@ -19,32 +19,48 @@
 
   <main>
     <h1>About</h1>
-    <p>ECE M.S. student at UC San Diego, graduating in 2027. Statistical signal processing, estimation theory, and machine learning, plus embedded systems and digital IC design.</p>
+    <p>ECE M.S. student at UC San Diego, graduating in 2027. Signal processing, efficient machine learning, and integrated circuits.</p>
     <p>San Diego, CA · U.S. Citizen</p>
     <p><a href="mailto:nero.hamidi@gmail.com">nero.hamidi@gmail.com</a> · <a href="https://www.linkedin.com/in/nero-hamidi">LinkedIn</a> · <a href="https://github.com/nerohamidi">GitHub</a></p>
 
     <h2>Experience</h2>
 
     <h3>Qualcomm</h3>
-    <p class="muted">Software Engineering Intern, Algorithms / Data · Jun 2026 – Sep 2026</p>
-    <p>Python algorithms and data work on internal engineering tooling.</p>
+    <p class="muted">Software Engineering Intern · Jun 2026 – Sep 2026</p>
+    <ul>
+      <li>Cut the runtime of an internal SoC EDA tool by 50% with an automated Python/Tcl pipeline, using multithreading and optimized Cadence Innovus queries.</li>
+      <li>Designed a tree-based spatial algorithm (STRtree) built on knowledge of physical layout and digital design.</li>
+      <li>Deployed and maintained a Linux executable for the SoC design team with Bash and Git, iterating on the design directly with hardware engineers.</li>
+    </ul>
 
-    <h3>UC San Diego</h3>
-    <p class="muted">Student Researcher · Jan 2026 – present</p>
-    <p>Transformer encoder vs. closed-form LMMSE for signals buried in noise: 10.6 dB error cut, 1.9 dB over the best causal linear filter, at 34M MACs per sample against 128.</p>
+    <h3>Sparsity Research Group, UC San Diego</h3>
+    <p class="muted">Graduate Researcher, Hardware-Efficient AI · Sep 2026 – present</p>
+    <ul>
+      <li>Investigating low-rank linear attention with sparse caching to reduce the memory Transformer LLM inference needs, advised by Dr. Rahul Parhi.</li>
+      <li>Comparing hardware-aware attention parametrizations against general-purpose baselines in PyTorch.</li>
+      <li>Applying signal processing techniques to analyze attention structure and guide the parametrizations.</li>
+    </ul>
 
     <h3>Therva</h3>
-    <p class="muted">Technical Intern · Sep 2025 – present</p>
-    <p>Lead the embedded firmware for a patent-pending thermal device, in C++ on a dual-core ESP32: real-time closed-loop PID heater control and the ADC, encoder, I2C, and Wi-Fi drivers under it. 2nd place ($25K), UCSD Startup Competition.</p>
+    <p class="muted">Systems Engineering Intern · Sep 2025 – present</p>
+    <ul>
+      <li>Lead the electrical engineering side of a local startup building a smart, compact home appliance on an ESP32.</li>
+      <li>Collaborated on its proportional-integral-derivative (PID) control software, written in C.</li>
+      <li>Improved the circuit schematics and built prototypes, made safe with thermal and electrical fuses and checked on lab equipment.</li>
+      <li>2nd place and a $25K prize at the UCSD startup competition.</li>
+    </ul>
 
     <h3>theCoderSchool</h3>
-    <p class="muted">Software Instructor · Mar 2022 – May 2026</p>
-    <p>Taught data structures, algorithms, and object-oriented programming across Python, Java, C++, C#, and Lua.</p>
+    <p class="muted">Instructor · Mar 2022 – Jun 2026</p>
+    <ul>
+      <li>Taught 100+ students aged 10–18 Python and C++, data structures, algorithms, statistics, and intro machine learning.</li>
+    </ul>
 
     <h2>Education</h2>
 
     <h3>University of California, San Diego</h3>
-    <p class="muted">M.S. in Electrical and Computer Engineering, Signal &amp; Image Processing · expected 2027</p>
+    <p class="muted">M.S. in Electrical and Computer Engineering · expected 2027</p>
+    <p>IEEE-HKN Honor Society (Eta Kappa Nu)</p>
 
     <h3>San Diego State University</h3>
     <p class="muted">B.S. in Electrical Engineering, Minor in Computer Science · 2022 – 2025</p>
@@ -52,24 +68,22 @@
 
     <h2>Skills</h2>
     <dl>
+      <dt>Techniques</dt>
+      <dd>Transformer-based learning · CMOS logic · Kalman and adaptive filtering · MLE/MAP estimation · static timing analysis · RTL design and FPGA prototyping (Basys 3)</dd>
       <dt>Languages</dt>
-      <dd>Python · C/C++ · Verilog · Tcl · MATLAB · SQL</dd>
-      <dt>Signals &amp; ML</dt>
-      <dd>Estimation theory (Kalman, LMMSE/Wiener), DSP, image processing, PyTorch, NumPy</dd>
-      <dt>Hardware</dt>
-      <dd>ESP32, STM32, FPGA, Cadence Virtuoso/Spectre/Innovus, VLSI design, DRC/LVS</dd>
+      <dd>Python (PyTorch, NumPy, SciPy, OpenCV) · C · C++ · Verilog · Tcl · Bash · MATLAB</dd>
+      <dt>Tools</dt>
+      <dd>Cadence Virtuoso and Innovus · Keysight ADS · Git · Linux</dd>
     </dl>
 
     <h2>Coursework</h2>
     <dl>
       <dt>Signal processing</dt>
-      <dd>Statistical Signal Processing · Digital Signal Processing · Digital Image Processing · Signals &amp; Systems · Analog &amp; Pulse Communication Systems and Lab · Multirate Signal Processing (in progress)</dd>
-      <dt>Machine learning</dt>
-      <dd>Machine Learning · ML for Physical Applications · Sensing &amp; Estimation in Robotics · Graduate Linear Algebra · EE Statistics · Computational Evolutionary Biology · Reinforcement Learning for Robotics (in progress)</dd>
-      <dt>Hardware</dt>
-      <dd>VLSI Circuit Design · Digital Circuit Design · Digital Circuits and Lab · Analysis &amp; Design of Electronic Circuits · Embedded Systems Programming · Low Power VLSI for Machine Learning (in progress)</dd>
-      <dt>Software</dt>
-      <dd>Data Structures · Advanced Programming Languages · 3D Game Programming</dd>
+      <dd>Statistical Signal Processing · Multirate Signal Processing</dd>
+      <dt>Machine learning and robotics</dt>
+      <dd>ML for Physical Applications · Sensing &amp; Estimation in Robotics · Robotics Control and Learning · Proofs-Based Graduate Linear Algebra</dd>
+      <dt>Circuits</dt>
+      <dd>Digital Circuits · Microwave/RF Circuits · Low-Power VLSI Implementation for ML</dd>
     </dl>
   </main>
 </body>
