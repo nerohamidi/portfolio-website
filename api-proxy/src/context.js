@@ -48,7 +48,7 @@ Low-Power ML Accelerator (In Progress) — Verilog, PyTorch, Quartus Prime:
 Spectral Estimation & Machine Learning — Python, SciPy, PyTorch:
 - Compared periodogram and Welch spectrum estimates of a resonant random process over 200 Monte Carlo trials.
 - Showed the raw periodogram stays noisy with more data, while Welch averaging cuts variance.
-- Trained MLP and LSTM models to imitate the filter; both fit the data but missed true spectral peaks by 2–5x.
+- Trained MLP and LSTM models to imitate the filter; both fit the data but missed the true spectral peaks.
 
 8-bit Kogge-Stone Adder — Cadence Virtuoso, 45 nm CMOS:
 - Co-designed a fast adder with low-threshold transistors on the critical path, hitting 2.6 GHz post-layout (target: 1.8 GHz).
